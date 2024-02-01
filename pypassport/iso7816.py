@@ -81,9 +81,6 @@ class Iso7816():
             0x00: 'Instruction code not supported or invalid'
         },
         0x6E: {
-            0x00: 'Class not supported'
-        },
-        0x6F: {
             0x00: 'No precise diagnosis'
         },
         0x90: {
@@ -158,28 +155,27 @@ class Iso7816():
         try:
             logging.debug(logMsg)
 
-            logging.debug(str(toSend))
+            logging.debug("> Command APDU [Class: {}] [Instruction: {}] [Parameter 1: {}] [Parameter 2: {}] [Data: {}] [Expected Response Length: {}]".format(toSend.cla, toSend.ins, toSend.p1, toSend.p2, toSend.lc, toSend.data, toSend.le))
+
             if self._ciphering:
                 toSend = self._ciphering.protect(toSend)
-                logging.debug("[SM] " + str(toSend))
+                logging.debug("> Encrypted Command APDU [Class: {}] [Instruction: {}] [Parameter 1: {}] [Parameter 2: {}] [Data: {}] [Expected Response Length: {}]".format(toSend.cla, toSend.ins, toSend.p1, toSend.p2, toSend.lc, toSend.data, toSend.le))
 
             res = self._reader.transmit(toSend)
-
-            if self._ciphering:
-                logging.debug("[SM] " + str(res))
-                res = self._ciphering.unprotect(res)
-
-            logging.debug("SW1: {} - SW2: {}".format(hex(res.sw1), hex(res.sw2)))
             msg = Iso7816.Errors[res.sw1][res.sw2]
 
-            logging.debug(str(res) + " //" + msg)
+            if self._ciphering:
+                logging.debug("< Encrypted Response APDU [Response: {}] [Status Word 1: {}] [Status Word 2: {}] ({})".format(hexfunctions.binToHexRep(res.res), hex(res.sw1), hex(res.sw2), msg))
+                res = self._ciphering.unprotect(res)
+
+            logging.debug("< Response APDU [Response: {}] [Status Word 1: {}] [Status Word 2: {}] ({})".format(hexfunctions.binToHexRep(res.res), hex(res.sw1), hex(res.sw2), msg))
 
             if msg == "Success":
                 return res.res
             else:
                 raise Iso7816Exception(msg, res.sw1, res.sw2)
         except KeyError:
-            raise Iso7816Exception("Unknown error", res.sw1, res.sw2)
+            raise Iso7816Exception("Unknown error code", res.sw1, res.sw2)
 
     def setCiphering(self, c=False):
         self._ciphering = c
@@ -215,9 +211,3 @@ class Iso7816():
         toSend = apdu.CommandAPDU("00", "88", "00", "00", lc, data, "00")
         res = self.transmit(toSend, "Internal Authentication")
         return res
-
-#    def mutualAuthentication(self, data):
-#        data = hexfunctions.binToHexRep(data)
-#        lc = hexfunctions.hexToHexRep(len(data)/2)
-#        toSend = apdu.CommandAPDU("00", "82", "00", "00", lc, data, "28")
-#        return self.transmit(toSend, "Mutual Authentication")

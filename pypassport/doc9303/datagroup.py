@@ -6,9 +6,7 @@ from pypassport import asn1
 from pypassport import hexfunctions
 from pypassport.iso19794 import ISO19794_5
 from pypassport.doc9303 import converter
-from pypassport import derobjectidentifier
 from pypassport.singleton import Singleton
-import hashlib
 
 
 class DataGroupException(Exception):
@@ -224,27 +222,27 @@ class DataGroup2(DataGroup):
         nbInstance = hexfunctions.binToHex(self[tag])
 
         for x in range(nbInstance):
-            #7F60
+            # 7F60
             tag = self._getTag()
             self._getLength()
-            #A1
+            # A1
             templateID = self._getTag()
-            #Read A
+            # Read A
             v = self._getValue()
             dgf = DataGroupFile()
             dgf.body = v
             dg = DataGroup(dgf)
             dg.parse()
             data = dg
-            #Transform the binary data into usable data
+            # Transform the binary data into usable data
             for x in data:
                 data[x] = hexfunctions.binToHexRep(data[x])
-            #5F2E or 7F2E
+            # 5F2E or 7F2E
             tag = self._getTag()
             value = self._getValue()
             headerSize, data['meta'] = ISO19794_5.analyse(hexfunctions.binToHexRep(value))
-            data[tag] = value[headerSize:]
 
+            data[tag] = value[headerSize:]
             self[templateID] = {}
             self[templateID] = data
 
@@ -468,10 +466,10 @@ class DataGroupReader():
 
         A dataGroup::
             6C 40
-                  5C   06     5F195F265F1A
-                  5F19 18     UNITED STATES OF AMERICA
-                  5F26 08     20020531
-                  5F1A 0F     SMITH<<BRENDA<P
+                5C   06     5F195F265F1A
+                5F19 18     UNITED STATES OF AMERICA
+                5F26 08     20020531
+                5F1A 0F     SMITH<<BRENDA<P
 
             1. The header::
                 6C 40

@@ -1,13 +1,15 @@
+import logging
+from hashlib import *
+from pyasn1.codec.der import decoder
 from pypassport import hexfunctions
 from pypassport.doc9303 import converter
 from pypassport.doc9303 import datagroup
-from hashlib import *
 from pypassport.derobjectidentifier import *
 from pypassport.logger import Logger
 from pypassport.camanager import CAManager
 from pypassport.openssl import OpenSSL
 from pypassport import asn1
-from pyasn1.codec.der import decoder
+
 
 
 class PassiveAuthenticationException(Exception):
@@ -25,7 +27,6 @@ class PassiveAuthentication(Logger):
     """
 
     def __init__(self, openssl=None):
-        Logger.__init__(self, "PA")
         self._content = None
         self._data = None
         if not openssl:
@@ -93,16 +94,8 @@ class PassiveAuthentication(Logger):
         @raise openSSLException: See the openssl documentation
         """
 
-#        f = open("/home/jf/CA/sod", "wb")
-#        f.write(sodObj.body)
-#        f.close()
-
         if self._data == None:
             self._data = self.getSODContent(sodObj)
-
-#        f = open("/home/jf/CA/sod_content", "wb")
-#        f.write(self._data)
-#        f.close()
 
         if self._content == None:
             self._content = self._readDGfromLDS(self._data)
@@ -122,7 +115,7 @@ class PassiveAuthentication(Logger):
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
         @raise openSSLException: See the openssl documentation
         """
-        self.log("Verify SOD by using Document Signer Public Key (KPuDS))")
+        logging.debug("Verify SOD by using Document Signer Public Key (KPuDS))")
 
         if type(sodObj) != type(datagroup.SOD(None)):
             raise PassiveAuthenticationException("sodObj must be a sod object")
@@ -147,7 +140,7 @@ class PassiveAuthentication(Logger):
         @raise openSSLException: See the openssl documentation
         """
 
-        self.log("Verify CDS by using the Country Signing CA Public Key (KPuCSCA). ")
+        logging.debug("Verify CDS by using the Country Signing CA Public Key (KPuCSCA). ")
 
         if not CDS and type(CDS) == type(""):
             raise PassiveAuthenticationException("The CDS is not set")
@@ -181,7 +174,7 @@ class PassiveAuthentication(Logger):
         @type data:  A binary string
         @return: A dictionary with the parsed data of the signature (version, hashAlgorithm and dataGrouphashValues)
         """
-        self.log("Read the relevant Data Groups from the LDS")
+        logging.debug("Read the relevant Data Groups from the LDS")
 
         content = {}
         hash = {}
@@ -207,7 +200,7 @@ class PassiveAuthentication(Logger):
         @type dgs: A list.
         @return: A dictionary indexed with DG1..DG15 with the calculated hashes of the DGs.
         """
-        self.log("Calculate the hashes of the relevant Data Groups")
+        logging.debug("Calculate the hashes of the relevant Data Groups")
         hashes = {}
         #Find the hash function from the content dictionary
         hashAlgo = self._getHashAlgorithm()
@@ -225,7 +218,7 @@ class PassiveAuthentication(Logger):
         @type hashes: A dictionary
         @return: A dictionary indexed with the DG name (DG1..DG15) and with the result of the hash comparison (True or False, None if the DG is not present in the SOD)
         """
-        self.log("Compare the calculated hashes with the corresponding hash values in the SOD")
+        logging.debug("Compare the calculated hashes with the corresponding hash values in the SOD")
 
         res = {}
 

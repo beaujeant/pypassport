@@ -382,10 +382,10 @@ class ReaderManager(Singleton):
                     # Otherwise the correct response will be '90 00'.
                     res = driver.transmit(CommandAPDU("00", "A4", "04", "0C", "07", "A0000002471001"))
                     if res.sw1 == 0x90 and res.sw2 == 0x00:
-                        logging.debug("Reader found: {}".format(driver.__class__.__name__))
+                        logging.debug("Passport found: {}".format(driver.__class__.__name__))
                         return driver
                 except Exception as e:
-                    logging.error(e)
+                    logging.error("An error occured while trying to detect a passport: {}".format(e))
                     driver.disconnect()
         return None
 
@@ -411,6 +411,8 @@ class ReaderManager(Singleton):
         """
         cpt = 0
         wait = 0.5
+
+        logging.debug("Scanning for available reader")
 
         if driver is None and readerNum is None:
             reader = None

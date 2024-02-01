@@ -1,25 +1,7 @@
-# Copyright 2009 Jean-Francois Houzard, Olivier Roger
-#
-# This file is part of pypassport.
-#
-# pypassport is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as
-# published by the Free Software Foundation, either version 3 of the
-# License, or (at your option) any later version.
-#
-# pypassport is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Lesser General Public License for more details.
-#
-# You should have received a copy of the GNU Lesser General Public
-# License along with pyPassport.
-# If not, see <http://www.gnu.org/licenses/>.
-
 from hashlib import *
 from Crypto import Random
-from pyasn1.codec.der import decoder, encoder
-from pyasn1.type import namedtype,univ
+from pyasn1.codec.der import decoder
+import logging
 
 from pypassport.asn1 import *
 from pypassport import hexfunctions
@@ -32,7 +14,7 @@ class ActiveAuthenticationException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
 
-class ActiveAuthentication(Logger):
+class ActiveAuthentication():
     """
     This class implements the Active Authentication protocol.
     The main method is I{executeAA} that returns True if the verification is ok or False.
@@ -42,7 +24,6 @@ class ActiveAuthentication(Logger):
         @param iso7816: a valid iso7816 object
         @type iso7816: doc9303
         """
-        Logger.__init__(self, "AA")
         self._iso7816 = iso7816
         if not openssl:
             self._openssl = OpenSSL()
@@ -76,7 +57,6 @@ class ActiveAuthentication(Logger):
         @raise ActiveAuthenticationException: If the DG15 is invalid and the signature cannot be verified.
         """
         self._dg15 = dg15
-
         self.RND_IFD = self._genRandom(8)
         self.signature = self._getSignature(self.RND_IFD)
         self.F = self._decryptSignature(dg15.body, self.signature)
@@ -87,20 +67,20 @@ class ActiveAuthentication(Logger):
 
         self.M_ = self.M1 + self.RND_IFD
 
-        self.log("Concatenate M1 with known M2")
-        self.log("\tM*: " + hexfunctions.binToHexRep(self.M_))
+        logging.debug("Concatenate M1 with known M2")
+        logging.debug("\tM*: " + hexfunctions.binToHexRep(self.M_))
 
         self.D_ = self._hash(hash, self.M_)
 
-        self.log("Compare D and D*")
-        self.log("\t" + str(self.D == self.D_))
+        logging.debug("Compare D and D*")
+        logging.debug("\t" + str(self.D == self.D_))
 
         return self.D == self.D_
 
     def _genRandom(self, size):
         rnd_ifd = Random.get_random_bytes(size)
-        self.log("Generate an 8 byte random")
-        self.log("\tRND.IFD: " + hexfunctions.binToHexRep(rnd_ifd))
+        logging.debug("Generate an 8 byte random")
+        logging.debug("\tRND.IFD: " + hexfunctions.binToHexRep(rnd_ifd))
         return rnd_ifd
 
     def _getSignature(self, rnd_ifd):
@@ -123,16 +103,16 @@ class ActiveAuthentication(Logger):
 
     def _decryptSignature(self, pubK, signature):
         data = self._openssl.retrieveSignedData(pubK, signature)
-        self.log("Decrypt the signature with the public key")
-        self.log("\tF: " + hexfunctions.binToHexRep(data))
+        logging.debug("Decrypt the signature with the public key")
+        logging.debug("\tF: " + hexfunctions.binToHexRep(data))
 
         return data
 
     def _hash(self, hash, data):
         digest = hash(data).digest()
 
-        self.log("Calculate digest of M*")
-        self.log("\tD*: " + hexfunctions.binToHexRep(digest))
+        logging.debug("Calculate digest of M*")
+        logging.debug("\tD*: " + hexfunctions.binToHexRep(digest))
 
         return digest
 
@@ -152,8 +132,8 @@ class ActiveAuthentication(Logger):
         else:
             raise ActiveAuthenticationException("Unknow hash algorithm")
 
-        self.log("Determine hash algorithm by trailer T*")
-        self.log("\tT: " + hexfunctions.binToHexRep(self.T))
+        logging.debug("Determine hash algorithm by trailer T*")
+        logging.debug("\tT: " + hexfunctions.binToHexRep(self.T))
 
         #Find out the hash size
         hashSize = len(hash("test").digest())
@@ -163,16 +143,16 @@ class ActiveAuthentication(Logger):
     def _extractDigest(self, sig, hashSize, offset):
         digest = sig[offset - hashSize:offset]
 
-        self.log("Extract digest:")
-        self.log("\tD: " + hexfunctions.binToHexRep(digest))
+        logging.debug("Extract digest:")
+        logging.debug("\tD: " + hexfunctions.binToHexRep(digest))
 
         return digest
 
     def _extractM1(self, sig, hashSize, offset):
         M1 = sig[1:offset - hashSize]
 
-        self.log("Extract M1:")
-        self.log("\tM1: " + hexfunctions.binToHexRep(M1))
+        logging.debug("Extract M1:")
+        logging.debug("\tM1: " + hexfunctions.binToHexRep(M1))
 
         return M1
 

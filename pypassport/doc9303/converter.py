@@ -126,8 +126,17 @@ def _getPosition(data):
     If the data value is found, its position is returned.
     """
     for line in _Table:
+        index = 0
+        for column in _Table[line]:
+            if column.upper() == str(data).upper():
+                return index
+            index += 1
+    raise KeyError("Invalid Data Group: " + str(data))
+    """
         try:
+            data = str(data).upper()
             return _Table[line].index(str(data).upper())
         except ValueError:
             pass
     raise KeyError("Invalid Data Group: " + str(data))
+    """

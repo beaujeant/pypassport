@@ -21,7 +21,6 @@ def binToHexList(data):
 
 def hexToBin(data):
     """511 --> '\x00\x00\x00\x00\x00\x00\x01\xff'"""
-    #Si erreur, changer par %x016x%
     return hexRepToBin("%x" % data)
 
 

@@ -37,16 +37,11 @@ class EPassport(dict):
     >>> import os
     >>> from pypassport.epassport import *
     >>> from pypassport.iso7816 import *
-    >>> sep = os.path.sep
-    >>> sim = "data" + sep + "dump" + sep + "test"
-    >>> p = EPassport(None, sim)
+    >>> p = EPassport(None, "dump.file")
     Select Passport Application
     >>> p["DG1"]
     Reading DG1
-    {'5F05': '7', '5F04': '4', '5F07': '0', '5F06': '2', '59': '130312', '5F03': 'P<', '5F02': '0', '5F5B': 'ROGER<<OLIVIER<VINCENT<MICHAEL<<<<<<<<<', '5F1F': 'P<BELROGER<<OLIVIER<VINCENT<MICHAEL<<<<<<<<<AB123456<4BEL9503157M1303122<<<<<<<<<<<<<<00', '53': '<<<<<<<<<<<<<<', '5F2C': 'BEL', '5F57': '950315', '5F28': 'BEL', '5F35': 'M', '5A': 'AB123456<'}
-    >>> p["61"]
-    {'5F05': '7', '5F04': '4', '5F07': '0', '5F06': '2', '59': '130312', '5F03': 'P<', '5F02': '0', '5F5B': 'ROGER<<OLIVIER<VINCENT<MICHAEL<<<<<<<<<', '5F1F': 'P<BELROGER<<OLIVIER<VINCENT<MICHAEL<<<<<<<<<AB123456<4BEL9503157M1303122<<<<<<<<<<<<<<00', '53': '<<<<<<<<<<<<<<', '5F2C': 'BEL', '5F57': '950315', '5F28': 'BEL', '5F35': 'M', '5A': 'AB123456<'}
-
+    {...}
 
     You can notice that the DG1 is read only during the first call.
 
@@ -54,17 +49,15 @@ class EPassport(dict):
     and the basic access control is done automatically if needed.
 
     Example using a rfid reader:
-    *Detect the reader
-    *Init the EPassport class
-    *Read the DG1
-    *Perform Active Auth
-    *Perform Passive Auth (Verification of the SOD Certificate, Verification of the DG integrity)
-    *Extract the DS Certificate
-    *Extract the DG15 public key
-    *Extract the faces from DG2
-    *Extract the signature from DG7
-
-    (The informations are hidded)
+    * Detect the reader
+    * Init the EPassport class
+    * Read the DG1
+    * Perform Active Auth
+    * Perform Passive Auth (Verification of the SOD Certificate, Verification of the DG integrity)
+    * Extract the DS Certificate
+    * Extract the DG15 public key
+    * Extract the faces from DG2
+    * Extract the signature from DG7
 
     We changed the MRZ informations for privacy reasons, that's why the doctest is not valid.
     Anyway it is not possible for you to test it without the real passport (you do not possess it).
@@ -85,9 +78,7 @@ class EPassport(dict):
     Select Passport Application
     >>> p["DG1"]
     Reading DG1
-    {'5F05': '8', '5F04': '0', '5F07': '4', '5F06': '7', '59': '130221', '5F03': 'P<
-    ', '5F02': '0', '5F5B': 'ROGER<<OLIVIER<VINCENT<MICHAEL<<<<<<<<<', '5F1F': 'P<BE
-    LROGER<<OLIVIER<VINCENT<MICHAEL<<<<<<<<<EHxxxxx<0BELxxxxxx8Mxxxxxx7<<<<<<<<<<<<<<04', '53': '<<<<<<<<<<<<<<', '5F2C': 'BEL', '5F57': '840615', '5F28': 'BEL', '5F35': 'M', '5A': 'EH276509<'}
+    {...}
     >>> p.openSslDirectory = "C:\\OpenSSL\\bin\\openssl"
     >>> p.doActiveAuthentication()
     Reading DG15
@@ -125,10 +116,9 @@ class EPassport(dict):
     ['\x14R\x06\x14\xd3E\x14\xfa\x87C\xff\xd9...']
     >>> p.getSignature()
     ['\x01h\xa4\xa2...\x80?\xff\xd9']
-
-
     """
-    #TODO: property pr le buffSize de la lecture et pour choisir si FS ou SFID
+
+    # TODO: property pr le buffSize de la lecture et pour choisir si FS ou SFID
 
     def __init__(self, reader, epMrz=None):
         """
@@ -205,7 +195,9 @@ class EPassport(dict):
         @raise bacException: If an error occurs during the process
         @raise EPassportException: If the mrz is not initialized.
         """
+        logging.info("Basic Access Control: Enabling Secure Messaging")
         if self._mrz is None:
+            logging.warning("No MRZ provided")
             raise EPassportException("The object must be initialized with the ePassport MRZ")
 
         (KSenc, KSmac, ssc) = self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
@@ -223,6 +215,7 @@ class EPassport(dict):
         @raise openSSLException: See the openssl documentation
         @raise SimIso7816Exception: The AA is not possible with the simulator
         """
+        logging.info("Active Autheticiation")
         res = ""
         try:
             if dg15 is None:
@@ -381,8 +374,7 @@ class EPassport(dict):
                 return self._getDG(tag)
             except iso7816.Iso7816Exception as e:
                 if e.sw1 == 105 and e.sw2 == 130:
-                    #Security status not satisfied
-                    logging.debug("Enabling Secure Messaging")
+                    logging.debug("Security status not satisfied")
                     self.doBasicAccessControl()
                     return self._getDG(tag)
                 else:
@@ -408,7 +400,7 @@ class EPassport(dict):
         @raise DataGroupException: If a wrong DataGroup is requested
         """
         try:
-            logging.debug("Reading " + converter.toDG(tag))
+            logging.info("Reading " + converter.toDG(tag))
             dgFile = self._dgReader.readDG(tag)
             dg = datagroup.DataGroupReader.create(dgFile)
             self.__setitem__(dg.tag, dg)

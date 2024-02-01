@@ -1,38 +1,21 @@
-# Copyright 2012 Antonin Beaujeant
-#
-# This file is part of pypassport.
-#
-# pypassport is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as
-# published by the Free Software Foundation, either version 3 of the
-# License, or (at your option) any later version.
-#
-# pypassport is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Lesser General Public License for more details.
-#
-# You should have received a copy of the GNU Lesser General Public
-# License along with pyPassport.
-# If not, see <http://www.gnu.org/licenses/>.
-
 import os
 import time
 import math
+import logging
 
-from pypassport.logger import Logger
+from pypassport import apdu
 from pypassport.iso7816 import Iso7816, Iso7816Exception
 from pypassport.doc9303.bac import BAC, BACException
-from pypassport.reader import PcscReader, ReaderException
+from pypassport.reader import ReaderException
 from pypassport.doc9303.mrz import MRZ
-from pypassport import apdu
+from pypassport.apdu import ResponseAPDU
 from pypassport.hexfunctions import hexToHexRep, binToHexRep
 
 class MacTraceabilityException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
 
-class MacTraceability(Logger):
+class MacTraceability():
     """
     This class performs a MAC traceability attack discovered by Tom Chothia and Vitaliy Smirnov from the University of Birmingham.
     This attack can identify a passport based on a message/MAC APDU forged during a legitimate BAC.
@@ -42,9 +25,18 @@ class MacTraceability(Logger):
     """
 
     def __init__(self, iso7816, mrz=None):
-        Logger.__init__(self, "MAC TRACEABILITY")
+        logging.info("MAC TRACEABILITY")
         self._iso7816 = iso7816
-        self._mrz = mrz
+
+        if type(mrz) == type("") or type(mrz) == type(b""):
+            self._mrz = MRZ(mrz)
+            if not self._mrz.checkMRZ():
+                raise MacTraceabilityException("Unvalid MRZ provided: the provided string is not a valid MRZ.")
+
+        elif type(mrz) == type(MRZ("")):
+            self._mrz = mrz
+        else:
+            raise MacTraceabilityException("Unvalid MRZ provided: Could be either a string, a bytearray or a MRZ object.")
 
         if type(self._iso7816) != type(Iso7816(None)):
             raise MacTraceabilityException("The sublayer iso7816 is not available")
@@ -80,19 +72,23 @@ class MacTraceability(Logger):
         self.rstBAC()
         (ans2, res_time2) = self._sendPair(cmd_data)
 
-        vulnerable = False
-        comment = "Cut-off: {} Wrong MAC: SW1:{} SW2:{} - Wrong cipher: SW1:{} SW2:{}".format((res_time2-res_time1)*1000, ans1[1], ans1[2], ans2[1], ans2[2])
+        
+        comment = "Cut-off: {} Wrong MAC: SW1:{} SW2:{} - Wrong cipher: SW1:{} SW2:{}".format((res_time2-res_time1)*1000, ans1.sw1, ans1.sw2, ans2.sw1, ans2.sw2)
 
-        if ans1[0] != ans2[0] or (res_time2 - res_time1) > (CO/1000):
-            self.log("Vulnerable")
+        if ans1.res != ans2.res or ans1.sw1 != ans2.sw1 or ans1.sw2 != ans2.sw2:
+            logging.info("Vulnerable: Response is different")
             vulnerable = True
+        if (res_time2 - res_time1) > (CO/1000):
+            logging.info("It seems to be vulnerable based on the long response time. Verify if this is consistent and fine tune the cut-off threshold if that seems too low...")
+            vulnerable = True
+        else:
+            logging.info("Does not seem to be vulnerable. Maybe fine tune the cut-off threshold...")
+            vulnerable = False
 
-
-
-        self.log("Error message with wrong MAC: [{0}][{1}]".format(ans1[1], ans1[2]))
-        self.log("Error message with correct MAC: [{0}][{1}]".format(ans2[1], ans2[2]))
-        self.log("Response time with wrong MAC: {0} s".format(res_time1))
-        self.log("Response time with correct MAC: {0} s".format(res_time2))
+        logging.info("Error message with wrong MAC: [{0}][{1}]".format(ans1.sw1, ans1.sw2))
+        logging.info("Error message with correct MAC: [{0}][{1}]".format(ans2.sw1, ans2.sw2))
+        logging.info("Response time with wrong MAC: {0} s".format(res_time1))
+        logging.info("Response time with correct MAC: {0} s".format(res_time2))
 
         return (vulnerable, comment)
 
@@ -229,7 +225,7 @@ class MacTraceability(Logger):
                 self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
                 self._iso7816.rstConnection()
                 return True
-            except BACException, msg:
+            except BACException(msg):
                 raise MacTraceabilityException("Wrong MRZ")
         else:
             return False
@@ -246,8 +242,8 @@ class MacTraceability(Logger):
     def rstBAC(self):
         """Establish a legitimate BAC with the passport then reset the connection
         """
-        self.log("Establish a valid BAC")
-        self.log("Reset the delay (in french passport)")
+        logging.debug("Establish a valid BAC")
+        logging.debug("Reset the delay (in french passport)")
         self._iso7816.rstConnection()
         self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
         self._iso7816.rstConnection()
@@ -258,20 +254,20 @@ class MacTraceability(Logger):
         @return: A valid binary message/MAC APDU
         """
 
-        self.log("Get a message with a valid MAC")
-        self.log("MRZ: " + self._mrz.getMrz())
+        logging.debug("Get a message with a valid MAC")
+        logging.debug("MRZ: " + self._mrz.getMrz())
 
         self._bac.derivationOfDocumentBasicAccesKeys(self._mrz)
         rnd_icc = self._iso7816.getChallenge()
-        self.log("RND.ICC: " + binToHexRep(rnd_icc))
+        logging.debug("RND.ICC: " + binToHexRep(rnd_icc))
         cmd_data = self._bac.authentication(rnd_icc)
-        self.log("The valid pair:" + binToHexRep(cmd_data))
-        self.log("RST connection")
+        logging.debug("The valid pair:" + binToHexRep(cmd_data))
+        logging.debug("RST connection")
         self._iso7816.rstConnection()
         return cmd_data
 
 
-    def _sendPair(self, cmd_data="\x55"*40):
+    def _sendPair(self, cmd_data=None):
         """Send a message/MAC.
         If the cmd_data is not set, it sends a random pair in order to make sure the MAC check fails
         If set, a wrong message is sent together with a valid MAC in order to pass the MAC check
@@ -283,22 +279,25 @@ class MacTraceability(Logger):
         """
         self._iso7816.getChallenge()
 
-        data = binToHexRep(cmd_data)
-        self.log("Send a message with a wrong MAC")
-        self.log("Message/MAC:" + data)
+        if cmd_data == None:
+            logging.debug("Send a message with a wrong MAC")
+            logMsg = "Wrong MAC"
+            data = binToHexRep("\x55"*40)
+        else:
+            logging.debug("Send a message with a correct MAC")
+            logMsg = "Correct MAC"
+            data = binToHexRep(cmd_data)
+
         lc = hexToHexRep(len(data)/2)
         toSend = apdu.CommandAPDU("00", "82", "00", "00", lc, data, "28")
         starttime = time.time()
         try:
-            response = self._iso7816.transmit(toSend, "Wrong MAC")
-        except Iso7816Exception, msg:
-            response = msg
+            response = self._iso7816.transmit(toSend, logMsg)
+            response = ResponseAPDU(response, 0x90, 0x00)
+        except Iso7816Exception as msg:
+            response = ResponseAPDU(msg.description, msg.sw1, msg.sw2)
         timetaken =  time.time() - starttime
-        self.log("Sent")
-        self.log("Message:" + msg[0])
-        self.log("SW1 1:" + str(msg[1]))
-        self.log("SW2 2:" + str(msg[2]))
-        self.log("Response time:" + str(timetaken))
-        self.log("RST connection")
+        logging.debug("Response time:" + str(timetaken))
+        logging.debug("RST connection")
         self._iso7816.rstConnection()
         return (response, timetaken)

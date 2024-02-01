@@ -1,6 +1,5 @@
 from operator import and_
-from pypassport.hexfunctions import *
-import logging
+from pypassport import hexfunctions
 
 FAC = '46414300'
 
@@ -14,12 +13,7 @@ ISO19794_5_GENDER = {
 
 ISO19794_5_EYECOLOUR = {
     '00': 'Unspecified',
-    '01': 'Black',
-    '02': 'Blue',
-    '03': 'Brown',
-    '04': 'Grey',
-    '05': 'Green',
-    '06': 'Multi',
+    '01': 'Blacloggingi',
     '07': 'Pink',
     '08': 'Other'
 }
@@ -119,8 +113,6 @@ class ISO19794_5:
 
         offset = 0
         result = {}
-        logging.info("Data: %s" % data)
-        logging.info("Offset: %s" % offset)
         tag = data[offset:offset + 8]
         offset += 8
         if tag != FAC:
@@ -128,7 +120,7 @@ class ISO19794_5:
 
         tag = data[offset:offset + 6]
         offset += 8
-        result['VersionNumber'] = hexRepToBin(tag)
+        result['VersionNumber'] = hexfunctions.hexRepToBin(tag)
 
         tag = data[offset:offset + 8]
         offset += 8
@@ -142,7 +134,6 @@ class ISO19794_5:
         offset += 8
         result['FaceImageBlockLength'] = int(tag, 16)
 
-
         tag = data[offset:offset + 4]
         offset += 4
         result['NumberOfFeaturePoint'] = int(tag, 16)
@@ -153,6 +144,7 @@ class ISO19794_5:
 
         tag = data[offset:offset + 2]
         offset += 2
+
         try:
             result['EyeColour'] = ISO19794_5_EYECOLOUR[tag]
         except KeyError:
@@ -262,7 +254,7 @@ class ISO19794_5:
         offset += 4
         result['ImageQuality'] = ISO19794_5_IMG_QUALITY[tag]
 
-        return (offset / 2, result)
+        return (int(offset/2), result)
 
     @staticmethod
     def createHeader(imageType, imageHeight, imageWidth, imageSize):
@@ -287,28 +279,18 @@ class ISO19794_5:
 
         header = "46414300"
         version = "30313000" # '101' 0x0
-        recordLength = intToHexRep(imageSize + 46, 8)
-        numberOfImage = "0001"
 
-        ImageBlockLength = intToHexRep(imageSize + 32, 8) # no feature point
-        numberOfFeaturePoint = "0000"
-        gender = "00"
-        eyeColour = "00"
-        hairColour = "00"
-        featureMask = "000000"
-        expression = "0000"
-        poseAngle = "000000"
         poseAngleUncertainty = "000000"
         imageFaceType = "00"
         imageDataType = IMAGETYPE[imageType]
-        width = intToHexRep(imageWidth, 4)
-        height = intToHexRep(imageHeight, 4)
+        width = hexfunctions.intToHexRep(imageWidth, 4)
+        height = hexfunctions.intToHexRep(imageHeight, 4)
         colourSpace = "00"
         sourceType = "00"
         deviceType = "0000"
         quality = "0000"
 
-        return hexRepToBin(
+        return hexfunctions.hexRepToBin(
             header + version + recordLength + numberOfImage
             + ImageBlockLength + numberOfFeaturePoint + gender
             + eyeColour + hairColour + featureMask + expression

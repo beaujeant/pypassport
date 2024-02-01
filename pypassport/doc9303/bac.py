@@ -93,13 +93,12 @@ class BAC(Logger):
         @return: A set of two 8 bytes encryption keys
         """
 
-        logging.debug("Input")
         logging.debug("\tKseed: " + hexfunctions.binToHexRep(Kseed))
 
-        logging.debug("Compute Encryption key (c:" + hexfunctions.binToHexRep(BAC.KENC) + ")")
+        logging.debug("Compute Encryption key (Kenc) (c:" + hexfunctions.binToHexRep(BAC.KENC) + ")")
         kenc = self.keyDerivation(Kseed, BAC.KENC)
 
-        logging.debug("Compute MAC Computation key (c:" + hexfunctions.binToHexRep(BAC.KMAC) + ")")
+        logging.debug("Compute MAC Computation key (Kmac) (c:" + hexfunctions.binToHexRep(BAC.KMAC) + ")")
         kmac = self.keyDerivation(Kseed, BAC.KMAC)
 
         return (kenc, kmac)
@@ -113,7 +112,6 @@ class BAC(Logger):
         @type mrz: an MRZ object
         @return: A set of two 8 bytes encryption keys (Kenc, Kmac)
         """
-        logging.debug("Read the mrz")
         logging.debug("MRZ: " + str(mrz))
 
         kmrz = self.mrz_information(mrz)
@@ -158,7 +156,6 @@ class BAC(Logger):
         logging.debug("Concatenate RND.IFD, RND.ICC and Kifd")
         logging.debug("\tS: " + hexfunctions.binToHexRep(s))
 
-        logging.debug("Value: {}, len: {}".format(hexfunctions.binToHexRep(self._ksenc), len(self._ksenc)))
         tdes = DES3.new(self._ksenc, DES3.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
         eifd = tdes.encrypt(s)
         logging.debug("Encrypt S with TDES key Kenc as calculated in Appendix 5.2")
@@ -170,8 +167,6 @@ class BAC(Logger):
         #Construct APDU
 
         cmd_data = eifd + mifd
-        logging.debug("Construct command data for MUTUAL AUTHENTICATE")
-        logging.debug("\tcmd_data: " + hexfunctions.binToHexRep(cmd_data))
 
         self._rnd_ifd = rnd_ifd
         self._kifd = kifd
@@ -295,7 +290,7 @@ class BAC(Logger):
         Ka = h[:8]
         Kb = h[8:16]
 
-        logging.debug("\tForm keys Ka and Kb")
+        logging.debug("\tExctract Ka and Kb")
         logging.debug("\t\tKa: " + hexfunctions.binToHexRep(Ka))
         logging.debug("\t\tKb: " + hexfunctions.binToHexRep(Kb))
 
@@ -305,6 +300,7 @@ class BAC(Logger):
         logging.debug("\tAdjust parity bits")
         logging.debug("\t\tKa: " + hexfunctions.binToHexRep(Ka))
         logging.debug("\t\tKb: " + hexfunctions.binToHexRep(Kb))
+        logging.debug("\t\tKey: " + hexfunctions.binToHexRep(Ka) + hexfunctions.binToHexRep(Kb))
 
         return Ka + Kb
 
