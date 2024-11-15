@@ -13,7 +13,7 @@ Here is the complete installation guide for __pypassport__ on Linux (tested on U
 
 ### Install pypassport
 
-First you need to download the latest version of __pypassport__:
+You first need to download the latest version of __pypassport__:
 
 ```
 sudo apt install git
@@ -23,18 +23,19 @@ git clone https://github.com/beaujeant/pypassport.git
 Once the repository cloned, you need to install the dependencies:
 
 ```
-python -m venv env
-source env/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install --upgrade pip
-pip install cryptodome
+pip install pycryptodome
+pip install ecdsa
 pip install pyasn1
-pip install pil
+pip install Pillow
 pip install pyscard
 ```
 
 ### Install driver
 
-First you need to unplug the reader, then install the following resource:
+You then need to unplug the reader, then install the following resource:
 
 ```
 sudo apt install libusb-dev
@@ -45,7 +46,7 @@ sudo apt install pcscd
 
 For the ACR122 from acs, you need to unplug the reader, then install the driver available here: https://www.acs.com.hk/en/driver/3/acr122u-usb-nfc-reader/
 
-Here is example if you are on Ubuntu 18.08 64-bit:
+For instance, if you are on Ubuntu 18.08 64-bit:
 
 ```
 cd /tmp/

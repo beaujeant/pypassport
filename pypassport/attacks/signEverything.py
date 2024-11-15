@@ -25,8 +25,9 @@ from pypassport.iso7816 import Iso7816, Iso7816Exception
 from pypassport.reader import PcscReader, ReaderException
 from pypassport.doc9303 import mrz, bac, converter, datagroup
 from pypassport.doc9303.securemessaging import SecureMessaging
-from pypassport.hexfunctions import hexToHexRep, binToHexRep
+from pypassport.hexfunctions import hexToHexRep, binToHexRep, hexRepToBin
 from pypassport.openssl import OpenSSL, OpenSSLException
+from smartcard.util import toBytes, toHexString, toASCIIBytes, PACK
 
 class SignEverythingException(Exception):
     def __init__(self, *params):
@@ -68,7 +69,7 @@ class SignEverything(Logger):
             public_key = self.getPubKey(self._bac, mrz_value)
 
         message = message_to_sign
-        message_bin = hexRepToBin(message)
+        message_bin = toHexString(list(message), PACK)
 
         signature = self._iso7816.internalAuthentication(message_bin)
         self.log("Signature: {0}".format(binToHexRep(signature)))
@@ -122,7 +123,7 @@ class SignEverything(Logger):
         self.log("MAC key: {0}".format(binToHexRep(KSmac)))
         self.log("Send Sequence Counter: {0}".format(binToHexRep(ssc)))
         sm = SecureMessaging(KSenc, KSmac, ssc)
-        self._iso7816.setCiphering(sm)
+        self._iso7816.ciphering = sm
 
         dgReader = datagroup.DataGroupReaderFactory().create(self._iso7816)
 

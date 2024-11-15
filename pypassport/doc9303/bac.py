@@ -1,23 +1,21 @@
 import logging
-
 from hashlib import sha1
 from Crypto import Random
 from Crypto.Cipher import DES3
-
 from pypassport.doc9303.mrz import MRZ
-from pypassport.logger import Logger
-from pypassport import hexfunctions
+from pypassport.utils import toHexString, toBytes
 from pypassport.iso9797 import mac, pad
-from pypassport import apdu
-from pypassport.iso7816 import Iso7816
+from pypassport.iso7816 import ISO7816, ISO7816Exception
+from pypassport.utils import toHexString
 
+DEBUG_CRYPTO = False
 
 class BACException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
 
 
-class BAC(Logger):
+class BAC():
 
     """
     This class performs the Basic Acces Control.
@@ -32,7 +30,6 @@ class BAC(Logger):
         @param iso7816: A valid iso7816 object connected to a reader.
         @type iso7816: A iso7816 object
         """
-        Logger.__init__(self, "BAC")
         self._iso7816 = iso7816
         self._ksenc = None
         self._ksmac = None
@@ -63,25 +60,24 @@ class BAC(Logger):
         if not mrz.checked:
             mrz.checkMRZ()
 
-        if isinstance(self._iso7816, Iso7816.__class__):
+        if isinstance(self._iso7816, ISO7816.__class__):
             raise BACException("The sublayer iso7816 is not available")
 
         try:
             self.derivationOfDocumentBasicAccesKeys(mrz)
+            logging.debug("Request an 8 byte random number from the MRTD's chip")
             rnd_icc = self._iso7816.getChallenge()
-            cmd_data = self.authentication(rnd_icc)
-            data = self._mutualAuthentication(cmd_data)
-            return self.sessionKeys(data, rnd_icc)
+            eifd_mifd = self.authentication(rnd_icc)
+            hex_eifd_mifd = toHexString(eifd_mifd)
+            logging.debug("Send Mutual Authentication")
+            eicc_micc = self._iso7816.mutualAuthentication(hex_eifd_mifd)
+            return self.sessionKeys(eicc_micc, rnd_icc)
+        except ISO7816Exception as e:
+            if e.sw1 == 0x63 and e.sw2 == 0x00:
+                logging.error("The MRZ is most likely incorrect.")
+                raise Exception(e)
         except Exception as msg:
-            Exception(msg)
-            #raise BACException(msg)
-
-
-    def _mutualAuthentication(self, cmd_data):
-        data = hexfunctions.binToHexRep(cmd_data)
-        lc = hexfunctions.hexToHexRep(len(data) / 2)
-        toSend = apdu.CommandAPDU("00", "82", "00", "00", lc, data, "28")
-        return self._iso7816.transmit(toSend, "Mutual Authentication")
+            raise Exception(msg)
 
 
     def _computeKeysFromKseed(self, Kseed):
@@ -93,12 +89,12 @@ class BAC(Logger):
         @return: A set of two 8 bytes encryption keys
         """
 
-        logging.debug("\tKseed: " + hexfunctions.binToHexRep(Kseed))
-
-        logging.debug("Compute Encryption key (Kenc) (c:" + hexfunctions.binToHexRep(BAC.KENC) + ")")
+        if DEBUG_CRYPTO: 
+            logging.debug("\tKseed: " + toHexString(Kseed))
+            logging.debug("Compute Encryption key (Kenc) (c:" + toHexString(BAC.KENC) + ")")
         kenc = self.keyDerivation(Kseed, BAC.KENC)
 
-        logging.debug("Compute MAC Computation key (Kmac) (c:" + hexfunctions.binToHexRep(BAC.KMAC) + ")")
+        if DEBUG_CRYPTO: logging.debug("Compute MAC Computation key (Kmac) (c:" + toHexString(BAC.KMAC) + ")")
         kmac = self.keyDerivation(Kseed, BAC.KMAC)
 
         return (kenc, kmac)
@@ -140,31 +136,33 @@ class BAC(Logger):
         @type rnd_icc: A 8 bytes binary string
         @return: The APDU binary data for the mutual authenticate command
         """
-        logging.debug("Request an 8 byte random number from the MRTD's chip")
-        logging.debug("\tRND.ICC: " + hexfunctions.binToHexRep(rnd_icc))
+        if DEBUG_CRYPTO: logging.debug("\tRND.ICC: " + toHexString(rnd_icc))
 
         if not rnd_ifd:
             rnd_ifd = Random.get_random_bytes(8)
         if not kifd:
             kifd = Random.get_random_bytes(16)
 
-        logging.debug("Generate an 8 byte random and a 16 byte random")
-        logging.debug("\tRND.IFD: " + hexfunctions.binToHexRep(rnd_ifd))
-        logging.debug("\tRND.Kifd: " + hexfunctions.binToHexRep(kifd))
+        if DEBUG_CRYPTO: 
+            logging.debug("Generate an 8 byte random and a 16 byte random")
+            logging.debug("\tRND.IFD: " + toHexString(rnd_ifd))
+            logging.debug("\tRND.Kifd: " + toHexString(kifd))
 
         s = rnd_ifd + rnd_icc + kifd
-        logging.debug("Concatenate RND.IFD, RND.ICC and Kifd")
-        logging.debug("\tS: " + hexfunctions.binToHexRep(s))
+        if DEBUG_CRYPTO: 
+            logging.debug("Concatenate RND.IFD, RND.ICC and Kifd")
+            logging.debug("\tS: " + toHexString(s))
 
         tdes = DES3.new(self._ksenc, DES3.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
         eifd = tdes.encrypt(s)
-        logging.debug("Encrypt S with TDES key Kenc as calculated in Appendix 5.2")
-        logging.debug("\tEifd: " + hexfunctions.binToHexRep(eifd))
+        if DEBUG_CRYPTO: 
+            logging.debug("Encrypt S with TDES key Kenc as calculated in Appendix 5.2")
+            logging.debug("\tEifd: " + toHexString(eifd))
 
         mifd = mac(self._ksmac, pad(eifd))
-        logging.debug("Compute MAC over eifd with TDES key Kmac as calculated in-Appendix 5.2")
-        logging.debug("\tMifd: " + hexfunctions.binToHexRep(mifd))
-        #Construct APDU
+        if DEBUG_CRYPTO: 
+            logging.debug("Compute MAC over eifd with TDES key Kmac as calculated in-Appendix 5.2")
+            logging.debug("\tMifd: " + toHexString(mifd))
 
         cmd_data = eifd + mifd
 
@@ -183,7 +181,7 @@ class BAC(Logger):
         @return: A set of two 16 bytes keys (KSenc, KSmac) and the SSC
         """
 
-        logging.debug("Decrypt and verify received data and compare received RND.IFD with generated RND.IFD")
+        if DEBUG_CRYPTO: logging.debug("Decrypt and verify received data and compare received RND.IFD with generated RND.IFD")
         if mac(self._ksmac, pad(data[0:32])) != data[32:]:
             raise Exception("The MAC value is not correct")
 
@@ -191,27 +189,30 @@ class BAC(Logger):
         response = tdes.decrypt(data[0:32])
         response_kicc = response[16:32]
         Kseed = self._xor(self._kifd, response_kicc)
-        logging.debug("Calculate XOR of Kifd and Kicc")
-        logging.debug("\tKseed: " + hexfunctions.binToHexRep(Kseed))
+        if DEBUG_CRYPTO: 
+            logging.debug("Calculate XOR of Kifd and Kicc")
+            logging.debug("\tKseed: " + toHexString(Kseed))
 
         KSenc = self.keyDerivation(Kseed, BAC.KENC)
         KSmac = self.keyDerivation(Kseed, BAC.KMAC)
-        logging.debug("Calculate Session Keys (KSenc and KSmac) using Appendix 5.1")
-        logging.debug("\tKSenc: " + hexfunctions.binToHexRep(KSenc))
-        logging.debug("\tKSmac: " + hexfunctions.binToHexRep(KSmac))
+        if DEBUG_CRYPTO: 
+            logging.debug("Calculate Session Keys (KSenc and KSmac) using Appendix 5.1")
+            logging.debug("\tKSenc: " + toHexString(KSenc))
+            logging.debug("\tKSmac: " + toHexString(KSmac))
 
         ssc = rnd_icc[-4:] + self._rnd_ifd[-4:]
-        logging.debug("Calculate Send Sequence Counter")
-        logging.debug("\tSSC: " + hexfunctions.binToHexRep(ssc))
+        if DEBUG_CRYPTO: 
+            logging.debug("Calculate Send Sequence Counter")
+            logging.debug("\tSSC: " + toHexString(ssc))
 
         return (KSenc, KSmac, ssc)
 
 
     def _xor(self, kifd, response_kicc):
         kseed = ""
-        for i in range(len(hexfunctions.binToHexRep(kifd))):
-            kseed += hex(int(hexfunctions.binToHexRep(kifd)[i], 16) ^ int(hexfunctions.binToHexRep(response_kicc)[i], 16))[2:]
-        return hexfunctions.hexRepToBin(kseed)
+        for i in range(len(toHexString(kifd))):
+            kseed += hex(int(toHexString(kifd)[i], 16) ^ int(toHexString(response_kicc)[i], 16))[2:]
+        return toBytes(kseed)
 
     def mrz_information(self, mrz):
         """
@@ -250,14 +251,15 @@ class BAC(Logger):
         @return: a 16 bytes string
         """
 
-        logging.debug("Calculate the SHA-1 hash of MRZ_information")
+        if DEBUG_CRYPTO: logging.debug("Calculate the SHA-1 hash of MRZ_information")
 
         kseedhash = sha1(kmrz.encode("utf-8"))
         kseed = kseedhash.digest()
 
-        logging.debug("\tHsha1(MRZ_information): " + hexfunctions.binToHexRep(kseed))
-        logging.debug("Take the most significant 16 bytes to form the Kseed")
-        logging.debug("\tKseed: " + hexfunctions.binToHexRep(kseed[:16]))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tHsha1(MRZ_information): " + toHexString(kseed))
+            logging.debug("Take the most significant 16 bytes to form the Kseed")
+            logging.debug("\tKseed: " + toHexString(kseed[:16]))
 
         return kseed[:16]
 
@@ -280,27 +282,31 @@ class BAC(Logger):
             raise BACException("Bad parameter (c=0 or c=1)")
 
         d = kseed + c
-        logging.debug("\tConcatenate Kseed and c")
-        logging.debug("\t\tD: " + hexfunctions.binToHexRep(d))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tConcatenate Kseed and c")
+            logging.debug("\t\tD: " + toHexString(d))
 
         h = sha1(d).digest()
-        logging.debug("\tCalculate the SHA-1 hash of D")
-        logging.debug("\t\tHsha1(D): " + hexfunctions.binToHexRep(h))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tCalculate the SHA-1 hash of D")
+            logging.debug("\t\tHsha1(D): " + toHexString(h))
 
         Ka = h[:8]
         Kb = h[8:16]
 
-        logging.debug("\tExctract Ka and Kb")
-        logging.debug("\t\tKa: " + hexfunctions.binToHexRep(Ka))
-        logging.debug("\t\tKb: " + hexfunctions.binToHexRep(Kb))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tExctract Ka and Kb")
+            logging.debug("\t\tKa: " + toHexString(Ka))
+            logging.debug("\t\tKb: " + toHexString(Kb))
 
         Ka = self.DESParity(Ka)
         Kb = self.DESParity(Kb)
 
-        logging.debug("\tAdjust parity bits")
-        logging.debug("\t\tKa: " + hexfunctions.binToHexRep(Ka))
-        logging.debug("\t\tKb: " + hexfunctions.binToHexRep(Kb))
-        logging.debug("\t\tKey: " + hexfunctions.binToHexRep(Ka) + hexfunctions.binToHexRep(Kb))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tAdjust parity bits")
+            logging.debug("\t\tKa: " + toHexString(Ka))
+            logging.debug("\t\tKb: " + toHexString(Kb))
+            logging.debug("\t\tKey: " + toHexString(Ka) + toHexString(Kb))
 
         return Ka + Kb
 

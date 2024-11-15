@@ -1,20 +1,111 @@
 import logging
-
-from pypassport import hexfunctions
-from pypassport import apdu
-
-
-class Iso7816Exception(Exception):
-    def __init__(self, description, sw1=None, sw2=None):
-        self.description = description
-        self.sw1 = sw1
-        self.sw2 = sw2
-        Exception.__init__(self, description, sw1, sw2)
+from pypassport import reader
+from pypassport.utils import toHexString, toBytes, toHexString, toList
 
 
-class Iso7816():
+class APDUCommand():
 
-    Errors = {
+    Instructions = {
+        "VERIFY": 0x20,
+        "CHANGE REFERENCE DATA": 0x24,
+        "RESET RETRY COUNTER": 0x2c,
+        "GET CHALLENGE": 0x84,
+        "INTERNAL AUTHENTICATE": 0x88,
+        "EXTERNAL AUTHENTICATE": 0x82,
+        "SELECT FILE": 0xa4,
+        "READ BINARY": 0xb0,
+        "READ RECORDS": 0xb2,
+        "UPDATE BINARY": 0xd6,
+        "ERASE BINARY": 0xda,
+        "ERASE RECORDS": 0xdc,
+        "UPDATE RECORDS": 0xdc,
+        "APPEND RECORD": 0xe2
+    }
+
+    def __init__(self, cla="00", ins="00", p1="00", p2="00", lc="", data="", le=""):
+        if isinstance(cla, str):
+            self.cla = cla[:2]
+        elif isinstance(cla, bytes):
+            self.cla = toHexString(cla)[:2]
+        elif isinstance(cla, int):
+            self.cla = toHexString([cla])[:2]
+        else:
+            self.cla="00"
+
+        if isinstance(ins, str):
+            self.ins = ins[:2]
+        elif isinstance(ins, bytes):
+            self.ins = toHexString(ins)[:2]
+        elif isinstance(ins, int):
+            self.ins = toHexString([ins])[:2]
+        else:
+            self.ins="00"
+
+        if isinstance(p1, str):
+            self.p1 = p1[:2]
+        elif isinstance(p1, bytes):
+            self.p1 = toHexString(p1)[:2]
+        elif isinstance(p1, int):
+            self.p1 = toHexString([p1])[:2]
+        else:
+            self.p1="00"
+
+        if isinstance(p2, str):
+            self.p2 = p2[:2]
+        elif isinstance(p2, bytes):
+            self.p2 = toHexString(p2)[:2]
+        elif isinstance(cla, int):
+            self.p2 = toHexString([p2])[:2]
+        else:
+            self.p2="00"
+
+        if (isinstance(data, str) and data) and (isinstance(lc, str) and not lc):
+            self.lc = "%02x" % (len(data) // 2)
+        elif (isinstance(data, bytes) and data) and (isinstance(lc, str) and not lc):
+            self.lc = "%02x" % len(data)
+        elif isinstance(lc, str) and lc:
+            self.lc = lc[:2]
+        elif isinstance(lc, bytes) and lc:
+            self.lc = toHexString(lc)[:2]
+        elif isinstance(lc, int):
+            self.lc = toHexString([lc])[:2]
+        else:
+            self.lc = ""
+
+        if isinstance(data, str):
+            self.data = data
+        elif isinstance(data, bytes):
+            self.data = toHexString(data)
+        else:
+            self.data = ""
+
+        if isinstance(le, str):
+            self.le = le
+        elif isinstance(le, bytes):
+            self.le = toHexString(le)
+        elif isinstance(le, int):
+            self.le = toHexString([le])
+        else:
+            self.le = ""
+
+    def raw(self):
+        return toList(str(self))
+    
+    def __str__(self):
+        return self.cla + self.ins + self.p1 + self.p2 + self.lc + self.data + self.le
+    
+    def __repr__(self):
+        output = f"Command APDU [Class: {self.cla} Instruction: {self.ins} Parameter 1: {self.p1} Parameter 2: {self.p2}]"
+        if self.data:
+            output += f" [Data: {self.data} (len {self.lc})]"
+        if self.le:
+            output += f" [Expected Response Length: {self.le}]"
+        return output
+
+
+class APDUResponse():
+
+    Status = {
         0x61: 'SW2 indicates the number of response bytes still available',
         0x62: {
             0x00: 'No information given',
@@ -88,126 +179,149 @@ class Iso7816():
         }
     }
 
+    def __init__(self, data, sw1, sw2):
+        self.data = data
+        self.sw1 = sw1
+        self.sw2 = sw2
+
+        try:
+            self.status = self.Status[sw1][sw2]
+        except IndexError:
+            self.status = "Unknown error"
+
+    def raw(self):
+        return bytes(list(self.data) + [self.sw1] + [self.sw2])
+
+    def __str__(self):
+        return toHexString(list(str(self)))
+
+    def __repr__(self):
+        return f"APDU Response [Data: {toHexString(self.data)}] [Status Word 1: {hex(self.sw1)}] [Status Word 2: {hex(self.sw2)}] ({self.status})"
+
+
+class ISO7816Exception(Exception):
+    def __init__(self, data, sw1=None, sw2=None):
+        self.data = data
+        self.sw1 = sw1
+        self.sw2 = sw2
+        Exception.__init__(self, data, sw1, sw2)
+
+
+class ISO7816():
 
     def __init__(self, reader):
         self._reader = reader
-        self._ciphering = False
-
-
-    def rstConnection(self):
-        rn = self._reader.readerNum
-        try:
-            self._reader.disconnect()
-            self._reader.connect(rn)
-            self.setCiphering(False)
-            self.selectFile("04", "0C", "A0000002471001")
-        except Exception as e:
-            raise Iso7816Exception("An error occured while resetting the connection: {}".format(e))
-
-
-    def getTypeReader(self):
-        return type(self._reader)
-
-
-    def transmitRaw(self, toSend):
-        try:
-            if self._ciphering:
-                toSend = self._ciphering.protect(toSend)
-            res = self._reader.transmit(toSend)
-            if self._ciphering:
-                res = self._ciphering.unprotect(res)
-            return res
-        except KeyError:
-            raise Iso7816Exception("Unknown error", res.sw1, res.sw2)
-
-    def rstConnectionRaw(self):
-        rn = self._reader.readerNum
-        try:
-            self._reader.disconnect()
-            self._reader.connect(rn)
-            self.setCiphering()
-        except Exception:
-            raise Iso7816Exception("An error occured while resetting the connection")
-
+        self.ciphering = False
 
     def transmit(self, toSend, logMsg=None):
         """
         @param toSend: The command to transmit.
-        @type toSend: A commandAPDU object.
+        @type toSend: An APDUCommand object.
         @param logMsg: A log message associated to the transmit.
         @type logMsg: A string.
         @return: The result field of the responseAPDU object
 
         The P1 and P2 fields are checked after each transmit.
         If they don't mean success, the appropriate error string is retrieved
-        from the Error dictionary and an APDUException is raised.
-        The Iso7816Exception is composed of three fields: ('error message', p1, p2)
-
-        To access these fields when the exception is raised,
-        access the APDUException object like a list::
-
-            try:
-                x.apduTransmit(commandAPDU(..))
-            except Iso7816Exception, exc:
-                print "error: " + exc[0]
-                print "(pw1, pw2) + str( (exc[1], exc[2]) )
+        from the Error dictionary and an ISO7816Exception is raised.
+        The ISO7816Exception is composed of three fields: ('error message', p1, p2)
         """
+
+        log_enc = ""
+        if logMsg:
+            logging.debug(f"Transmit APDU: {logMsg}")
+
+        if self.ciphering:
+            log_enc = "Encrypted "
+            toSend = self.ciphering.protect(toSend)
+
+        logging.debug(f"> {log_enc}{repr(toSend)}")
+
+        data, sw1, sw2 = self._reader.transmit(toSend.raw())
+        response = APDUResponse(data, sw1, sw2)
+
+        if self.ciphering:
+            response = self.ciphering.unprotect(response)
+
+        logging.debug(f"< {log_enc}{repr(response)})")
+
+        if response.status == "Success":
+            return bytes(response.data)
+        else:
+            logging.debug(f"APDU Response Error: {response.status} [{hex(response.sw1)}] [{hex(response.sw2)}]")
+            raise ISO7816Exception(response.status, response.sw1, response.sw2)
+
+    def rstConnectionRaw(self):
+        reader_name = self._reader.getReader()
         try:
-            logging.debug(logMsg)
+            self._reader.disconnect()
+            self._reader = reader.getReader(reader_name)
+            self._reader.connect()
+            self.ciphering = False
+            return
+        except Exception as e:
+            raise ISO7816Exception(f"An error occured while resetting the connection: {e}")
 
-            logging.debug("> Command APDU [Class: {}] [Instruction: {}] [Parameter 1: {}] [Parameter 2: {}] [Data: {}] [Expected Response Length: {}]".format(toSend.cla, toSend.ins, toSend.p1, toSend.p2, toSend.lc, toSend.data, toSend.le))
+    def rstConnection(self):
+        try:
+            self.rstConnectionRaw()
+            self.selectDedicatedFile("A0000002471001")
+        except Exception as e:
+            raise ISO7816Exception(f"An error occured while resetting the connection: {e}")
 
-            if self._ciphering:
-                toSend = self._ciphering.protect(toSend)
-                logging.debug("> Encrypted Command APDU [Class: {}] [Instruction: {}] [Parameter 1: {}] [Parameter 2: {}] [Data: {}] [Expected Response Length: {}]".format(toSend.cla, toSend.ins, toSend.p1, toSend.p2, toSend.lc, toSend.data, toSend.le))
+    def selectFile(self, p1, p2, file):
+        toSend = APDUCommand("00", "A4", p1, p2, data=file)
+        return self.transmit(toSend, f"Select File {file}")
 
-            res = self._reader.transmit(toSend)
-            msg = Iso7816.Errors[res.sw1][res.sw2]
+    def selectElementaryFile(self, file):
+        return self.selectFile("02", "0C", file)
 
-            if self._ciphering:
-                logging.debug("< Encrypted Response APDU [Response: {}] [Status Word 1: {}] [Status Word 2: {}] ({})".format(hexfunctions.binToHexRep(res.res), hex(res.sw1), hex(res.sw2), msg))
-                res = self._ciphering.unprotect(res)
-
-            logging.debug("< Response APDU [Response: {}] [Status Word 1: {}] [Status Word 2: {}] ({})".format(hexfunctions.binToHexRep(res.res), hex(res.sw1), hex(res.sw2), msg))
-
-            if msg == "Success":
-                return res.res
-            else:
-                raise Iso7816Exception(msg, res.sw1, res.sw2)
-        except KeyError:
-            raise Iso7816Exception("Unknown error code", res.sw1, res.sw2)
-
-    def setCiphering(self, c=False):
-        self._ciphering = c
-
-    def selectFile(self, p1, p2, file="", cla="00", ins="A4"):
-        lc = hexfunctions.hexToHexRep(len(file) / 2)
-        toSend = apdu.CommandAPDU(cla, ins, p1, p2, lc, file, "")
-        return self.transmit(toSend, "Select File")
+    def selectDedicatedFile(self, file):
+        return self.selectFile("04", "0C", file)
 
     def readBinary(self, offset, nbOfByte):
         os = "%04x" % int(offset)
-        toSend = apdu.CommandAPDU("00", "B0", os[0:2], os[2:4], "", "", hexfunctions.hexToHexRep(nbOfByte))
-        return self.transmit(toSend, "Read Binary")
+        toSend = APDUCommand("00", "B0", os[0:2], os[2:4], le=toHexString([nbOfByte]))
+        return self.transmit(toSend, f"Reading binary at offset {offset} - expecting {nbOfByte} bytes")
 
-    def updateBinary(self, offset, data, cla="00", ins="D6"):
+    def readBinarySF(self, shortFileID, offset, nbOfByte):
+        os = "%02x" % int(offset)
+        toSend = APDUCommand("00", "B0", shortFileID, os, le=toHexString([nbOfByte]))
+        return self.transmit(toSend, f"Reading binary with SFID {shortFileID} at offset {offset} - expecting {nbOfByte} bytes")
+
+    def updateBinary(self, offset, data):
         os = "%04x" % int(offset)
-        data = hexfunctions.binToHexRep(data)
-        lc = hexfunctions.hexToHexRep(len(data) / 2)
-        toSend = apdu.CommandAPDU(cla, ins, os[0:2], os[2:4], lc, data, "")
+        toSend = APDUCommand("00", "D6", os[0:2], os[2:4], data=data)
         return self.transmit(toSend, "Update Binary")
 
-    def getChallenge(self):
-        toSend = apdu.CommandAPDU("00", "84", "00", "00", "", "", "08")
-        return self.transmit(toSend, "Get Challenge")
-
     def getUID(self):
-        toSend = apdu.CommandAPDU("FF", "CA", "00", "00", "", "", "00")
+        toSend = APDUCommand("FF", "CA", "00", "00", le="00")
         return self.transmit(toSend, "Get UID")
 
     def internalAuthentication(self, rnd_ifd):
-        data = hexfunctions.binToHexRep(rnd_ifd)
-        lc = hexfunctions.hexToHexRep(len(data) / 2)
-        toSend = apdu.CommandAPDU("00", "88", "00", "00", lc, data, "00")
-        res = self.transmit(toSend, "Internal Authentication")
-        return res
+        toSend = APDUCommand("00", "88", "00", "00", data=rnd_ifd, le="00")
+        return self.transmit(toSend, "Internal Authentication")
+
+    def getChallenge(self):
+        toSend = APDUCommand("00", "84", "00", "00", le="08")
+        return self.transmit(toSend, "Get Challenge")
+
+    def mutualAuthentication(self, eifd_mifd):
+        toSend = APDUCommand("00", "82", "00", "00", data=eifd_mifd, le="28")
+        return self.transmit(toSend, "Mutual Authentication")
+
+    def mseSetAt(self, pace_oid, reference, domain_params=b"", chat=b""):
+        self.ciphering = False
+        pace_oid = bytes([0x80, len(pace_oid)]) + pace_oid
+        reference = bytes([0x83, len(reference)]) + reference
+        if chat:
+            chat = bytes([0x7F, 0x4C, len(chat)]) + chat
+        if domain_params:
+            domain_params = bytes([0x84, len(domain_params)]) + domain_params
+        payload = pace_oid + reference + chat + domain_params
+        toSend = APDUCommand("00", "22", "C1", "A4", data=payload)
+        return self.transmit(toSend, "MSE:Set At")
+
+    def generalAuthenticate(self):
+        toSend = APDUCommand("10", "86", "00", "00", data="7C00", le="00")
+        return self.transmit(toSend, "General Authenticate")

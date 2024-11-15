@@ -33,6 +33,17 @@ class MRZ():
         self._dateOfExpiryCD = None
         self._checked = None
 
+    @classmethod
+    def build_mrz(cls, number, dob, expiry):
+        mrz =  number.ljust(9, "<")
+        mrz += self._calculCheckDigit(number)
+        mrz += dob
+        mrz += self._calculCheckDigit(dob)
+        mrz += expiry
+        mrz += self._calculCheckDigit(expiry)
+        return cls(mrz)
+        
+
 
     def getDocNumber(self):
         return (self._docNumber, self._docNumberCD)
@@ -224,8 +235,6 @@ class MRZ():
         field = field.replace('-', '<').upper()
         field = field.replace(',', '').upper()
         return field + "<" * (size - len(field))
-
-
 
 
 

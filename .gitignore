@@ -1,5 +1,9 @@
 # Removing my testing script
 test.py
+test/
+
+# Removing the PDF docs
+*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -8,6 +12,9 @@ __pycache__/
 
 # C extensions
 *.so
+
+# Personal data
+*.bin
 
 # Distribution / packaging
 .Python

@@ -27,6 +27,7 @@ from pypassport.reader import PcscReader, ReaderException
 from pypassport.doc9303 import mrz, bac
 from pypassport.iso9797 import *
 from pypassport.hexfunctions import hexToHexRep, binToHexRep
+from smartcard.util import toBytes, toHexString, toASCIIBytes, PACK
 
 class AATraceabilityException(Exception):
     def __init__(self, *params):
@@ -64,7 +65,7 @@ class AATraceability(Logger):
         self.log("Reset the connection")
         self._iso7816.rstConnection()
         try:
-            rnd = os.urandom(8)
+            rnd = toHexString(list(os.urandom(8)), PACK)
             self.log("Trying to execute an internal authentication")
             if self._iso7816.internalAuthentication(rnd):
                 vulnerable = True
@@ -92,7 +93,7 @@ class AATraceability(Logger):
         self.log("Start the internal authentication loop {0} times".format(max))
         while i<max:
             try:
-                rnd = os.urandom(8)
+                rnd = toHexString(list(os.urandom(8)), PACK)
                 signature = binToHexRep(self._iso7816.internalAuthentication(rnd))
                 if signature > higher:
                     higher = signature

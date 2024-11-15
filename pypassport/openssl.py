@@ -2,9 +2,8 @@ import os
 import subprocess
 from pypassport.logger import Logger
 
-from Crypto.PublicKey import RSA
-from Crypto.Signature import pkcs1_15
-from Crypto.Hash import SHA256
+
+
 
 
 class OpenSSLException(Exception):

@@ -1,30 +1,19 @@
 import logging
-
-from pypassport.apdu import CommandAPDU, ResponseAPDU
+from pypassport.iso7816 import APDUCommand, APDUResponse
 from pypassport.iso9797 import pad, unpad, mac
 from Crypto.Cipher import DES3, DES
-from pypassport import hexfunctions
-from pypassport import asn1
-from pypassport.logger import Logger
+from pypassport.utils import toHexString, toBytes
+from pypassport.asn1 import asn1Length, toAsn1Length
 
 
-class Ciphering(Logger):
-    def __init__(self):
-        Logger.__init__(self, "SM")
-
-    def protect(self, apdu):
-        raise Exception("Should be implemented")
-
-    def unprotect(self, apdu):
-        raise Exception("Should be implemented")
-
+DEBUG_CRYPTO = False
 
 class SecureMessagingException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
 
 
-class SecureMessaging(Ciphering):
+class SecureMessaging():
     """
     This class implements the secure messaging protocol.
     The class is a new layer that comes between the reader and the iso7816.
@@ -33,7 +22,6 @@ class SecureMessaging(Ciphering):
     """
 
     def __init__(self, ksenc, ksmac, ssc):
-        Ciphering.__init__(self)
         self._ksenc = ksenc
         self._ksmac = ksmac
         self._ssc = ssc
@@ -48,45 +36,49 @@ class SecureMessaging(Ciphering):
         do87 = b""
         do97 = b""
 
-        tmp = "Concatenate CmdHeader"
-        if (apdu.getData()):
-            tmp += " and DO87"
+        debug_msg = "Concatenate CmdHeader"
+        if apdu.data:
+            debug_msg += " and DO87"
             do87 = self._buildD087(apdu)
-        if (apdu.getLe()):
-            tmp += " and DO97"
+        if apdu.le:
+            debug_msg += " and DO97"
             do97 = self._buildD097(apdu)
 
         M = cmdHeader + do87 + do97
-        logging.debug(tmp)
-        logging.debug("\tM: " + hexfunctions.binToHexRep(M))
+        if DEBUG_CRYPTO: 
+            logging.debug(debug_msg)
+            logging.debug("\tM: " + toHexString(M))
 
         self._ssc = self._incSSC()
-        logging.debug("Compute MAC of M")
-        logging.debug("\tIncrement SSC with 1")
-        logging.debug("\t\tSSC: " + hexfunctions.binToHexRep(self._ssc))
+        if DEBUG_CRYPTO: 
+            logging.debug("Compute MAC of M")
+            logging.debug("\tIncrement SSC with 1")
+            logging.debug("\t\tSSC: " + toHexString(self._ssc))
 
         N = pad(self._ssc + M)
-        logging.debug("\tConcateate SSC and M and add padding")
-        logging.debug("\t\tN: " + hexfunctions.binToHexRep(N))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tConcateate SSC and M and add padding")
+            logging.debug("\t\tN: " + toHexString(N))
 
         CC = mac(self._ksmac, N)
-        logging.debug("\tCompute MAC over N with KSmac")
-        logging.debug("\t\tCC: " + hexfunctions.binToHexRep(CC))
+        if DEBUG_CRYPTO: 
+            logging.debug("\tCompute MAC over N with KSmac")
+            logging.debug("\t\tCC: " + toHexString(CC))
 
         do8e = self._buildD08E(CC)
-        size = str(len(do87) + len(do97) + len(do8e))
-        protectedAPDU = cmdHeader[:4] + hexfunctions.intToBin(size) + do87 + do97 + do8e + hexfunctions.hexToBin(0x00)
+        size = len(do87) + len(do97) + len(do8e)
+        protectedAPDU = cmdHeader[:4] + bytes([size]) + do87 + do97 + do8e + bytes([0x00])
 
-        logging.debug("Construct and send protected APDU")
+        if DEBUG_CRYPTO: logging.debug("Construct and send protected APDU")
 
-        return CommandAPDU(
-            hexfunctions.binToHexRep(protectedAPDU[0]),
-            hexfunctions.binToHexRep(protectedAPDU[1]),
-            hexfunctions.binToHexRep(protectedAPDU[2]),
-            hexfunctions.binToHexRep(protectedAPDU[3]),
-            hexfunctions.binToHexRep(protectedAPDU[4]),
-            hexfunctions.binToHexRep(protectedAPDU[5:-1]),
-            hexfunctions.binToHexRep(protectedAPDU[-1])
+        return APDUCommand(
+            protectedAPDU[0],
+            protectedAPDU[1],
+            protectedAPDU[2],
+            protectedAPDU[3],
+            protectedAPDU[4],
+            protectedAPDU[5:-1],
+            protectedAPDU[-1]
         )
 
 
@@ -105,16 +97,16 @@ class SecureMessaging(Ciphering):
         if (rapdu.sw1 != 0x90 or rapdu.sw2 != 0x00):
             return rapdu
 
-        rapdu = rapdu.getBinAPDU()
+        rapdu = rapdu.raw()
 
         # DO'87'
         # Mandatory if data is returned, otherwise absent
         if rapdu[0] == 0x87:
-            (encDataLength, o) = asn1.asn1Length(rapdu[1:])
+            (encDataLength, o) = asn1Length(rapdu[1:])
             offset = 1 + o
 
             if rapdu[offset] != 0x01:
-                raise SecureMessagingException("DO87 malformed, must be 87 L 01 <encdata> : " + hexfunctions.binToHexRep(rapdu))
+                raise SecureMessagingException("DO87 malformed, must be 87 L 01 <encdata> : " + toHexString(rapdu))
 
             do87 = rapdu[0:offset + encDataLength]
             do87Data = rapdu[offset + 1:offset + encDataLength]
@@ -129,44 +121,47 @@ class SecureMessaging(Ciphering):
         offset += 4
         needCC = True
 
-        if do99[0:2] != hexfunctions.hexRepToBin("9902"):
+        if do99[0] != 0x99 or do99[1] != 0x02:
             # SM error, return the error code
-            return ResponseAPDU([], sw1, sw2)
+            if DEBUG_CRYPTO: logging.debug("DO99 malformed, must be 9902 instead" + toHexString(rapdu))
+            return APDUCommand([], sw1, sw2)
 
         # DO'8E'
         # Mandatory id DO'87' and/or DO'99' is present
         if rapdu[offset] == 0x8e:
-            ccLength = hexfunctions.binToHex(rapdu[offset + 1])
+            ccLength = rapdu[offset + 1]
             CC = rapdu[offset + 2:offset + 2 + ccLength]
             do8e = rapdu[offset:offset + 2 + ccLength]
 
             # CheckCC
-
-            tmp = ""
+            debug_msg = ""
             if do87:
-                tmp += " DO'87"
+                debug_msg += " DO'87"
             if do99:
-                tmp += " DO'99"
-            logging.debug("Verify RAPDU CC by computing MAC of" + tmp)
+                debug_msg += " DO'99"
+            if DEBUG_CRYPTO: logging.debug("Verify RAPDU CC by computing MAC of" + debug_msg)
 
             self._ssc = self._incSSC()
-            logging.debug("\tIncrement SSC with 1")
-            logging.debug("\t\tSSC: " + hexfunctions.binToHexRep(self._ssc))
+            if DEBUG_CRYPTO: 
+                logging.debug("\tIncrement SSC with 1")
+                logging.debug("\t\tSSC: " + toHexString(self._ssc))
 
             K = pad(self._ssc + do87 + do99)
-            logging.debug("\tConcatenate SSC and" + tmp + " and add padding")
-            logging.debug("\t\tK: " + hexfunctions.binToHexRep(K))
+            if DEBUG_CRYPTO: 
+                logging.debug("\tConcatenate SSC and" + debug_msg + " and add padding")
+                logging.debug("\t\tK: " + toHexString(K))
 
-            logging.debug("\tCompute MAC with KSmac")
+            if DEBUG_CRYPTO: logging.debug("\tCompute MAC with KSmac")
             CCb = mac(self._ksmac, K)
-            logging.debug("\t\tCC: " + hexfunctions.binToHexRep(CCb))
+            if DEBUG_CRYPTO: logging.debug("\t\tCC: " + toHexString(CCb))
 
             res = (CC == CCb)
-            logging.debug("\tCompare CC with data of DO'8E of RAPDU")
-            logging.debug("\t\t" + hexfunctions.binToHexRep(CC) + " == " + hexfunctions.binToHexRep(CCb) + " ? " + str(res))
+            if DEBUG_CRYPTO: 
+                logging.debug("\tCompare CC with data of DO'8E of RAPDU")
+                logging.debug("\t\t" + toHexString(CC) + " == " + toHexString(CCb) + " ? " + str(res))
 
             if not res:
-                raise SecureMessagingException("Invalid checksum for the rapdu : " + str(hexfunctions.binToHex(rapdu)))
+                raise SecureMessagingException("Invalid checksum for the rapdu : " + toHexString(rapdu))
 
         elif needCC:
             raise SecureMessagingException("Mandatory id DO'87' and/or DO'99' is present")
@@ -176,57 +171,59 @@ class SecureMessaging(Ciphering):
             # There is a payload
             tdes = DES3.new(self._ksenc, DES.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
             data = unpad(tdes.decrypt(do87Data))
-            logging.debug("Decrypt data of DO'87 with KSenc")
+            if DEBUG_CRYPTO: logging.debug("Decrypt data of DO'87 with KSenc")
 
-        return ResponseAPDU(data, hexfunctions.binToHex(sw1), hexfunctions.binToHex(sw2))
+        return APDUResponse(data, sw1, sw2)
 
 
     def _maskClassAndPad(self, apdu):
-        logging.debug("Mask class byte and pad command header")
-        res = pad(hexfunctions.hexRepToBin("0C" + apdu.getIns() + apdu.getP1() + apdu.getP2()))
-        logging.debug("\tCmdHeader: " + hexfunctions.binToHexRep(res))
+        if DEBUG_CRYPTO: logging.debug("Mask class byte and pad command header")
+        res = pad(toBytes("0C" + apdu.ins + apdu.p1 + apdu.p2))
+        if DEBUG_CRYPTO: logging.debug("\tCmdHeader: " + toHexString(res))
         return res
 
 
     def _buildD087(self, apdu):
         cipher = b'\x01' + self._padAndEncryptData(apdu)
-        res = b'\x87' + asn1.toAsn1Length(len(cipher)) + cipher
-        logging.debug("Build DO'87")
-        logging.debug("\tDO87: " + hexfunctions.binToHexRep(res))
+        res = b'\x87' + toAsn1Length(len(cipher)) + cipher
+        if DEBUG_CRYPTO: 
+            logging.debug("Build DO'87")
+            logging.debug("\tDO87: " + toHexString(res))
         return res
 
 
     def _padAndEncryptData(self, apdu):
         """ Pad the data, encrypt data with KSenc and build DO'87"""
         tdes = DES3.new(self._ksenc, DES.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
-        paddedData = pad(hexfunctions.hexRepToBin(apdu.getData()))
+        paddedData = pad(toBytes(apdu.data))
         enc = tdes.encrypt(paddedData)
-        logging.debug("Pad data")
-        logging.debug("\tData: " + hexfunctions.binToHexRep(paddedData))
-        logging.debug("Encrypt data with KSenc")
-        logging.debug("\tEncryptedData: " + hexfunctions.binToHexRep(enc))
+        if DEBUG_CRYPTO:
+            logging.debug("Pad data")
+            logging.debug("\tData: " + toHexString(paddedData))
+            logging.debug("Encrypt data with KSenc")
+            logging.debug("\tEncryptedData: " + toHexString(enc))
         return enc
 
 
     def _incSSC(self):
-        out = hexfunctions.binToHex(self._ssc) + 1
-        res = hexfunctions.hexToBin(out)
-        return res
+        out = int.from_bytes(self._ssc) + 1
+        return out.to_bytes(length=8)
 
 
     def _buildD08E(self, mac):
-        res = hexfunctions.hexListToBin([0x8E, len(mac)]) + mac
-        logging.debug("Build DO'8E")
-        logging.debug("\tDO8E: " + hexfunctions.binToHexRep(res))
+        res = bytes([0x8E, len(mac)]) + mac
+        if DEBUG_CRYPTO: 
+            logging.debug("Build DO'8E")
+            logging.debug("\tDO8E: " + toHexString(res))
         return res
 
 
     def _buildD097(self, apdu):
-        tmp = b"9701" + apdu.getLe().encode("utf-8")
-        logging.debug("Build DO'97")
-        logging.debug("\tDO97: {}".format(tmp))
-        return hexfunctions.hexRepToBin(tmp)
+        if DEBUG_CRYPTO: 
+            logging.debug("Build DO'97")
+            logging.debug(f"\tDO97: {apdu.le}")
+        return toBytes("9701" + apdu.le)
 
 
     def __str__(self):
-        return "KSenc: " + hexfunctions.binToHexRep(self._ksenc) + "\n" + "KSmac: " + hexfunctions.binToHexRep(self._ksmac) + "\n" + "SSC: " + hexfunctions.binToHexRep(self._ssc)
+        return "KSenc: " + toHexString(self._ksenc) + "\n" + "KSmac: " + toHexString(self._ksmac) + "\n" + "SSC: " + toHexString(self._ssc)

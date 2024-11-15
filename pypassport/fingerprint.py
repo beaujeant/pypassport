@@ -4,7 +4,7 @@ import logging
 
 from pypassport.iso7816 import Iso7816Exception
 from pypassport.doc9303 import passiveauthentication
-from pypassport import apdu, camanager
+from pypassport import camanager
 from pypassport import hexfunctions
 from pypassport.doc9303 import converter
 from pypassport.attacks import macTraceability
@@ -20,7 +20,6 @@ class Fingerprint(object):
     def __init__(self, epassport, certdir=None, callback=None):
         self._doc = epassport
         self.curMRZ = None
-        self._comm = self._doc.getCommunicationLayer()
         self._pa = passiveauthentication.PassiveAuthentication(epassport)
         self._certInfo = None
         self.callback = callback
@@ -34,7 +33,7 @@ class Fingerprint(object):
             except Exception:
                 pass
 
-        self._comm.rstConnection()
+        self._doc.iso7816.rstConnection()
 
     def getCertInfo(self):
         return self._certInfo
@@ -78,7 +77,7 @@ class Fingerprint(object):
             self.callback.put((None, 'fp', 5))
 
         try:
-            res["UID"] = hexfunctions.binToHexRep(self._comm.getUID())
+            res["UID"] = hexfunctions.binToHexRep(self._doc.iso7816.getUID())
         except Exception:
             logging.error("Could not get the UID")
 
@@ -146,13 +145,13 @@ class Fingerprint(object):
             self.callback.put((None, 'fp', 40))
 
         try:
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
             sod = None
             sod = self._doc["SecurityData"]
-            if self._comm._ciphering:
+            if self._doc.iso7816.ciphering:
                 res["bac"] = "Done"
         except Exception:
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
             logging.error("Could not whether secure messaging (BAC) is set")
 
         #Read SOD body
@@ -185,7 +184,7 @@ class Fingerprint(object):
             self.callback.put((None, 'slfp', "Read DGs"))
             self.callback.put((None, 'fp', 55))
 
-        self._comm.rstConnection()
+        self._doc.iso7816.rstConnection()
         data = {}
         start = time.time()
         res["EP"]["Common"] = self._doc["Common"]
@@ -195,7 +194,7 @@ class Fingerprint(object):
                 data[converter.toDG(dg)] = len(self._doc[dg].file)
             except Exception:
                 res["failedToRead"].append(converter.toDG(dg))
-                self._comm.rstConnection()
+                self._doc.iso7816.rstConnection()
         res["ReadingTime"] = time.time() - start
         lengths = sorted(data.items())
         res["DGs"] = lengths
@@ -243,7 +242,7 @@ class Fingerprint(object):
                 os.remove("tmp.cer")
         except Exception:
             logging.error("Could not get certificate")
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
 
 
         #Check if there is a pubKey and the AA
@@ -251,7 +250,7 @@ class Fingerprint(object):
             self.callback.put((None, 'slfp', "Get public key"))
             self.callback.put((None, 'fp', 80))
         try:
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
             self._doc.doBasicAccessControl()
             if self._doc.getPublicKey():
                 res["pubKey"] = self._doc.getPublicKey()
@@ -306,28 +305,28 @@ class Fingerprint(object):
         return toHexString(cardservice.connection.getATR())
 
     def checkInternalAuth(self):
-        self._comm.rstConnection()
-        rnd_ifd = os.urandom(8)
+        self._doc.iso7816.rstConnection()
+        rnd_ifd = toHexString(list(os.urandom(8)))
         try:
-            self._comm.internalAuthentication(rnd_ifd)
-            return (True, hexfunctions.binToHexRep(self._comm.internalAuthentication(rnd_ifd)))
+            self._doc.iso7816.internalAuthentication(rnd_ifd)
+            return True
         except Iso7816Exception as msg:
-            return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
+            return False
 
     def checkMACTraceability(self):
-        self._comm.rstConnection()
+        self._doc.iso7816.rstConnection()
         try:
-            attack = macTraceability.MacTraceability(self._comm)
+            attack = macTraceability.MacTraceability(self._doc.iso7816)
             attack.setMRZ(str(self.curMRZ))
             return attack.isVulnerable()
         except Exception:
             return (False, "N/A")
 
     def checkDelaySecurity(self):
-        self._comm.rstConnection()
+        self._doc.iso7816.rstConnection()
         try:
             self._doc.doBasicAccessControl()
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
             start = time.time()
             self._doc.doBasicAccessControl()
             first = time.time() - start
@@ -335,12 +334,12 @@ class Fingerprint(object):
             self.curMRZ = self._doc.switchMRZ(rndMRZ)
             for x in range(4):
                 try:
-                    self._comm.rstConnection()
+                    self._doc.iso7816.rstConnection()
                     self._doc.doBasicAccessControl()
                 except Exception:
                     pass
             self._doc.switchMRZ(self.curMRZ)
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
             start = time.time()
             self._doc.doBasicAccessControl()
             second = time.time() - start
@@ -352,7 +351,7 @@ class Fingerprint(object):
             return "N/A"
 
     def blockAfterFail(self):
-        self._comm.rstConnection()
+        self._doc.iso7816.rstConnection()
         rndMRZ = "AB12345671ETH0101011M1212318<<<<<<<<<<<<<<04"
         self.curMRZ = self._doc.switchMRZ(rndMRZ)
         try:
@@ -367,18 +366,18 @@ class Fingerprint(object):
         return False
 
     def selectNull(self):
-        self._comm.rstConnectionRaw()
+        self._doc.iso7816.rstConnectionRaw()
         try:
-            toSend = apdu.CommandAPDU("00", "A4", "00", "00", "", "", "FF")
-            return hexfunctions.binToHexRep(self._comm.transmit(toSend, "Select File"))
+            toSend = self._iso7816.APDUCommand("00", "A4", "00", "00", "", "", "FF")
+            return hexfunctions.binToHexRep(self._doc.iso7816.transmit(toSend, "Select File"))
         except Iso7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 
     def sendGetChallengeNull(self):
-        self._comm.rstConnection()
+        self._doc.iso7816.rstConnection()
         try:
-            toSend = apdu.CommandAPDU("00", "84", "00", "00", "", "", "01")
-            return (True, hexfunctions.binToHexRep(self._comm.transmit(toSend, "Get Challenge")))
+            toSend = self._iso7816.APDUCommand("00", "84", "00", "00", "", "", "01")
+            return (True, hexfunctions.binToHexRep(self._doc.iso7816.transmit(toSend, "Get Challenge")))
         except Iso7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 
@@ -386,10 +385,10 @@ class Fingerprint(object):
         test = ["44", "82", "84", "88", "A4", "B0", "B1"]
         errors = dict()
         for ins in test:
-            self._comm.rstConnection()
+            self._doc.iso7816.rstConnection()
             try:
-                toSend = apdu.CommandAPDU("00", ins, "00", "00", "", "", "00")
-                self._comm.transmit(toSend, "Select File")
+                toSend = self._iso7816.APDUCommand("00", ins, "00", "00", "", "", "00")
+                self._doc.iso7816.transmit(toSend, "Select File")
                 errors[ins] = f"SW1:{114} SW2:{0}"
             except Iso7816Exception as e:
                 errors[ins] = f"SW1:{e.sw1} SW2:{e.sw2}".format(e.sw1, e.sw2)

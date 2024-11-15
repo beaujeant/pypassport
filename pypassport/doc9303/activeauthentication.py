@@ -9,6 +9,7 @@ from pypassport.derobjectidentifier import *
 from pypassport.logger import Logger
 from pypassport.openssl import OpenSSL, OpenSSLException
 from pypassport.doc9303 import datagroup
+from smartcard.util import toBytes, toHexString, toASCIIBytes, PACK
 
 class ActiveAuthenticationException(Exception):
     def __init__(self, *params):
@@ -58,7 +59,8 @@ class ActiveAuthentication():
         """
         self._dg15 = dg15
         self.RND_IFD = self._genRandom(8)
-        self.signature = self._getSignature(self.RND_IFD)
+        hex_rnd_ifd = toHexString(list(self.RND_IFD),PACK)
+        self.signature = self._iso7816.internalAuthentication(hex_rnd_ifd)
         self.F = self._decryptSignature(dg15.body, self.signature)
 
         (hash, hashSize, offset) = self._getHashAlgo(self.F)
@@ -82,9 +84,6 @@ class ActiveAuthentication():
         logging.debug("Generate an 8 byte random")
         logging.debug("\tRND.IFD: " + hexfunctions.binToHexRep(rnd_ifd))
         return rnd_ifd
-
-    def _getSignature(self, rnd_ifd):
-        return self._iso7816.internalAuthentication(rnd_ifd)
 
     def getPubKey(self, dg15):
         """

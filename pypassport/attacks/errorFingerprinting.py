@@ -71,7 +71,7 @@ class ErrorFingerprinting(Logger):
         @return: A set composed of boolean (True=Succeed, False=Error) and a passport answer
         """
 
-        toSend = apdu.CommandAPDU(cla, ins, p1, p2, lc, data, le)
+        toSend = self._iso7816.APDUCommand(cla, ins, p1, p2, lc, data, le)
 
         try:
             self.log("Send APDU: {0}:{1}:{2}:{3}:{4}:{5}:{6}".format(cla, ins, p1, p2, lc, data, le))

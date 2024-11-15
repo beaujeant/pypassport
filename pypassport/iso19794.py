@@ -1,35 +1,34 @@
 from operator import and_
-from pypassport import hexfunctions
 
-FAC = '46414300'
+FAC = b"FAC\x00"
 
 # ISO 19794_5 (Biometric identifiers)
 ISO19794_5_GENDER = {
-    '00': 'Unpecified',
-    '01': 'Male',
-    '02': 'Female',
-    '03': 'Unknown'
+    0x00: 'Unpecified',
+    0x01: 'Male',
+    0x02: 'Female',
+    0x03: 'Unknown'
 }
 
 ISO19794_5_EYECOLOUR = {
-    '00': 'Unspecified',
-    '01': 'Blacloggingi',
-    '07': 'Pink',
-    '08': 'Other'
+    0x00: 'Unspecified',
+    0x01: 'Blacloggingi',
+    0x07: 'Pink',
+    0x08: 'Other'
 }
 
 ISO19794_5_HAIRCOLOUR = {
-    '00': 'Unspecified',
-    '01': 'Bald',
-    '02': 'Black',
-    '03': 'Blonde',
-    '04': 'Brown',
-    '05': 'Grey',
-    '06': 'White',
-    '07': 'Red',
-    '08': 'Green',
-    '09': 'Blue',
-    'ff': 'Other'
+    0x00: 'Unspecified',
+    0x01: 'Bald',
+    0x02: 'Black',
+    0x03: 'Blonde',
+    0x04: 'Brown',
+    0x05: 'Grey',
+    0x06: 'White',
+    0x07: 'Red',
+    0x08: 'Green',
+    0x09: 'Blue',
+    0xff: 'Other'
 }
 
 ISO19794_5_FEATURE = {
@@ -47,54 +46,60 @@ ISO19794_5_FEATURE = {
 }
 
 ISO19794_5_EXPRESSION = {
-    '0000': 'Unspecified',
-    '0001': 'Neutral',
-    '0002': 'Smile Closed',
-    '0003': 'Smile Open',
-    '0004': 'Raised Eyebrow',
-    '0005': 'Looking Away',
-    '0006': 'Squinting',
-    '0007': 'Frowning'
+    0x0000: 'Unspecified',
+    0x0001: 'Neutral',
+    0x0002: 'Smile Closed',
+    0x0003: 'Smile Open',
+    0x0004: 'Raised Eyebrow',
+    0x0005: 'Looking Away',
+    0x0006: 'Squinting',
+    0x0007: 'Frowning'
 }
 
 ISO19794_5_IMG_TYPE = {
-    '00': 'Unspecified (Front)',
-    '01': 'Basic',
-    '02': 'Full Front',
-    '03': 'Token Front',
-    '04': 'Other'
+    0x00: 'Unspecified (Front)',
+    0x01: 'Basic',
+    0x02: 'Full Front',
+    0x03: 'Token Front',
+    0x04: 'Other'
 }
 
 ISO19794_5_IMG_DTYPE = {
-    '00': 'JPEG',
-    '01': 'JPEG 2000'
+    0x00: 'JPEG',
+    0x01: 'JPEG 2000'
 }
 
 ISO19794_5_IMG_FTYPE = {
-    '00': 'JPG',
-    '01': 'JP2'
+    0x00: 'JPG',
+    0x01: 'JP2'
 }
 
 ISO19794_5_IMG_CSPACE = {
-    '00': 'Unspecified',
-    '01': 'RGB24',
-    '02': 'YUV422',
-    '03': 'GREY8BIT',
-    '04': 'Other'
+    0x00: 'Unspecified',
+    0x01: 'RGB24',
+    0x02: 'YUV422',
+    0x03: 'GREY8BIT',
+    0x04: 'Other'
 }
 
 ISO19794_5_IMG_SOURCE = {
-    '00': 'Unspecified',
-    '01': 'Static Unspecified',
-    '02': 'Static Digital',
-    '03': 'Static Scan',
-    '04': 'Video Unknown',
-    '05': 'Video Analogue',
-    '06': 'Video Digital',
-    '07': 'Unknown'
+    0x00: 'Unspecified',
+    0x01: 'Static Unspecified',
+    0x02: 'Static Digital',
+    0x03: 'Static Scan',
+    0x04: 'Video Unknown',
+    0x05: 'Video Analogue',
+    0x06: 'Video Digital',
+    0x07: 'Unknown'
 }
 
 ISO19794_5_IMG_QUALITY = {'0000': 'Unspecified'}
+
+def translate(dictionary, index):
+        try:
+            return dictionary[index]
+        except KeyError:
+            return index
 
 
 class ISO19794_5:
@@ -113,188 +118,72 @@ class ISO19794_5:
 
         offset = 0
         result = {}
-        tag = data[offset:offset + 8]
-        offset += 8
+        tag = data[0:4]
         if tag != FAC:
-            raise Exception("Missing FAC in CBEFF block:" + tag)
+            raise Exception(f"Missing FAC in CBEFF block: {tag.decode()}")
 
-        tag = data[offset:offset + 6]
-        offset += 8
-        result['VersionNumber'] = hexfunctions.hexRepToBin(tag)
-
-        tag = data[offset:offset + 8]
-        offset += 8
-        result['LengthOfRecord'] = int(tag, 16)
-
-        tag = data[offset:offset + 4]
-        offset += 4
-        result['NumberOfFacialImages'] = int(tag, 16)
-
-        tag = data[offset:offset + 8]
-        offset += 8
-        result['FaceImageBlockLength'] = int(tag, 16)
-
-        tag = data[offset:offset + 4]
-        offset += 4
-        result['NumberOfFeaturePoint'] = int(tag, 16)
-
-        tag = data[offset:offset + 2]
-        offset += 2
-        result['Gender'] = ISO19794_5_GENDER[tag]
-
-        tag = data[offset:offset + 2]
-        offset += 2
-
-        try:
-            result['EyeColour'] = ISO19794_5_EYECOLOUR[tag]
-        except KeyError:
-            result['EyeColour'] = int(tag, 16)
-
-        tag = data[offset:offset + 2]
-        offset += 2
-        try:
-            result['HairColour'] = ISO19794_5_HAIRCOLOUR[tag]
-        except KeyError:
-            result['HairColour'] = int(tag, 16)
-
-        tag = data[offset:offset + 6]
-        offset += 6
-        result['FeatureMask'] = tag
-
-        mask = int(tag, 16)
-        features = {}
+        result['VersionNumber'] = data[4:7]
+        result['LengthOfRecord'] = int.from_bytes(data[8:12])
+        result['NumberOfFacialImages'] = int.from_bytes(data[12:14])
+        result['FaceImageBlockLength'] = int.from_bytes(data[14:18])
+        result['NumberOfFeaturePoint'] = int.from_bytes(data[18:20])
+        result['Gender'] = translate(ISO19794_5_GENDER, data[20])
+        result['EyeColour'] = translate(ISO19794_5_EYECOLOUR, data[21])
+        result['HairColour'] = translate(ISO19794_5_HAIRCOLOUR, data[22])
+        result['FeatureMask'] = int.from_bytes(data[23:26])
+        result['Features'] = {}
         for key, value in ISO19794_5_FEATURE.items():
-            if and_(mask, key):
-                features[key] = value
-        result['Features'] = features
+            if and_(result['FeatureMask'], key):
+                result['Features'][key] = value
+        result['Expression'] = translate(ISO19794_5_EXPRESSION, int.from_bytes(data[26:28]))
+        result['PoseAngle'] = int.from_bytes(data[28:31])
+        result['PoseAngleUncertainty'] = int.from_bytes(data[31:34])
 
-        tag = data[offset:offset + 4]
-        offset += 4
-        try:
-            result['Expression'] = ISO19794_5_EXPRESSION[tag]
-        except KeyError:
-            result['Expression'] = int(tag, 16)
+        offset = 34
 
-        tag = data[offset:offset + 6]
-        offset += 6
-        result['PoseAngle'] = tag
-
-        tag = data[offset:offset + 6]
-        offset += 6
-        result['PoseAngleUncertainty'] = tag
-
-        features = {}
+        result['FeaturePoint'] = []
         for i in range(result['NumberOfFeaturePoint']):
             feature = {}
-            tag = data[offset:offset + 2]
+
+            feature['FeatureType'] = data[offset] # 1 == 2D; other RFU
+            offset += 1
+
+            feature['FeaturePointCode'] = data[offset]
+            offset += 1
+
+            feature['HorizontalPosition'] = data[offset:offset+2]
             offset += 2
-            feature['FeatureType'] = tag # 1 == 2D; other RFU
 
-            tag = data[offset:offset + 2]
+            feature['VerticalPosition'] = data[offset:offset+2]
             offset += 2
-            feature['FeaturePointCode'] = tag
 
-            tag = data[offset:offset + 4]
-            offset += 4
-            feature['HorizontalPosition'] = int(tag, 16)
+            feature['Reserved'] = data[offset:offset+2]
+            offset += 2
 
-            tag = data[offset:offset + 4]
-            offset += 4
-            feature['VerticalPosition'] = int(tag, 16)
+            result['FeaturePoint'][i] = feature
 
-            tag = data[offset:offset + 4]
-            offset += 4
-            feature['Reserved'] = tag
+        result['FaceImageType'] = translate(ISO19794_5_IMG_TYPE, data[offset])
+        offset += 1
 
-            features[i] = feature
+        result['ImageDataType'] = translate(ISO19794_5_IMG_DTYPE, data[offset])
+        offset += 1
 
-        result['FeaturePoint'] = features
-
-        tag = data[offset:offset + 2]
+        result['ImageWidth'] = int.from_bytes(data[offset:offset+2])
         offset += 2
-        try:
-            result['FaceImageType'] = ISO19794_5_IMG_TYPE[tag]
-        except KeyError:
-            result['FaceImageType'] = int(tag, 16)
 
-        tag = data[offset:offset + 2]
+        result['ImageHeight'] = int.from_bytes(data[offset:offset+2])
         offset += 2
-        try:
-            result['ImageDataType'] = ISO19794_5_IMG_DTYPE[tag]
-        except KeyError:
-            result['ImageDataType'] = int(tag, 16)
 
-        tag = data[offset:offset + 4]
-        offset += 4
-        result['ImageWidth'] = int(tag, 16)
+        result['ImageColourSpace'] = translate(ISO19794_5_IMG_CSPACE, data[offset])
+        offset += 1
 
-        tag = data[offset:offset + 4]
-        offset += 4
-        result['ImageHeight'] = int(tag, 16)
+        result['ImageSourceType'] = translate(ISO19794_5_IMG_SOURCE, data[offset])
+        offset += 1
 
-        tag = data[offset:offset + 2]
+        result['ImageDeviceType'] = int.from_bytes(data[offset:offset+2])
         offset += 2
-        try:
-            result['ImageColourSpace'] = ISO19794_5_IMG_CSPACE[tag]
-        except KeyError:
-            result['ImageColourSpace'] = int(tag, 16)
 
-        tag = data[offset:offset + 2]
+        result['ImageQuality'] = translate(ISO19794_5_IMG_QUALITY, int.from_bytes(data[offset:offset+2]))
         offset += 2
-        try:
-            result['ImageSourceType'] = ISO19794_5_IMG_SOURCE[tag]
-        except KeyError:
-            result['ImageSourceType'] = int(tag, 16)
 
-        tag = data[offset:offset + 4]
-        offset += 4
-        result['ImageDeviceType'] = int(tag, 16)
-
-        tag = data[offset:offset + 4]
-        offset += 4
-        result['ImageQuality'] = ISO19794_5_IMG_QUALITY[tag]
-
-        return (int(offset/2), result)
-
-    @staticmethod
-    def createHeader(imageType, imageHeight, imageWidth, imageSize):
-        """ create a simple CBEFF header based on image information
-
-            @param imageType: Format of the image
-            @type imageType: string from IMAGETYPE dictionary
-            @param imageHeight: Height of the image in pixels
-            @type imageHeight: int
-            @param imageWidth: Width of the image in pixels
-            @type imageWidth: int
-            @param imageSize: size of the image in bytes
-            @type imageSize: int
-        """
-
-        IMAGETYPE = {
-            'JPEG': "00",
-            'JPG': "00",
-            'JPEG2000': "01",
-            'JP2': "01"
-        }
-
-        header = "46414300"
-        version = "30313000" # '101' 0x0
-
-        poseAngleUncertainty = "000000"
-        imageFaceType = "00"
-        imageDataType = IMAGETYPE[imageType]
-        width = hexfunctions.intToHexRep(imageWidth, 4)
-        height = hexfunctions.intToHexRep(imageHeight, 4)
-        colourSpace = "00"
-        sourceType = "00"
-        deviceType = "0000"
-        quality = "0000"
-
-        return hexfunctions.hexRepToBin(
-            header + version + recordLength + numberOfImage
-            + ImageBlockLength + numberOfFeaturePoint + gender
-            + eyeColour + hairColour + featureMask + expression
-            + poseAngle + poseAngleUncertainty + imageFaceType
-            + imageDataType + width + height + colourSpace
-            + sourceType + deviceType + quality
-        )
+        return result, offset

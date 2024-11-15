@@ -4,7 +4,7 @@ import math
 import logging
 
 from pypassport import apdu
-from pypassport.iso7816 import Iso7816, Iso7816Exception
+from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.doc9303.bac import BAC, BACException
 from pypassport.reader import ReaderException
 from pypassport.doc9303.mrz import MRZ
@@ -38,7 +38,7 @@ class MacTraceability():
         else:
             raise MacTraceabilityException("Unvalid MRZ provided: Could be either a string, a bytearray or a MRZ object.")
 
-        if type(self._iso7816) != type(Iso7816(None)):
+        if type(self._iso7816) != type(ISO7816(None)):
             raise MacTraceabilityException("The sublayer iso7816 is not available")
 
         self._iso7816.rstConnection()
@@ -122,7 +122,7 @@ class MacTraceability():
                 try: (ans2, res_time2) = self._sendPair(cmd_data)
                 except ReaderException: pass
 
-            except Iso7816Exception:
+            except ISO7816Exception:
                 pass
 
             if ans1[0] != ans2[0]:
@@ -288,13 +288,12 @@ class MacTraceability():
             logMsg = "Correct MAC"
             data = binToHexRep(cmd_data)
 
-        lc = hexToHexRep(len(data)/2)
-        toSend = apdu.CommandAPDU("00", "82", "00", "00", lc, data, "28")
+        toSend = self._iso7816.mutualAuthentication(data=data)
         starttime = time.time()
         try:
             response = self._iso7816.transmit(toSend, logMsg)
             response = ResponseAPDU(response, 0x90, 0x00)
-        except Iso7816Exception as msg:
+        except ISO7816Exception as msg:
             response = ResponseAPDU(msg.description, msg.sw1, msg.sw2)
         timetaken =  time.time() - starttime
         logging.debug("Response time:" + str(timetaken))
