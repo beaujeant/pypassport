@@ -110,16 +110,6 @@ ruff check .
 
 ---
 
-## Key design notes
-
-- `EPassport` is a `dict` subclass. Data groups are fetched lazily on first `__getitem__` access and cached by tag.
-- BAC is triggered automatically when a 0x6982 (Security Status Not Satisfied) SW is returned.
-- The `ISO7816` object holds an optional `ciphering` slot; assigning a `SecureMessaging` instance to it transparently wraps all subsequent APDUs.
-- `Fingerprint.analyse()` performs a comprehensive automated security assessment, returning a structured result dict.
-- The attacks module is for authorised security research only. Do not use it against passports you do not own or without explicit permission.
-
----
-
 ## Standards implemented
 
 | Standard | Scope |

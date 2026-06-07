@@ -1,6 +1,6 @@
 # ePassport Monorepo
 
-A Python toolkit for reading, analysing, and researching electronic passports (ePassports) that conform to **ICAO Doc 9303**. Developed by the Information Security Group (ISG) at UCLouvain as a research platform for studying ePassport security.
+A Python library for reading, analysing, and researching electronic passports (ePassports) that conform to **ICAO Doc 9303**. Initially developed by the Information Security Group (ISG) at UCLouvain as a research platform for studying ePassport security.
 
 This repository contains two complementary projects:
 
@@ -21,7 +21,7 @@ Electronic passports (ePassports, eMRTDs) embed a contactless chip that stores b
 - **Passive Authentication** for verifying document integrity via a PKI chain
 - **Active Authentication** for detecting chip cloning
 
-This toolkit implements those protocols faithfully and also provides a research module for testing known security vulnerabilities in deployed passports.
+This toolkit implements those protocols and also provides a research module for testing known security vulnerabilities in deployed passports.
 
 ---
 
@@ -141,24 +141,3 @@ epassportviewer            # if installed as a script
 # or
 python -m epassportviewer  # run as a module
 ```
-
----
-
-## Running tests
-
-```bash
-pip install pytest
-pytest pypassport/tests/
-```
-
-No automated test suite exists yet for `ePassportViewer` — manual testing is required.
-
----
-
-## Development notes
-
-- Each subproject has its own `pyproject.toml` and can be developed, released, and versioned independently.
-- `pypassport` does **not** depend on `ePassportViewer`.
-- `ePassportViewer` depends on `pypassport` — no code is duplicated.
-- Both packages use the `src/` layout for clean package discovery.
-- See `CLAUDE.md` for development workflow guidelines.
