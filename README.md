@@ -1,4 +1,4 @@
-# ePassport Monorepo
+# pypassport
 
 A Python library for reading, analysing, and researching electronic passports (ePassports) that conform to **ICAO Doc 9303**. Initially developed by the Information Security Group (ISG) at UCLouvain as a research platform for studying ePassport security.
 
