@@ -4,8 +4,8 @@ from pyasn1.codec.der import decoder
 import logging
 
 from pypassport.asn1 import SubjectPublicKeyInfo
-from pypassport import hexfunctions
-from pypassport.derobjectidentifier import OID, OIDException
+from pypassport import hex_functions
+from pypassport.der_object_identifier import OID, OIDException
 from pypassport.openssl import OpenSSL, OpenSSLException
 from pypassport.doc9303 import datagroup
 from pypassport.utils import toHexString
@@ -68,7 +68,7 @@ class ActiveAuthentication():
         self.M_ = self.M1 + self.RND_IFD
 
         logging.debug("Concatenate M1 with known M2")
-        logging.debug("\tM*: " + hexfunctions.binToHexRep(self.M_))
+        logging.debug("\tM*: " + hex_functions.binToHexRep(self.M_))
 
         self.D_ = self._hash(hash_fn, self.M_)
 
@@ -80,7 +80,7 @@ class ActiveAuthentication():
     def _genRandom(self, size):
         rnd_ifd = Random.get_random_bytes(size)
         logging.debug("Generate an 8 byte random")
-        logging.debug("\tRND.IFD: " + hexfunctions.binToHexRep(rnd_ifd))
+        logging.debug("\tRND.IFD: " + hex_functions.binToHexRep(rnd_ifd))
         return rnd_ifd
 
     def getPubKey(self, dg15):
@@ -101,7 +101,7 @@ class ActiveAuthentication():
     def _decryptSignature(self, pubK, signature):
         data = self._openssl.retrieveSignedData(pubK, signature)
         logging.debug("Decrypt the signature with the public key")
-        logging.debug("\tF: " + hexfunctions.binToHexRep(data))
+        logging.debug("\tF: " + hex_functions.binToHexRep(data))
 
         return data
 
@@ -109,7 +109,7 @@ class ActiveAuthentication():
         digest = hash_fn(data).digest()
 
         logging.debug("Calculate digest of M*")
-        logging.debug("\tD*: " + hexfunctions.binToHexRep(digest))
+        logging.debug("\tD*: " + hex_functions.binToHexRep(digest))
 
         return digest
 
@@ -118,11 +118,11 @@ class ActiveAuthentication():
         offset = None
         hashSize = None
 
-        if sig[-1] == hexfunctions.hexRepToBin("BC"):
+        if sig[-1] == hex_functions.hexRepToBin("BC"):
             self.T = sig[-1]
             hash_fn = sha1
             offset = -1
-        elif sig[-1] == hexfunctions.hexRepToBin("CC"):
+        elif sig[-1] == hex_functions.hexRepToBin("CC"):
             self.T = sig[-2]
             #hash_fn = The algorithm corresponding to the algo designed by T
             offset = -2
@@ -130,7 +130,7 @@ class ActiveAuthentication():
             raise ActiveAuthenticationException("Unknow hash algorithm")
 
         logging.debug("Determine hash algorithm by trailer T*")
-        logging.debug("\tT: " + hexfunctions.binToHexRep(self.T))
+        logging.debug("\tT: " + hex_functions.binToHexRep(self.T))
 
         #Find out the hash size
         hashSize = len(hash_fn(b"test").digest())
@@ -141,7 +141,7 @@ class ActiveAuthentication():
         digest = sig[offset - hashSize:offset]
 
         logging.debug("Extract digest:")
-        logging.debug("\tD: " + hexfunctions.binToHexRep(digest))
+        logging.debug("\tD: " + hex_functions.binToHexRep(digest))
 
         return digest
 
@@ -149,7 +149,7 @@ class ActiveAuthentication():
         M1 = sig[1:offset - hashSize]
 
         logging.debug("Extract M1:")
-        logging.debug("\tM1: " + hexfunctions.binToHexRep(M1))
+        logging.debug("\tM1: " + hex_functions.binToHexRep(M1))
 
         return M1
 

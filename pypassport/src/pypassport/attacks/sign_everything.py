@@ -25,7 +25,7 @@ from pypassport.reader import ReaderException
 from pypassport.doc9303 import mrz, bac, datagroup
 from pypassport.doc9303.datagroup import readElementaryFile
 from pypassport.doc9303.securemessaging import SecureMessaging
-from pypassport.hexfunctions import hexToHexRep, binToHexRep, hexRepToBin
+from pypassport.hex_functions import hexToHexRep, binToHexRep, hexRepToBin
 from pypassport.openssl import OpenSSL, OpenSSLException
 from pypassport.utils import toHexString
 from smartcard.util import toBytes, toASCIIBytes, PACK

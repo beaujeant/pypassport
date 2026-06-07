@@ -6,11 +6,11 @@ import tempfile
 
 from pypassport.iso7816 import ISO7816Exception, APDUCommand
 from pypassport.doc9303 import passiveauthentication
-from pypassport import camanager
-from pypassport import hexfunctions
+from pypassport import ca_manager
+from pypassport import hex_functions
 from pypassport.doc9303 import converter
-from pypassport.attacks import macTraceability
-from pypassport import derobjectidentifier
+from pypassport.attacks import mac_traceability
+from pypassport import der_object_identifier
 from pypassport.utils import toHexString
 
 from smartcard.CardType import AnyCardType
@@ -29,7 +29,7 @@ class Fingerprint(object):
 
         if certdir:
             try:
-                self.csca = camanager.CAManager(certdir)
+                self.csca = ca_manager.CAManager(certdir)
                 self.csca.toHashes()
                 self.doPA = True
             except Exception:
@@ -79,7 +79,7 @@ class Fingerprint(object):
             self.callback.put((None, 'fp', 5))
 
         try:
-            res["UID"] = hexfunctions.binToHexRep(self._doc.iso7816.getUID())
+            res["UID"] = hex_functions.binToHexRep(self._doc.iso7816.getUID())
         except Exception:
             logging.error("Could not get the UID")
 
@@ -220,7 +220,7 @@ class Fingerprint(object):
         res["Hashes"] = self._pa._calculateHashes(dgs)
 
         try:
-            res["Algo"] = derobjectidentifier.OID[self._pa._content['hashAlgorithm']]
+            res["Algo"] = der_object_identifier.OID[self._pa._content['hashAlgorithm']]
         except KeyError:
             logging.error("Hash algorythm not listed")
             res[converter.toDG(dg)] = "Not defined in hash algorithm list"
@@ -329,7 +329,7 @@ class Fingerprint(object):
     def checkMACTraceability(self):
         self._doc.iso7816.rstConnection()
         try:
-            attack = macTraceability.MacTraceability(self._doc.iso7816)
+            attack = mac_traceability.MacTraceability(self._doc.iso7816)
             attack.setMRZ(str(self.curMRZ))
             return attack.isVulnerable()
         except Exception:
@@ -382,7 +382,7 @@ class Fingerprint(object):
         self._doc.iso7816.rstConnectionRaw()
         try:
             toSend = APDUCommand("00", "A4", "00", "00", "", "", "FF")
-            return hexfunctions.binToHexRep(self._doc.iso7816.transmit(toSend, "Select File"))
+            return hex_functions.binToHexRep(self._doc.iso7816.transmit(toSend, "Select File"))
         except ISO7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 
@@ -390,7 +390,7 @@ class Fingerprint(object):
         self._doc.iso7816.rstConnection()
         try:
             toSend = APDUCommand("00", "84", "00", "00", "", "", "01")
-            return (True, hexfunctions.binToHexRep(self._doc.iso7816.transmit(toSend, "Get Challenge")))
+            return (True, hex_functions.binToHexRep(self._doc.iso7816.transmit(toSend, "Get Challenge")))
         except ISO7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 

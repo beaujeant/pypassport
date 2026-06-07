@@ -19,14 +19,14 @@
 import os
 from decimal import Decimal
 
-from pypassport.attacks.signEverything import SignEverything
+from pypassport.attacks.sign_everything import SignEverything
 
 from pypassport.logger import Logger
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.reader import ReaderException
 from pypassport.doc9303 import mrz, bac
 from pypassport.iso9797 import mac, pad, unpad
-from pypassport.hexfunctions import hexToHexRep, binToHexRep, hexRepToBin, hexRepToHex
+from pypassport.hex_functions import hexToHexRep, binToHexRep, hexRepToBin, hexRepToHex
 from smartcard.util import toBytes, toHexString, toASCIIBytes, PACK
 
 class AATraceabilityException(Exception):

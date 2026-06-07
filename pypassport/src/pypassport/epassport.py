@@ -9,7 +9,7 @@ from pypassport.doc9303.datagroup import readElementaryFile, ElementaryFileExcep
 from pypassport.doc9303.activeauthentication import ActiveAuthentication, ActiveAuthenticationException
 from pypassport.doc9303.passiveauthentication import PassiveAuthentication, PassiveAuthenticationException
 from pypassport.iso7816 import ISO7816, ISO7816Exception
-from pypassport import camanager
+from pypassport import ca_manager
 from pypassport.openssl import OpenSSL, OpenSSLException
 from smartcard.Exceptions import NoCardException
 
@@ -84,13 +84,13 @@ class EPassport(dict):
 
     @CSCADirectory.setter
     def CSCADirectory(self, value):
-        self._CSCADirectory = camanager.CAManager(value)
+        self._CSCADirectory = ca_manager.CAManager(value)
 
     def getCSCADirectory(self):
         return self._CSCADirectory
 
     def setCSCADirectory(self, value, hash=False):
-        self._CSCADirectory = camanager.CAManager(value)
+        self._CSCADirectory = ca_manager.CAManager(value)
         if hash:
             logging.debug("Document Signer Certificate hash creation")
             self._CSCADirectory.toHashes()

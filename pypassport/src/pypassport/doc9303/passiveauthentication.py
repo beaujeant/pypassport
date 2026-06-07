@@ -1,11 +1,11 @@
 import logging
 import hashlib
 from pyasn1.codec.der import decoder
-from pypassport import hexfunctions
+from pypassport import hex_functions
 from pypassport.doc9303 import converter
 from pypassport.doc9303 import datagroup
-from pypassport.derobjectidentifier import OID, OIDException
-from pypassport.camanager import CAManager
+from pypassport.der_object_identifier import OID, OIDException
+from pypassport.ca_manager import CAManager
 from pypassport.openssl import OpenSSL
 from pypassport import asn1
 
@@ -260,6 +260,6 @@ class PassiveAuthentication:
 
         for dghv in self._content["dataGroupHashValues"].keys():
             res += "Data group: " + converter.toEF(dghv) + "\n"
-            res += "Hash value: " + hexfunctions.binToHexRep(self._content["dataGroupHashValues"][dghv]) + "\n"
+            res += "Hash value: " + hex_functions.binToHexRep(self._content["dataGroupHashValues"][dghv]) + "\n"
 
         return res
