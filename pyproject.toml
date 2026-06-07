@@ -1,0 +1,34 @@
+# Root pyproject.toml — uv virtual workspace root + monorepo-level tooling.
+# No [project] table here — this is a "virtual workspace root" in uv terms.
+#
+# uv commands (run from this directory):
+#   uv sync                              # install all workspace members + deps
+#   uv sync --package pypassport        # install only pypassport
+#   uv run python -m epassportviewer    # launch the GUI
+#   uv run pytest                       # run tests
+
+[tool.uv.workspace]
+members = ["pypassport", "ePassportViewer"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "pypassport/tests",
+    "ePassportViewer/tests",
+]
+
+[tool.ruff]
+line-length = 120
+src = ["pypassport/src", "ePassportViewer/src"]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "pypassport/src:ePassportViewer/src"
+
+[tool.coverage.run]
+source = ["pypassport/src", "ePassportViewer/src"]
