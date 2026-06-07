@@ -23,6 +23,13 @@ git checkout -b dev origin/main   # or: git checkout dev if it exists remotely
 
 ---
 
+## Code style
+
+- **No backward compatibility.** Breaking changes are fine — do not add shims, deprecation wrappers, or compatibility layers to preserve old APIs or behaviour.
+- **Minimise dependencies.** Prefer stdlib or already-present dependencies over adding new ones. When a dependency can be removed by writing a small amount of straightforward code, do so.
+
+---
+
 ## Project overview
 
 This is a Python monorepo for reading and researching electronic passports (ePassports / eMRTDs) per ICAO Doc 9303. It contains two packages:
