@@ -205,8 +205,8 @@ class SecureMessaging():
 
 
     def _incSSC(self):
-        out = int.from_bytes(self._ssc) + 1
-        return out.to_bytes(length=8)
+        out = int.from_bytes(self._ssc, byteorder='big') + 1
+        return out.to_bytes(8, byteorder='big')
 
 
     def _buildD08E(self, mac):

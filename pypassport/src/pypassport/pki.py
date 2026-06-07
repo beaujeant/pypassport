@@ -117,7 +117,6 @@ class CA(Logger):
             pass
 
         self._openssl = OpenSSL('"' + self._configFile + '"')
-        self._openssl.register(self._traceOpenSSl)
 
     def createCSCA(self, size=1024, days=720, dn=DistinguishedName(C="BE", O="Gouv", CN="CSCA-BELGIUM")):
         """
@@ -187,9 +186,6 @@ class CA(Logger):
         """
         self._testinit()
         self._openssl.revokeX509(x509, self.csca, self.cscaKey)
-
-    def _traceOpenSSl(self, name, msg):
-        self.log(msg, name)
 
     def getCrl(self):
         if not os.path.isfile(os.path.join(self._loc, "crlnumber")):
