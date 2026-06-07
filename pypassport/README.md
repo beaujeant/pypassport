@@ -129,6 +129,35 @@ sod  = ep["SecurityData"]
 ep.readDataGroups()
 ```
 
+### Automatic PACE/BAC selection
+
+Modern (post-2024) passports may refuse BAC and require PACE. `ep.open()`
+inspects `EF.CardAccess` to discover what the chip advertises, runs the
+appropriate mechanism, and then selects the eMRTD application. It is
+backward compatible: legacy BAC-only chips continue to work without any
+extra configuration.
+
+```python
+from pypassport import PassportReader   # alias for EPassport
+
+mrz = ("EP123456", "850101", "260101")
+ep = PassportReader(r, mrz, select_aid=False)
+
+# "auto" (default): read EF.CardAccess, use PACE if advertised, else BAC.
+# "pace": require PACE; raise if EF.CardAccess is missing or unsupported.
+# "bac":  force BAC, never read EF.CardAccess.
+ep.open(access_control="auto")
+
+print(ep.accessControl)   # NegotiationResult(mechanism="PACE"|"BAC", ...)
+dg1 = ep["DG1"]
+dg2 = ep["DG2"]
+```
+
+If the chip rejects BAC with status word `6A88` (*referenced data not
+found*), pypassport raises a helpful error suggesting to retry with
+`access_control="auto"` or `access_control="pace"` — that status word
+typically indicates the document requires PACE rather than BAC.
+
 ### Extracting the facial image
 
 ```python
@@ -296,6 +325,28 @@ sudo service pcscd restart
 - Ensure the passport is placed flat on the reader surface.
 - Try `sudo` if your user is not in the `pcscd` or `scard` group.
 - Verify `pcscd` is running: `sudo service pcscd status`.
+
+**BAC fails with `6A88` (referenced data not found)**
+
+The chip does not accept BAC and probably requires PACE. Use the
+automatic negotiator, which reads `EF.CardAccess` first:
+
+```python
+ep = PassportReader(r, mrz, select_aid=False)
+ep.open(access_control="auto")
+```
+
+**`6982` (security status not satisfied)**
+
+Secure messaging has not been established yet. Call `ep.open(...)` (or
+the legacy `ep.doBasicAccessControl()`) before reading data groups.
+
+**`6A82` (file/application not found)**
+
+The selected AID or FID does not exist on the chip. For `EF.CardAccess`,
+this just means the chip is BAC-only — the automatic negotiator will
+fall back to BAC. For the eMRTD AID, it means the document is not an
+ICAO 9303 ePassport.
 
 ---
 
