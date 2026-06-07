@@ -47,7 +47,7 @@ class EPassportViewer:
         HISTORY_FILE_PATH = APP_FOLDER / HISTORY_FILE_NAME
 
         if not HISTORY_FILE_PATH.exists():
-            logging.info("Histmicro pythonory file not found. Creating a new one...")
+            logging.info("History file not found. Creating a new one...")
             HISTORY_FILE_PATH.touch()
 
         self.history = []

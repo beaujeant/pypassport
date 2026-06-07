@@ -139,9 +139,9 @@ class BAC():
         """
         if _DEBUG_CRYPTO: logging.debug("\tRND.ICC: " + toHexString(rnd_icc))
 
-        if not rnd_ifd:
+        if rnd_ifd is None:
             rnd_ifd = Random.get_random_bytes(8)
-        if not kifd:
+        if kifd is None:
             kifd = Random.get_random_bytes(16)
 
         if _DEBUG_CRYPTO: 

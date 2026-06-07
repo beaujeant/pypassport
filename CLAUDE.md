@@ -14,13 +14,20 @@ git checkout dev       # switch to dev before starting any work
 git pull origin dev    # sync with remote before making changes
 ```
 
+If `dev` does not exist locally, create it from `main`:
+
+```bash
+git fetch origin
+git checkout -b dev origin/main   # or: git checkout dev if it exists remotely
+```
+
 ---
 
 ## Project overview
 
 This is a Python monorepo for reading and researching electronic passports (ePassports / eMRTDs) per ICAO Doc 9303. It contains two packages:
 
-- **`pypassport/`** — core library implementing the BAC, PACE, Secure Messaging, Passive Authentication, and Active Authentication protocol stack, plus a security research module (`attacks/`)
+- **`pypassport/`** — core library implementing the BAC, PACE (partial), Secure Messaging, Passive Authentication, and Active Authentication protocol stack, plus a security research module (`attacks/`)
 - **`ePassportViewer/`** — Tkinter desktop GUI that wraps `pypassport` for interactive passport reading and vulnerability testing
 
 `pypassport` has no dependency on `ePassportViewer`. `ePassportViewer` depends on `pypassport`.
@@ -41,7 +48,7 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 │   │   ├── iso19794.py            # ISO 19794-5 biometric image parsing
 │   │   ├── doc9303/               # ICAO 9303 protocol implementations
 │   │   │   ├── bac.py             # Basic Access Control
-│   │   │   ├── pace.py            # PACE (ECDH / Brainpool curves)
+│   │   │   ├── pace.py            # PACE (ECDH / Brainpool) — PARTIAL, not production-ready
 │   │   │   ├── securemessaging.py # Secure Messaging layer
 │   │   │   ├── activeauthentication.py
 │   │   │   ├── passiveauthentication.py
@@ -59,10 +66,13 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 │   │   ├── ca_manager.py          # CSCA certificate directory management
 │   │   ├── der_object_identifier.py # OID registry
 │   │   ├── hex_functions.py       # Hex/bin conversion utilities
+│   │   ├── logger.py              # Callback-based logger (Logger base class)
 │   │   ├── openssl.py             # OpenSSL subprocess wrapper
 │   │   ├── pki.py                 # X.509 / Distinguished Name helpers
+│   │   ├── singleton.py           # Generic Singleton base class
 │   │   ├── asn1.py                # ASN.1 / DER utilities
-│   │   └── tlv_parser.py          # TLV parsing
+│   │   ├── tlv_parser.py          # TLV parsing
+│   │   └── utils.py               # Shared helpers (toHexString, toBytes, parseTLV, PACE utils)
 │   └── tests/
 │
 ├── ePassportViewer/
@@ -75,7 +85,7 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 │       ├── log.py                 # Log pane
 │       └── menu.py                # Menu bar
 │
-├── pyproject.toml                 # Monorepo tooling config
+├── pyproject.toml                 # Monorepo tooling config (uv workspace, pytest, ruff, mypy)
 ├── uv.lock
 └── CLAUDE.md                      # This file
 ```
@@ -84,29 +94,55 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 
 ## Development setup
 
+This repo uses [uv](https://github.com/astral-sh/uv) for environment and dependency management.
+
 ```bash
 git checkout dev
-python -m venv .venv
-source .venv/bin/activate
+git pull origin dev
 
-pip install --upgrade pip
-pip install -e ./pypassport -e ./ePassportViewer
-
-# Install dev tools (linting, type checking, tests)
-pip install pytest ruff mypy
+# Install uv if needed: https://docs.astral.sh/uv/getting-started/installation/
+uv sync                    # creates .venv and installs all workspace deps
 ```
 
 ### Running tests
 
 ```bash
-pytest pypassport/tests/
+uv run pytest
 ```
 
 ### Linting
 
 ```bash
-ruff check .
+uv run ruff check .
 ```
+
+### Type checking
+
+```bash
+uv run mypy pypassport/src ePassportViewer/src
+```
+
+---
+
+## Implementation notes
+
+### PACE (pace.py)
+
+PACE is **partially implemented**. The following is complete:
+
+- `genKseed()` — MRZ-based key seed derivation
+- `getPACEInfo()` — parse OID and domain parameters from EF.CardAccess / DG14
+- `performPACE()` — sends MSE:Set AT and the first General Authenticate (GA1, encrypted nonce)
+- Brainpool P-256-r1 curve setup, key-agreement helpers (`__getX1`, `__getX2`, `__getSharedSecret`)
+- AES encrypt/decrypt, CMAC, KDF utilities
+
+The following is **not yet implemented** (raises `NotImplementedError`):
+
+- `getSecurityObject()` — reading EF.CardAccess from the chip
+- `__sendGA4()` — final auth-token exchange
+- Full `performPACE()` loop — nonce decryption, ephemeral key exchange, session key derivation
+
+Do not rely on `performPACE()` producing a working secure channel until these gaps are closed.
 
 ---
 
@@ -116,7 +152,7 @@ ruff check .
 |----------|-------|
 | ICAO Doc 9303 Part 3 | MRZ format |
 | ICAO Doc 9303 Part 10 | Logical Data Structure, Data Groups |
-| ICAO Doc 9303 Part 11 | BAC, PACE, SM, PA, AA |
+| ICAO Doc 9303 Part 11 | BAC, SM, PA, AA (PACE partial) |
 | ISO/IEC 7816-4 | APDU commands |
 | ISO/IEC 9797-1 | MAC and padding |
 | ISO/IEC 19794-5 | Biometric facial images |

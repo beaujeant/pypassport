@@ -58,28 +58,35 @@ This toolkit implements those protocols and also provides a research module for 
 
 ## Installation
 
+This repo is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/). The recommended way to install is with [`uv`](https://github.com/astral-sh/uv):
+
+```bash
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install everything (both packages + all deps) into a managed .venv
+uv sync
+
+# Verify
+uv run python -c "import pypassport; print('OK')"
+```
+
 ### Core library only
 
 ```bash
-python -m pip install -e ./pypassport
-python -c "import pypassport; print('OK')"
+uv sync --package pypassport
 ```
 
 ### Core library + GUI
 
 ```bash
-python -m pip install -e ./pypassport -e ./ePassportViewer
+uv sync
 ```
 
-### Recommended: use a virtual environment
+### Without uv (plain pip)
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate       # Linux / macOS
-# .venv\Scripts\activate        # Windows
-
-pip install --upgrade pip
-pip install -e ./pypassport -e ./ePassportViewer
+python -m pip install -e ./pypassport -e ./ePassportViewer
 ```
 
 ---
