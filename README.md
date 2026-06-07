@@ -1,13 +1,27 @@
 # ePassport Monorepo
 
-This repository contains two related Python projects for working with electronic passports (ePassports / ICAO Doc 9303):
+A Python toolkit for reading, analysing, and researching electronic passports (ePassports) that conform to **ICAO Doc 9303**. Developed by the Information Security Group (ISG) at UCLouvain as a research platform for studying ePassport security.
+
+This repository contains two complementary projects:
 
 | Project | Description |
 |---------|-------------|
-| [`pypassport/`](./pypassport/) | Core Python library — communicates with ePassports over RFID/NFC/PC/SC |
-| [`ePassportViewer/`](./ePassportViewer/) | Desktop GUI — displays passport data and sends custom APDUs; built on top of `pypassport` |
+| [`pypassport/`](./pypassport/) | Core Python library — implements the ICAO 9303 protocol stack and communicates with ePassports over RFID/NFC via a PC/SC reader |
+| [`ePassportViewer/`](./ePassportViewer/) | Desktop GUI — reads and displays passport data, runs security analysis tools; built on top of `pypassport` |
 
 `pypassport` is the standalone library. `ePassportViewer` is an optional GUI that depends on it.
+
+---
+
+## Background
+
+Electronic passports (ePassports, eMRTDs) embed a contactless chip that stores biographic and biometric data protected by the cryptographic mechanisms defined in ICAO Doc 9303. These include:
+
+- **BAC** (Basic Access Control) and **PACE** for access control
+- **Passive Authentication** for verifying document integrity via a PKI chain
+- **Active Authentication** for detecting chip cloning
+
+This toolkit implements those protocols faithfully and also provides a research module for testing known security vulnerabilities in deployed passports.
 
 ---
 
@@ -21,6 +35,8 @@ This repository contains two related Python projects for working with electronic
 │   ├── LICENSE
 │   ├── src/
 │   │   └── pypassport/         # Library source package
+│   │       ├── doc9303/        # ICAO 9303 protocol implementations
+│   │       └── attacks/        # Security research modules
 │   └── tests/                  # Test scripts and fixtures
 │
 ├── ePassportViewer/            # GUI application (requires pypassport)
@@ -28,10 +44,12 @@ This repository contains two related Python projects for working with electronic
 │   ├── README.md
 │   ├── src/
 │   │   └── epassportviewer/    # Application source package
-│   │       └── resources/      # Bundled icons and gadgets
+│   │       └── resources/      # Bundled icons and widgets
 │   └── tests/
 │
 ├── pyproject.toml              # Monorepo-level tooling (pytest, ruff, mypy, coverage)
+├── uv.lock
+├── CLAUDE.md
 ├── README.md                   # This file
 └── .gitignore
 ```
@@ -57,8 +75,8 @@ python -m pip install -e ./pypassport -e ./ePassportViewer
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate      # Linux / macOS
-# .venv\Scripts\activate       # Windows
+source .venv/bin/activate       # Linux / macOS
+# .venv\Scripts\activate        # Windows
 
 pip install --upgrade pip
 pip install -e ./pypassport -e ./ePassportViewer
@@ -68,20 +86,7 @@ pip install -e ./pypassport -e ./ePassportViewer
 
 ## System dependencies
 
-Two OS-level dependencies are required for the GUI; `pypassport` only needs the PC/SC service.
-
-### Tkinter / Tk (GUI only)
-
-Tkinter is bundled with Python but the underlying Tk library must be installed separately on most systems:
-
-| Platform | Command |
-|----------|---------|
-| **macOS** (Homebrew Python) | `brew install python-tk` |
-| **Windows** | Re-run the `python.org` installer → Modify → enable *tcl/tk and IDLE* |
-| Arch / Manjaro | `sudo pacman -S tk` |
-| Debian / Ubuntu / Mint | `sudo apt install python3-tk` |
-| Fedora / RHEL | `sudo dnf install python3-tkinter` |
-| openSUSE | `sudo zypper install python3-tk` |
+Two OS-level components are required regardless of installation method: a **PC/SC smart card service** and a compatible **NFC reader**. The GUI additionally needs **Tkinter**.
 
 ### PC/SC smart card service
 
@@ -93,13 +98,43 @@ Tkinter is bundled with Python but the underlying Tk library must be installed s
 | Debian / Ubuntu | `sudo apt install pcscd libusb-dev` |
 | Fedora / RHEL | `sudo dnf install pcsc-lite` |
 
-See [`pypassport/README.md`](./pypassport/README.md) for full reader driver installation instructions (ACR122U etc.).
+See [`pypassport/README.md`](./pypassport/README.md) for reader driver installation (ACR122U and others).
+
+### Tkinter / Tk (GUI only)
+
+Tkinter ships with Python but the underlying Tk library must be installed separately on most systems:
+
+| Platform | Command |
+|----------|---------|
+| **macOS** (Homebrew Python) | `brew install python-tk` |
+| **Windows** | Re-run the `python.org` installer → Modify → enable *tcl/tk and IDLE* |
+| Arch / Manjaro | `sudo pacman -S tk` |
+| Debian / Ubuntu / Mint | `sudo apt install python3-tk` |
+| Fedora / RHEL | `sudo dnf install python3-tkinter` |
+| openSUSE | `sudo zypper install python3-tk` |
 
 ---
 
-## Running the GUI
+## Quick start
 
-After installing both packages:
+### Reading passport data
+
+```python
+from pypassport import reader
+from pypassport.epassport import EPassport
+
+r = reader.getReader()
+
+# MRZ fields: (document number, date of birth YYMMDD, expiry date YYMMDD)
+ep = EPassport(r, ("EP123456", "850101", "260101"))
+
+dg1 = ep["DG1"]   # MRZ text data
+dg2 = ep["DG2"]   # facial image (JPEG / JPEG2000)
+```
+
+See [`pypassport/README.md`](./pypassport/README.md) for the full API and usage examples.
+
+### Running the GUI
 
 ```bash
 epassportviewer            # if installed as a script
@@ -112,7 +147,6 @@ python -m epassportviewer  # run as a module
 ## Running tests
 
 ```bash
-# From the repo root (after installing pytest)
 pip install pytest
 pytest pypassport/tests/
 ```
@@ -123,7 +157,8 @@ No automated test suite exists yet for `ePassportViewer` — manual testing is r
 
 ## Development notes
 
-* Each subproject has its own `pyproject.toml` and can be developed, released, and versioned independently.
-* `pypassport` does **not** depend on `ePassportViewer`.
-* `ePassportViewer` depends on `pypassport` and re-uses it as a library — no code is vendored or duplicated.
-* Both packages use the `src/` layout for clean package discovery.
+- Each subproject has its own `pyproject.toml` and can be developed, released, and versioned independently.
+- `pypassport` does **not** depend on `ePassportViewer`.
+- `ePassportViewer` depends on `pypassport` — no code is duplicated.
+- Both packages use the `src/` layout for clean package discovery.
+- See `CLAUDE.md` for development workflow guidelines.
