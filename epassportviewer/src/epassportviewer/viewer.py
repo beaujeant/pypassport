@@ -89,20 +89,63 @@ class ViewerPane:
         try:
             logging.info(f"{doc_number} {dob} {expiry}")
             ep = EPassport(self.parent.reader, (doc_number, dob, expiry))
+        except EPassportException as e:
+            logging.error(f"Could not initialize ePassport session: {e}")
+            messagebox.showerror("Passport read failed", str(e))
+            return
+        except Exception as e:
+            logging.exception("Unexpected error while initializing ePassport session")
+            messagebox.showerror(
+                "Passport read failed",
+                f"Unexpected error while connecting to the passport: {e}",
+            )
+            return
+
+        try:
             dg1 = ep["DG1"]
+        except EPassportException as e:
+            logging.error(f"Could not read DG1: {e}")
+            messagebox.showerror("Passport read failed", str(e))
+            return
+        except Exception as e:
+            logging.exception("Unexpected error while reading DG1")
+            messagebox.showerror(
+                "Passport read failed",
+                f"Unexpected error while reading DG1: {e}",
+            )
+            return
+
+        if dg1 is None:
+            messagebox.showerror(
+                "Passport read failed",
+                "DG1 could not be read from the chip. Check the MRZ and try again.",
+            )
+            return
+
+        try:
             self.fields["type"].configure(text=dg1["5F1F"]["5F03"].replace("<", " ").strip())
             self.fields["country"].configure(text=dg1["5F1F"]["5F28"].replace("<", " ").strip())
             name = dg1["5F1F"]["5F5B"].split("<<")
             self.fields["surname"].configure(text=name[0].replace("<", " ").strip())
-            self.fields["name"].configure(text=name[1].replace("<", " ").strip())
+            self.fields["name"].configure(text=name[1].replace("<", " ").strip() if len(name) > 1 else "")
             self.fields["number"].configure(text=dg1["5F1F"]["5A"].replace("<", " ").strip())
             self.fields["nationality"].configure(text=dg1["5F1F"]["5F2C"].replace("<", " ").strip())
             self.fields["dob"].configure(text=dg1["5F1F"]["5F57"].replace("<", " ").strip())
             self.fields["sex"].configure(text=dg1["5F1F"]["5F35"].replace("<", " ").strip())
             self.fields["expiry"].configure(text=dg1["5F1F"]["59"].replace("<", " ").strip())
             self.fields["optional"].configure(text=dg1["5F1F"]["53"].replace("<", " ").strip())
+        except (KeyError, AttributeError) as e:
+            logging.exception("Could not parse DG1 fields")
+            messagebox.showerror(
+                "Passport read failed",
+                f"Could not parse DG1 fields (unexpected layout): {e}",
+            )
+            return
 
+        try:
             dg2 = ep["DG2"]
+            if dg2 is None:
+                raise EPassportException("DG2 could not be read from the chip.")
             image_stream = io.BytesIO(dg2["7F61"][0]["7F60"]["5F2E"])
             image = Image.open(image_stream)
 
@@ -114,10 +157,15 @@ class ViewerPane:
             tk_image = ImageTk.PhotoImage(image)
             self.passport_photo.configure(image=tk_image, width=max_width, height=new_height)
             self.passport_photo.image = tk_image
-
         except EPassportException as e:
-            messagebox.showerror("Error", e)
-        # self.update_field("signature", mrz._mrz)
+            logging.error(f"Could not read DG2: {e}")
+            messagebox.showerror("Passport photo unavailable", str(e))
+        except Exception as e:
+            logging.exception("Could not load passport photo from DG2")
+            messagebox.showerror(
+                "Passport photo unavailable",
+                f"Could not load the passport photo: {e}",
+            )
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)

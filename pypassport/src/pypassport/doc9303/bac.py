@@ -61,6 +61,19 @@ class BAC():
         if not isinstance(self._iso7816, ISO7816):
             raise BACException("The sublayer iso7816 is not available")
 
+        # Status words returned by various chips when BAC mutual
+        # authentication fails (typically because the derived keys, and
+        # therefore the MRZ, are incorrect). The ICAO 9303 spec says 6300,
+        # but real-world chips also return 6982, 6A80, 6A86, 6A88.
+        _BAC_FAILURE_SWS = {
+            (0x63, 0x00),
+            (0x69, 0x82),
+            (0x69, 0x88),
+            (0x6A, 0x80),
+            (0x6A, 0x86),
+            (0x6A, 0x88),
+        }
+
         try:
             self.derivationOfDocumentBasicAccesKeys(mrz)
             logging.debug("Request an 8 byte random number from the MRTD's chip")
@@ -71,10 +84,19 @@ class BAC():
             eicc_micc = self._iso7816.mutualAuthentication(hex_eifd_mifd)
             return self.sessionKeys(eicc_micc, rnd_icc)
         except ISO7816Exception as e:
-            if e.sw1 == 0x63 and e.sw2 == 0x00:
-                logging.error("The MRZ is most likely incorrect.")
-                raise BACException("Authentication failed: the MRZ is most likely incorrect.") from e
-            raise
+            if (e.sw1, e.sw2) in _BAC_FAILURE_SWS:
+                logging.error(
+                    f"BAC mutual authentication rejected by the chip "
+                    f"(SW={e.sw1:02X}{e.sw2:02X} - {e.data}). "
+                    f"The MRZ is most likely incorrect."
+                )
+                raise BACException(
+                    "Authentication failed: the MRZ is most likely incorrect "
+                    f"(chip returned {e.sw1:02X}{e.sw2:02X} - {e.data})."
+                ) from e
+            raise BACException(
+                f"BAC failed: chip returned {e.sw1:02X}{e.sw2:02X} ({e.data})."
+            ) from e
         except BACException:
             raise
         except Exception as msg:
