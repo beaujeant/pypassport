@@ -1,13 +1,13 @@
 import os
 import logging
 from pypassport.doc9303 import converter
-from pypassport.doc9303 import securemessaging
+from pypassport.doc9303 import secure_messaging
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.bac import BAC
 from pypassport.doc9303.pace import PACE
-from pypassport.doc9303.datagroup import readElementaryFile, ElementaryFileException, DataGroupDump
-from pypassport.doc9303.activeauthentication import ActiveAuthentication, ActiveAuthenticationException
-from pypassport.doc9303.passiveauthentication import PassiveAuthentication, PassiveAuthenticationException
+from pypassport.doc9303.data_group import readElementaryFile, ElementaryFileException, DataGroupDump
+from pypassport.doc9303.active_authentication import ActiveAuthentication, ActiveAuthenticationException
+from pypassport.doc9303.passive_authentication import PassiveAuthentication, PassiveAuthenticationException
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport import ca_manager
 from pypassport.openssl import OpenSSL, OpenSSLException
@@ -111,7 +111,7 @@ class EPassport(dict):
             raise EPassportException("The object must be initialized with the ePassport MRZ")
 
         (KSenc, KSmac, ssc) = self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
-        sm = securemessaging.SecureMessaging(KSenc, KSmac, ssc)
+        sm = secure_messaging.SecureMessaging(KSenc, KSmac, ssc)
         self.iso7816.ciphering = sm
 
     def doActiveAuthentication(self, dg15=None):

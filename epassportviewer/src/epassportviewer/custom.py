@@ -5,7 +5,7 @@ from tkinter import ttk, filedialog
 from PIL import Image, ImageTk
 from tkinter import messagebox
 from Crypto.Cipher import DES3
-from pypassport.doc9303 import securemessaging
+from pypassport.doc9303 import secure_messaging
 from hashlib import sha1
 from pypassport import asn1
 from pypassport.doc9303 import mrz, bac
@@ -214,7 +214,7 @@ class CustomPane:
             self.init()
             basic_access_control = bac.BAC(self.parent.iso7816)
             (KSenc, KSmac, ssc) = basic_access_control.authenticationAndEstablishmentOfSessionKeys(build_mrz)
-            sm = securemessaging.SecureMessaging(KSenc, KSmac, ssc)
+            sm = secure_messaging.SecureMessaging(KSenc, KSmac, ssc)
             self.parent.iso7816.ciphering = sm
         except Exception as msg:
             messagebox.showerror("Error: BAC", str(msg))
@@ -429,7 +429,7 @@ class CustomPane:
             KSenc = toBytes(self.ksenc.get())
             KSmac = toBytes(self.ksmac.get())
             ssc = toBytes(self.ssc.get())
-            sm = securemessaging.SecureMessaging(KSenc, KSmac, ssc)
+            sm = secure_messaging.SecureMessaging(KSenc, KSmac, ssc)
             self.parent.iso7868.setCiphering(sm)
             logging.ingo(f"CIPHERING SET:\n{sm}")
         except Exception as msg:

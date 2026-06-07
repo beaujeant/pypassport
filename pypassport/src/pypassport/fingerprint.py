@@ -5,9 +5,9 @@ import subprocess
 import tempfile
 
 from pypassport.iso7816 import ISO7816Exception, APDUCommand
-from pypassport.doc9303 import passiveauthentication
+from pypassport.doc9303 import passive_authentication
 from pypassport import ca_manager
-from pypassport import hex_functions
+from pypassport import hex_utils
 from pypassport.doc9303 import converter
 from pypassport.attacks import mac_traceability
 from pypassport import der_object_identifier
@@ -22,7 +22,7 @@ class Fingerprint(object):
     def __init__(self, epassport, certdir=None, callback=None):
         self._doc = epassport
         self.curMRZ = None
-        self._pa = passiveauthentication.PassiveAuthentication()
+        self._pa = passive_authentication.PassiveAuthentication()
         self._certInfo = None
         self.callback = callback
         self.doPA = False
@@ -79,7 +79,7 @@ class Fingerprint(object):
             self.callback.put((None, 'fp', 5))
 
         try:
-            res["UID"] = hex_functions.binToHexRep(self._doc.iso7816.getUID())
+            res["UID"] = hex_utils.binToHexRep(self._doc.iso7816.getUID())
         except Exception:
             logging.error("Could not get the UID")
 
@@ -181,7 +181,7 @@ class Fingerprint(object):
 
             if self.doPA:
                 try:
-                    pa = passiveauthentication.PassiveAuthentication()
+                    pa = passive_authentication.PassiveAuthentication()
                     res["verifySOD"] = pa.verifySODandCDS(sod, self.csca)
                 except Exception:
                     logging.error("Could not execute passive authentication and verify SOD and CDS")
@@ -382,7 +382,7 @@ class Fingerprint(object):
         self._doc.iso7816.rstConnectionRaw()
         try:
             toSend = APDUCommand("00", "A4", "00", "00", "", "", "FF")
-            return hex_functions.binToHexRep(self._doc.iso7816.transmit(toSend, "Select File"))
+            return hex_utils.binToHexRep(self._doc.iso7816.transmit(toSend, "Select File"))
         except ISO7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 
@@ -390,7 +390,7 @@ class Fingerprint(object):
         self._doc.iso7816.rstConnection()
         try:
             toSend = APDUCommand("00", "84", "00", "00", "", "", "01")
-            return (True, hex_functions.binToHexRep(self._doc.iso7816.transmit(toSend, "Get Challenge")))
+            return (True, hex_utils.binToHexRep(self._doc.iso7816.transmit(toSend, "Get Challenge")))
         except ISO7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 

@@ -1,6 +1,6 @@
 """ASN.1 helper types and length encoding/decoding utilities for pypassport."""
 
-from pypassport.hex_functions import binToHex, binToHexRep, hexToBin, hexRepToBin
+from pypassport.hex_utils import binToHex, binToHexRep, hexToBin, hexRepToBin
 
 from pyasn1.type.univ import (
     Integer,

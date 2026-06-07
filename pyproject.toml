@@ -8,17 +8,17 @@
 #   uv run pytest                       # run tests
 
 [tool.uv.workspace]
-members = ["pypassport", "ePassportViewer"]
+members = ["pypassport", "epassportviewer"]
 
 [tool.pytest.ini_options]
 testpaths = [
     "pypassport/tests",
-    "ePassportViewer/tests",
+    "epassportviewer/tests",
 ]
 
 [tool.ruff]
 line-length = 120
-src = ["pypassport/src", "ePassportViewer/src"]
+src = ["pypassport/src", "epassportviewer/src"]
 target-version = "py39"
 
 [tool.ruff.lint]
@@ -28,7 +28,7 @@ select = ["E", "F", "W", "I"]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
-mypy_path = "pypassport/src:ePassportViewer/src"
+mypy_path = "pypassport/src:epassportviewer/src"
 
 [tool.coverage.run]
-source = ["pypassport/src", "ePassportViewer/src"]
+source = ["pypassport/src", "epassportviewer/src"]

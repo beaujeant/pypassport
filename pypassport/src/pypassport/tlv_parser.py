@@ -1,7 +1,7 @@
 """Simple TLV (Tag-Length-Value) parser built on ASN.1 length decoding."""
 
 from pypassport.asn1 import asn1Exception, asn1Length
-from pypassport import hex_functions
+from pypassport import hex_utils
 
 
 class TLVParserException(Exception):
@@ -15,11 +15,11 @@ class TLVParser(dict):
         self._byteNb = 0
 
     def _getTag(self) -> str:
-        if (hex_functions.binToHex(self._data[self._byteNb]) & 0x0F) == 0x0F:
-            tag = hex_functions.binToHexRep(self._data[self._byteNb:self._byteNb + 2]).upper()
+        if (hex_utils.binToHex(self._data[self._byteNb]) & 0x0F) == 0x0F:
+            tag = hex_utils.binToHexRep(self._data[self._byteNb:self._byteNb + 2]).upper()
             self._byteNb += 2
         else:
-            tag = hex_functions.binToHexRep(self._data[self._byteNb]).upper()
+            tag = hex_utils.binToHexRep(self._data[self._byteNb]).upper()
             self._byteNb += 1
         return tag
 

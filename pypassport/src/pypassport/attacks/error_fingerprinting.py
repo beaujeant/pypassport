@@ -25,7 +25,7 @@ from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.reader import ReaderException
 # TODO: pypassport.apdu does not exist; APDU classes live in pypassport.iso7816
 from pypassport.iso9797 import mac, pad, unpad
-from pypassport.hex_functions import hexToHexRep, binToHexRep
+from pypassport.hex_utils import hexToHexRep, binToHexRep
 
 class ErrorFingerprintingException(Exception):
     pass
