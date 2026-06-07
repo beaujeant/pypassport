@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypassport"
+version = "0.1.0"
+description = "Python library for communicating with electronic passports (ePassports) over RFID/NFC"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Beaujeant", email = "antonin.beaujeant@gmail.com" },
+]
+keywords = ["passport", "epassport", "nfc", "rfid", "smartcard", "icao", "doc9303"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "pycryptodome>=3.20.0",
+    "pyasn1>=0.6.0",
+    "pyscard>=2.0.9",
+    "ecdsa>=0.19.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/beaujeant/pypassport"
+Repository = "https://github.com/beaujeant/pypassport"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+src = ["src"]

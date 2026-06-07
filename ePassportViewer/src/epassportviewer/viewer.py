@@ -1,0 +1,123 @@
+import logging
+import io
+import tkinter as tk
+from tkinter import ttk
+from PIL import Image, ImageTk
+from tkinter import messagebox
+from pypassport.epassport import EPassport, EPassportException
+
+
+class ViewerPane:
+    def __init__(self, main):
+        self.parent = main
+        self.root = main.root
+        # Inner menu frame
+        reader_info = tk.Frame(self.root.view_tab)
+        reader_info.pack(fill="x", pady=10, padx=10)
+
+        # "Read" button
+        self.root.read_button = ttk.Button(reader_info, text="Read", command=self.read_passport)
+        self.root.read_button.pack(side="left", padx=5)
+
+        # Left side for image
+        image_frame = ttk.Frame(self.root.view_tab, width=200, height=300)
+        image_frame.pack(side="left", padx=10, anchor="n")
+
+        # Placeholder for the passport photo
+        self.passport_photo = tk.Label(
+            image_frame, text="Passport Photo\n(200px x 300px)", relief="solid", width=25, height=15
+        )
+        self.passport_photo.pack(padx=5, pady=5)
+
+        # Right side for textual information
+        info_frame = ttk.Frame(self.root.view_tab)
+        info_frame.pack(side="left", pady=5, anchor="n")
+
+        # Define labels for each field in 3 columns
+        self.fields = {}
+        default_val = "None"
+
+        ttk.Label(info_frame, text="Type", font=("", 10, "bold")).grid(row=0, column=0, sticky="w", padx=(5, 300))
+        self.fields["type"] = ttk.Label(info_frame, text=default_val)
+        self.fields["type"].grid(row=1, column=0, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Surame", font=("", 10, "bold")).grid(row=2, column=0, sticky="w", padx=5)
+        self.fields["surname"] = ttk.Label(info_frame, text=default_val)
+        self.fields["surname"].grid(row=3, column=0, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Name", font=("", 10, "bold")).grid(row=4, column=0, sticky="w", padx=5)
+        self.fields["name"] = ttk.Label(info_frame, text=default_val)
+        self.fields["name"].grid(row=5, column=0, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Nationality", font=("", 10, "bold")).grid(row=6, column=0, sticky="w", padx=5)
+        self.fields["nationality"] = ttk.Label(info_frame, text=default_val)
+        self.fields["nationality"].grid(row=7, column=0, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Date of Birth", font=("", 10, "bold")).grid(row=8, column=0, sticky="w", padx=5)
+        self.fields["dob"] = ttk.Label(info_frame, text=default_val)
+        self.fields["dob"].grid(row=9, column=0, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Signature", font=("", 10, "bold")).grid(row=10, column=0, sticky="w", padx=5)
+        self.fields["signature"] = ttk.Label(info_frame, text=default_val)
+        self.fields["signature"].grid(row=11, column=0, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Passport Number", font=("", 10, "bold")).grid(row=0, column=1, sticky="w", padx=5)
+        self.fields["number"] = ttk.Label(info_frame, text=default_val)
+        self.fields["number"].grid(row=1, column=1, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Issuing Country", font=("", 10, "bold")).grid(row=2, column=1, sticky="w", padx=5)
+        self.fields["country"] = ttk.Label(info_frame, text=default_val)
+        self.fields["country"].grid(row=3, column=1, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Sex", font=("", 10, "bold")).grid(row=4, column=1, sticky="w", padx=5)
+        self.fields["sex"] = ttk.Label(info_frame, text=default_val)
+        self.fields["sex"].grid(row=5, column=1, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Date of Expiry", font=("", 10, "bold")).grid(row=6, column=1, sticky="w", padx=5)
+        self.fields["expiry"] = ttk.Label(info_frame, text=default_val)
+        self.fields["expiry"].grid(row=7, column=1, sticky="w", pady=(4, 10), padx=5)
+
+        ttk.Label(info_frame, text="Optional Data", font=("", 10, "bold")).grid(row=8, column=1, sticky="w", padx=5)
+        self.fields["optional"] = ttk.Label(info_frame, text=default_val)
+        self.fields["optional"].grid(row=9, column=1, sticky="w", pady=(4, 10), padx=5)
+
+    def read_passport(self):
+        doc_number = self.parent.doc_number.get()
+        dob = self.parent.dob.get()
+        expiry = self.parent.expiry.get()
+
+        try:
+            logging.info(f"{doc_number} {dob} {expiry}")
+            ep = EPassport(self.parent.reader, (doc_number, dob, expiry))
+            dg1 = ep["DG1"]
+            self.fields["type"].configure(text=dg1["5F1F"]["5F03"].replace("<", " ").strip())
+            self.fields["country"].configure(text=dg1["5F1F"]["5F28"].replace("<", " ").strip())
+            name = dg1["5F1F"]["5F5B"].split("<<")
+            self.fields["surname"].configure(text=name[0].replace("<", " ").strip())
+            self.fields["name"].configure(text=name[1].replace("<", " ").strip())
+            self.fields["number"].configure(text=dg1["5F1F"]["5A"].replace("<", " ").strip())
+            self.fields["nationality"].configure(text=dg1["5F1F"]["5F2C"].replace("<", " ").strip())
+            self.fields["dob"].configure(text=dg1["5F1F"]["5F57"].replace("<", " ").strip())
+            self.fields["sex"].configure(text=dg1["5F1F"]["5F35"].replace("<", " ").strip())
+            self.fields["expiry"].configure(text=dg1["5F1F"]["59"].replace("<", " ").strip())
+            self.fields["optional"].configure(text=dg1["5F1F"]["53"].replace("<", " ").strip())
+
+            dg2 = ep["DG2"]
+            image_stream = io.BytesIO(dg2["7F61"][0]["7F60"]["5F2E"])
+            image = Image.open(image_stream)
+
+            max_width = 200
+            width, height = image.size
+            new_height = int(max_width * height / width)
+            image = image.resize((max_width, new_height), Image.LANCZOS)
+
+            tk_image = ImageTk.PhotoImage(image)
+            self.passport_photo.configure(image=tk_image, width=max_width, height=new_height)
+            self.passport_photo.image = tk_image
+
+        except EPassportException as e:
+            messagebox.showerror("Error", e)
+        # self.update_field("signature", mrz._mrz)
+
+    def update_field(self, item, value):
+        self.fields[item].config(text=value)

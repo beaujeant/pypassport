@@ -1,0 +1,133 @@
+# Copyright 2012 Antonin Beaujeant
+#
+# This file is part of pypassport.
+#
+# pypassport is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# pypassport is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with pyPassport.
+# If not, see <http://www.gnu.org/licenses/>.
+
+from hashlib import sha1
+
+from pypassport.logger import Logger
+from pypassport.iso9797 import mac, pad, unpad
+from pypassport.iso7816 import ISO7816, ISO7816Exception
+from pypassport.reader import ReaderException
+from pypassport.doc9303 import mrz, bac, datagroup
+from pypassport.doc9303.datagroup import readElementaryFile
+from pypassport.doc9303.securemessaging import SecureMessaging
+from pypassport.hex_functions import hexToHexRep, binToHexRep, hexRepToBin
+from pypassport.openssl import OpenSSL, OpenSSLException
+from pypassport.utils import toHexString
+from smartcard.util import toBytes, toASCIIBytes, PACK
+
+class SignEverythingException(Exception):
+    pass
+
+class SignEverything(Logger):
+    """
+    This class allows a user to sign any 64bits message.
+    The main method is I{sign}
+    """
+    def __init__(self, iso7816):
+        Logger.__init__(self, "SIGN EVERYTHING ATTACK")
+        self._iso7816 = iso7816
+
+        if not isinstance(self._iso7816, ISO7816):
+            raise SignEverythingException("The sublayer iso7816 is not available")
+
+        self._iso7816.rstConnection()
+
+        self._bac = bac.BAC(iso7816)
+        self._openssl = OpenSSL()
+
+    def sign(self, message_to_sign="1122334455667788", mrz_value=None):
+        """
+        Get the signature of a 64bits message from the reader.
+        In order to prevent ICC cloning, the passport implements an Active Authentication (AA) security.
+        The passport signs the 64bits message sent by the reader thanks to its Private key stored in secured memory.
+        This method lets the user decide the 64bits and checks (if MRZ set) with the public key if the message has been signed properly
+
+        @params message_to_sign: 64bits message to sign
+        @type message_to_sign: String (16 HEX values)
+
+        @return: A set composed of (The signature, Boolean that states if the signature has been checked)
+        """
+        validated = False
+        if mrz_value:
+            self.log("Validation required")
+            self.log("MRZ: {0}".format(mrz_value))
+            public_key = self.getPubKey(self._bac, mrz_value)
+
+        message = message_to_sign
+        message_bin = toHexString(list(message), PACK)
+
+        signature = self._iso7816.internalAuthentication(message_bin)
+        self.log("Signature: {0}".format(binToHexRep(signature)))
+
+        if mrz_value:
+            self.log("Check if the signature is correct regarding the public key:")
+            data = self._openssl.retrieveSignedData(public_key, signature)
+            data_hex = binToHexRep(data)
+            header = data_hex[:2]
+            self.log("\tHeader: {0}".format(header))
+            M1 = data_hex[2:214]
+            self.log("\tM1: {0}".format(M1))
+            hash_M = data_hex[214:254]
+            self.log("\tHash: {0}".format(hash_M))
+            trailer = data_hex[254:256]
+            self.log("\tTrailer: {0}".format(trailer))
+
+            # If using SHA-1
+            if header=='6A' and trailer=='BC':
+                M = hexRepToBin(M1 + message)
+                new_hash = sha1(M).digest()
+                hash_M_bin = hexRepToBin(hash_M)
+                if new_hash==hash_M_bin:
+                    self.log("hash(M|message to sign) == Hash")
+                    validated = True
+
+        return (binToHexRep(signature), validated)
+
+    def getPubKey(self, bac_cp, mrz_value):
+        """
+        It uses method from pypassport.doc9303.bac in order to authenticate and establish the session keys
+
+        @param bac_cp: A BAC for the authentication and establishment of session keys
+        @type bac_cp: A pypassport.doc9303.bac.BAC() object
+        @param mrz_value: A MRZ
+        @type mrz_value: String value ("PPPPPPPPPPcCCCYYMMDDcSYYMMDDc<<<<<<<<<<<<<<cd")
+
+        @return: The public key (DG15)
+        """
+        self.log("Reset conenction")
+        self._iso7816.rstConnection()
+
+        self.log("Generate the MRZ object")
+        mrz_pass = mrz.MRZ(mrz_value)
+        self.log("Check the MRZ")
+        mrz_pass.checkMRZ()
+
+        self.log("Authentication and establishment of session keys")
+        (KSenc, KSmac, ssc) = bac_cp.authenticationAndEstablishmentOfSessionKeys(mrz_pass)
+        self.log("Encryption key: {0}".format(binToHexRep(KSenc)))
+        self.log("MAC key: {0}".format(binToHexRep(KSmac)))
+        self.log("Send Sequence Counter: {0}".format(binToHexRep(ssc)))
+        sm = SecureMessaging(KSenc, KSmac, ssc)
+        self._iso7816.ciphering = sm
+
+        self.log("Get public key")
+        dg15 = readElementaryFile("DG15", self._iso7816)
+        self.log("Public key: {0}".format(binToHexRep(dg15.body)))
+        return dg15.body
+
+
