@@ -17,7 +17,8 @@ def binToHexList(data):
     return hexRepToList(binToHexRep(data))
 
 
-#hex to something
+# hex to something
+
 
 def hexToBin(data):
     """511 --> '\x00\x00\x00\x00\x00\x00\x01\xff'"""
@@ -33,12 +34,13 @@ def hexToHexList(string):
     n = 0
     out = []
     while n < len(string):
-        out.append(int(string[n:n + 2], 16))
+        out.append(int(string[n : n + 2], 16))
         n += 2
     return out
 
 
-#hexRep to something
+# hexRep to something
+
 
 def hexRepToBin(hexrep):
     if not isinstance(hexrep, str):
@@ -53,7 +55,7 @@ def hexRepToList(string):
     n = 0
     out = []
     while n < len(string):
-        out.append(int(string[n:n + 2], 16))
+        out.append(int(string[n : n + 2], 16))
         n += 2
     return out
 
@@ -66,11 +68,12 @@ def listToHexRep(list):
     """[170, 187, 204] --> 'AABBCC'"""
     out = []
     for item in list:
-        out.append('%02X' % int(item))
+        out.append("%02X" % int(item))
     return out.upper()
 
 
-#hexList to something
+# hexList to something
+
 
 def hexListToBin(data):
     """[0xAA, 0xBB] -> '\xaa\xbb'"""
@@ -86,9 +89,9 @@ def hexListToHex(data):
 
 def hexListToHexRep(data):
     """[0xAA, 0xBB] -> 'AABB4"""
-    out = ''
+    out = ""
     for d in data:
-        out += '%02X' % int(d)
+        out += "%02X" % int(d)
     return out
 
 

@@ -2,11 +2,11 @@ import os
 import shutil
 
 from pypassport.openssl import OpenSSL, OpenSSLException
-from logger import Logger
+from pypassport.logger import Logger
 
 
 class DistinguishedName(object):
-    def __init__(self, C="", ST="", L="", O="", OU="", CN="", emailAddress="", serialNumber=""):
+    def __init__(self, C="", ST="", L="", O="", OU="", CN="", emailAddress="", serialNumber=""):  # noqa: E741
         self.__C = C
         self.__ST = ST
         self.__L = L
@@ -64,23 +64,30 @@ class DistinguishedName(object):
     def setSerialNumber(self, value):
         self.__serialNumber = value
 
-
     def getSubject(self):
         subj = ""
-        if self.C: subj += "/C="+self.C
-        if self.ST: subj += "/ST="+self.ST
-        if self.L: subj += "/L="+self.L
-        if self.O: subj += "/O="+self.O
-        if self.OU: subj += "/OU="+self.OU
-        if self.CN: subj += "/CN="+self.CN
-        if self.emailAddress: subj += "/emailAddress="+self.emailAddress
-        if self.serialNumber: subj += "/serialNumber="+self.serialNumber
+        if self.C:
+            subj += "/C=" + self.C
+        if self.ST:
+            subj += "/ST=" + self.ST
+        if self.L:
+            subj += "/L=" + self.L
+        if self.O:
+            subj += "/O=" + self.O
+        if self.OU:
+            subj += "/OU=" + self.OU
+        if self.CN:
+            subj += "/CN=" + self.CN
+        if self.emailAddress:
+            subj += "/emailAddress=" + self.emailAddress
+        if self.serialNumber:
+            subj += "/serialNumber=" + self.serialNumber
         return '"' + subj + '"'
 
     C = property(getC, setC, None, None)
     ST = property(getST, setST, None, None)
     L = property(getL, setL, None, None)
-    O = property(getO, setO, None, None)
+    O = property(getO, setO, None, None)  # noqa: E741
     OU = property(getOU, setOU, None, None)
     CN = property(getCN, setCN, None, None)
     emailAddress = property(getEmailAddress, setEmailAddress, None, None)
@@ -88,7 +95,7 @@ class DistinguishedName(object):
 
 
 class CA(Logger):
-    def __init__(self, caLoc=os.path.expanduser('~'), csca=None, cscaKey=None, opensslLocation=""):
+    def __init__(self, caLoc=os.path.expanduser("~"), csca=None, cscaKey=None, opensslLocation=""):
         """
         Initiate the CA infrastructure.
         @caLoc: The location where the openssl config files will be stored
@@ -101,8 +108,8 @@ class CA(Logger):
         self._csca = csca
         self._cscaKey = cscaKey
         self._loc = os.path.normpath(caLoc)
-        self._loc = os.path.join(self._loc, 'ca')
-        self._configFile = os.path.join(self._loc, 'openssl.cfg')
+        self._loc = os.path.join(self._loc, "ca")
+        self._configFile = os.path.join(self._loc, "openssl.cfg")
 
         try:
             os.mkdir(self._loc)
@@ -111,7 +118,6 @@ class CA(Logger):
 
         self._openssl = OpenSSL('"' + self._configFile + '"')
         self._openssl.register(self._traceOpenSSl)
-
 
     def createCSCA(self, size=1024, days=720, dn=DistinguishedName(C="BE", O="Gouv", CN="CSCA-BELGIUM")):
         """
@@ -139,7 +145,6 @@ class CA(Logger):
             msg = str(msg)
             self._errorHandler(msg)
             return self._openssl.genRootX509(cscaKey, days, dn)
-
 
     def createDS(self, size=1024, days=365, dn=DistinguishedName(C="BE", O="Gouv", CN="Document-Signer-BELGIUM")):
         """
@@ -187,9 +192,9 @@ class CA(Logger):
         self.log(msg, name)
 
     def getCrl(self):
-        if not os.path.isfile(os.path.join(self._loc, 'crlnumber')):
-            self._openssl._toDisk(os.path.join(self._loc, 'crlnumber'), "01")
-            self.log("echo '01' > " + os.path.join(self._loc, 'crlnumber'))
+        if not os.path.isfile(os.path.join(self._loc, "crlnumber")):
+            self._openssl._toDisk(os.path.join(self._loc, "crlnumber"), "01")
+            self.log("echo '01' > " + os.path.join(self._loc, "crlnumber"))
         try:
             crl = self._openssl.genCRL(self.csca, self.cscaKey)
         except OpenSSLException as msg:
@@ -199,18 +204,18 @@ class CA(Logger):
         return self._openssl.crlToDER(crl)
 
     def _errorHandler(self, msg):
-        if msg.find('newcerts')> 0:
-            os.makedirs(os.path.join(self._loc, 'newcerts'))
-            self.log("mkdir " + os.path.join(self._loc, 'newcerts'))
-        elif msg.find('index.txt') > 0:
-            self._openssl._toDisk(os.path.join(self._loc, 'index.txt'))
-            self.log("touch " + os.path.join(self._loc, 'index.txt'))
-            self._openssl._toDisk(os.path.join(self._loc, 'index.txt.attr'), "unique_subject = no")
-            self.log("echo 'unique_subject = no' > " + os.path.join(self._loc, 'index.txt.attr'))
-        elif msg.find('serial') > 0:
-            self._openssl._toDisk(os.path.join(self._loc, 'serial'), "01")
-            self.log("echo '01' > " + os.path.join(self._loc, 'serial'))
-        elif msg.find('openssl.cfg') > 0:
+        if msg.find("newcerts") > 0:
+            os.makedirs(os.path.join(self._loc, "newcerts"))
+            self.log("mkdir " + os.path.join(self._loc, "newcerts"))
+        elif msg.find("index.txt") > 0:
+            self._openssl._toDisk(os.path.join(self._loc, "index.txt"))
+            self.log("touch " + os.path.join(self._loc, "index.txt"))
+            self._openssl._toDisk(os.path.join(self._loc, "index.txt.attr"), "unique_subject = no")
+            self.log("echo 'unique_subject = no' > " + os.path.join(self._loc, "index.txt.attr"))
+        elif msg.find("serial") > 0:
+            self._openssl._toDisk(os.path.join(self._loc, "serial"), "01")
+            self.log("echo '01' > " + os.path.join(self._loc, "serial"))
+        elif msg.find("openssl.cfg") > 0:
             self._openssl._toDisk(self._configFile, self._getConfigFile(self._loc))
             self.log("Creation of openssl.cfg")
         else:
@@ -220,17 +225,17 @@ class CA(Logger):
     def resetConfig(self):
         try:
             shutil.rmtree(self._loc)
-        except:
+        except OSError:
             pass
-        os.makedirs(os.path.join(self._loc, 'newcerts'))
-        self._openssl._toDisk(os.path.join(self._loc, 'index.txt'))
-        self._openssl._toDisk(os.path.join(self._loc, 'index.txt.attr'), "unique_subject = no")
-        self._openssl._toDisk(os.path.join(self._loc, 'serial'), "01")
-        self._openssl._toDisk(os.path.join(self._loc, 'crlnumber'), "01")
+        os.makedirs(os.path.join(self._loc, "newcerts"))
+        self._openssl._toDisk(os.path.join(self._loc, "index.txt"))
+        self._openssl._toDisk(os.path.join(self._loc, "index.txt.attr"), "unique_subject = no")
+        self._openssl._toDisk(os.path.join(self._loc, "serial"), "01")
+        self._openssl._toDisk(os.path.join(self._loc, "crlnumber"), "01")
         self._openssl._toDisk(self._configFile, self._getConfigFile(self._loc))
 
     def _testinit(self):
-        if not ((self.csca != None) and (self.cscaKey != None)):
+        if not ((self.csca is not None) and (self.cscaKey is not None)):
             raise OpenSSLException("The root CSCA Certificate is not set.")
 
     def printCrl(self, crl):
@@ -256,15 +261,24 @@ class CA(Logger):
         altsep = os.altsep
         if not altsep:
             altsep = os.path.sep
-        return  """# pour signer un certificat CA intermediaire
+        return (
+            """# pour signer un certificat CA intermediaire
 [ ca ]
 default_ca     = CA_default           # The default ca section
 
 [ CA_default ]
-database       =     """ + os.path.join(self._loc, "index.txt").replace(os.path.sep, altsep) + """       # database index file.
-new_certs_dir  =     """ + os.path.join(self._loc, "newcerts").replace(os.path.sep, altsep) + """       # default place for new certs.
-crlnumber      =     """ + os.path.join(self._loc, "crlnumber").replace(os.path.sep, altsep) + """
-serial         =     """ + os.path.join(self._loc, "serial").replace(os.path.sep, altsep) + """          # The current serial number
+database       =     """
+            + os.path.join(self._loc, "index.txt").replace(os.path.sep, altsep)
+            + """       # database index file.
+new_certs_dir  =     """
+            + os.path.join(self._loc, "newcerts").replace(os.path.sep, altsep)
+            + """       # default place for new certs.
+crlnumber      =     """
+            + os.path.join(self._loc, "crlnumber").replace(os.path.sep, altsep)
+            + """
+serial         =     """
+            + os.path.join(self._loc, "serial").replace(os.path.sep, altsep)
+            + """          # The current serial number
 default_md     = sha1      # which md to use.
 
 default_days    = 365
@@ -308,16 +322,17 @@ keyUsage                = critical, keyCertSign
 basicConstraints       = critical, CA:true, pathlen:0
 subjectKeyIdentifier   = hash
 keyUsage               = critical, keyCertSign, cRLSign"""
+        )
 
 
-#from pypassport.openssl import DistinguishedName, CA
-#ca = CA()
-#ca.resetConfig()
-#dn = DistinguishedName(C="BE", O="UCL", CN="CSCA-BELGIUM")
-#(csca, cscaKey) = ca.createCSCA(size=2048, dn=dn)
-#(ds, dsKey) = ca.createDS()
-#cscaCrl = ca.getCrl()
-#dn = DistinguishedName(C="BE", O="bidon", CN="To revoke")
-#(rev, revKey) = ca.createDS(dn=dn)
-#ca.revoke(rev)
-#revCrl = ca.getCrl()
+# from pypassport.openssl import DistinguishedName, CA
+# ca = CA()
+# ca.resetConfig()
+# dn = DistinguishedName(C="BE", O="UCL", CN="CSCA-BELGIUM")
+# (csca, cscaKey) = ca.createCSCA(size=2048, dn=dn)
+# (ds, dsKey) = ca.createDS()
+# cscaCrl = ca.getCrl()
+# dn = DistinguishedName(C="BE", O="bidon", CN="To revoke")
+# (rev, revKey) = ca.createDS(dn=dn)
+# ca.revoke(rev)
+# revCrl = ca.getCrl()

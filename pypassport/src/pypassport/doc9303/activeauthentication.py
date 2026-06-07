@@ -1,25 +1,28 @@
-from hashlib import *
+import logging
+from hashlib import sha1
+
 from Crypto import Random
 from pyasn1.codec.der import decoder
-import logging
+from smartcard.util import PACK, toHexString
 
-from pypassport.asn1 import *
 from pypassport import hexfunctions
-from pypassport.derobjectidentifier import *
-from pypassport.logger import Logger
-from pypassport.openssl import OpenSSL, OpenSSLException
+from pypassport.asn1 import SubjectPublicKeyInfo
+from pypassport.derobjectidentifier import OID
 from pypassport.doc9303 import datagroup
-from smartcard.util import toBytes, toHexString, toASCIIBytes, PACK
+from pypassport.openssl import OpenSSL
+
 
 class ActiveAuthenticationException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
 
-class ActiveAuthentication():
+
+class ActiveAuthentication:
     """
     This class implements the Active Authentication protocol.
     The main method is I{executeAA} that returns True if the verification is ok or False.
     """
+
     def __init__(self, iso7816, openssl=None):
         """
         @param iso7816: a valid iso7816 object
@@ -59,7 +62,7 @@ class ActiveAuthentication():
         """
         self._dg15 = dg15
         self.RND_IFD = self._genRandom(8)
-        hex_rnd_ifd = toHexString(list(self.RND_IFD),PACK)
+        hex_rnd_ifd = toHexString(list(self.RND_IFD), PACK)
         self.signature = self._iso7816.internalAuthentication(hex_rnd_ifd)
         self.F = self._decryptSignature(dg15.body, self.signature)
 
@@ -95,7 +98,7 @@ class ActiveAuthentication():
         @raise ActiveAuthenticationException: I{The public key could not be recovered from the DG15}: Is open SSL installed?
         """
 
-        if type(dg15) != type(datagroup.DataGroup15(None)):
+        if not isinstance(dg15, datagroup.DataGroup15):
             raise ActiveAuthenticationException("The parameter type is not valid, must be a dataGroup15 object")
 
         return self._openssl.retrieveRsaPubKey(dg15.body)
@@ -126,7 +129,7 @@ class ActiveAuthentication():
             offset = -1
         elif sig[-1] == hexfunctions.hexRepToBin("CC"):
             self.T = sig[-2]
-            #hash = The algorithm corresponding to the algo designed by T
+            # hash = The algorithm corresponding to the algo designed by T
             offset = -2
         else:
             raise ActiveAuthenticationException("Unknow hash algorithm")
@@ -134,13 +137,13 @@ class ActiveAuthentication():
         logging.debug("Determine hash algorithm by trailer T*")
         logging.debug("\tT: " + hexfunctions.binToHexRep(self.T))
 
-        #Find out the hash size
+        # Find out the hash size
         hashSize = len(hash("test").digest())
 
         return (hash, hashSize, offset)
 
     def _extractDigest(self, sig, hashSize, offset):
-        digest = sig[offset - hashSize:offset]
+        digest = sig[offset - hashSize : offset]
 
         logging.debug("Extract digest:")
         logging.debug("\tD: " + hexfunctions.binToHexRep(digest))
@@ -148,7 +151,7 @@ class ActiveAuthentication():
         return digest
 
     def _extractM1(self, sig, hashSize, offset):
-        M1 = sig[1:offset - hashSize]
+        M1 = sig[1 : offset - hashSize]
 
         logging.debug("Extract M1:")
         logging.debug("\tM1: " + hexfunctions.binToHexRep(M1))
@@ -166,12 +169,12 @@ class ActiveAuthentication():
         @raise ActiveAuthenticationException: I{Unsupported algorithm}: The algorithm does not exist in the OID enumeration.
         @raise ActiveAuthenticationException: I{The parameter type is not valid, must be a dataGroup15 object}: The parameter dg15 is not set or is invalid.
         """
-        if type(dg15) != type(datagroup.DataGroup15(None)):
+        if not isinstance(dg15, datagroup.DataGroup15):
             raise ActiveAuthenticationException("The parameter type is not valid, must be a dataGroup15 object")
         algo = ""
         try:
             spec = self._asn1Parse()
-            algo = spec.getComponentByName('algorithm').getComponentByName('algorithm').prettyPrint()
+            algo = spec.getComponentByName("algorithm").getComponentByName("algorithm").prettyPrint()
             return OID[algo]
         except KeyError:
             raise ActiveAuthenticationException("Unsupported algorithm: " + algo)
@@ -181,6 +184,5 @@ class ActiveAuthentication():
     def _asn1Parse(self):
         if self._dg15 is not None:
             certType = SubjectPublicKeyInfo()
-            return decoder.decode( self._dg15.body, asn1Spec = certType)[0]
+            return decoder.decode(self._dg15.body, asn1Spec=certType)[0]
         return ""
-

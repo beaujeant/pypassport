@@ -35,14 +35,14 @@ def parseTLV(data):
     if isinstance(data, str):
         data = toBytes(data)
     assert isinstance(data, bytes)
-    
+
     if (data[0] & 0x0F) == 0x0F:
         tag = toHexString(data[:2])
         offset = 2
     else:
         tag = toHexString([data[0]])
         offset = 1
-    
+
     (len, lensize) = asn1Length(data[offset:])
     offset += lensize
 
@@ -51,12 +51,10 @@ def parseTLV(data):
     return tag, value, total_length
 
 
-
-
-
 # For PACE
 
-def long_to_bytearray (val, endianness='big'):
+
+def long_to_bytearray(val, endianness="big"):
     """
     Use :ref:`string formatting` and :func:`~binascii.unhexlify` to
     convert ``val``, a :func:`long`, to a byte :func:`str`.
@@ -75,12 +73,12 @@ def long_to_bytearray (val, endianness='big'):
     width += 8 - ((width % 8) or 8)
 
     # format width specifier: four (4) bits per hex digit
-    fmt = '%%0%dx' % (width // 4)
+    fmt = "%%0%dx" % (width // 4)
 
     # prepend zero (0) to the width, to zero-pad the output
     s = unhexlify(fmt % val)
 
-    if endianness == 'little':
+    if endianness == "little":
         # see http://stackoverflow.com/a/931095/309233
         s = s[::-1]
 

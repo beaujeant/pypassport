@@ -3,7 +3,7 @@ import logging
 import string
 
 from pypassport.iso7816 import ISO7816Exception
-from pypassport.tlvparser import TLVParser, TLVParserException
+from pypassport.tlvparser import TLVParserException
 from pypassport import hexfunctions
 from pypassport.utils import toHexString, toBytes, parseTLV
 from pypassport.asn1 import asn1Length
@@ -17,170 +17,148 @@ from pypassport.singleton import Singleton
 
 
 tagToName = {
-    "02" : "Integer",
-    "5C" : "Tag list",
-
+    "5C": "Tag list",
     # DataGroup
-    "60" : "Common data elements",
-    "61" : "Template for MRZ data group",
-    "63" : "Template for Finger biometric data group",
-    "65" : "Template for digitized facial image",
-    "66" : "Reserved for Future Use",
-    "67" : "Template for digitized Signature or usual mark",
-    "68" : "Template for Machine Assisted Security - Encoded Data",
-    "69" : "Template for Machine Assisted Security - Structure",
-    "6A" : "Template for Machine Assisted Security - Substance",
-    "6B" : "Template for Additional Personal Details",
-    "6C" : "Template for Additional Document Details",
-    "6D" : "Optional details (Country Specific)",
-    "6E" : "Reserved for future use",
-    "6F" : "Active Authentication Public Key Info",
-    "70" : "Person to Notify",
-    "75" : "Template for facial biometric data group",
-    "76" : "Template for Iris (eye) biometric template",
-    "77" : "Security Object (EF for security data)",
-
-    "5F01" : "LDS Version Number",
-    "5F08" : "Date of birth (truncated)",
-
-    "5F09" : "Compressed image (ANSI/NIST-ITL 1-2000)",
-    "5F0A" : "Security features - Encoded Data",
-    "5F0B" : "Security features - Structure",
-    "5F0C" : "Security features",
-    "5F0E" : "Full name, in national characters",
-    "5F0F" : "Other names",
-
-    "5F10" : "Personal Number",
-    "5F11" : "Place of birth",
-    "5F12" : "Telephone",
-    "5F13" : "Profession",
-    "5F14" : "Title",
-    "5F15" : "Personal Summary",
-    "5F16" : "Proof of citizenship (10918 image)",
-    "5F17" : "Other valid TD Numbers",
-    "5F18" : "Custody information",
-    "5F19" : "Issuing Authority",
-    "5F1A" : "Other people on document",
-    "5F1B" : "Endorsement/Observations",
-    "5F1C" : "Tax/Exit requirements",
-    "5F1D" : "Image of document front",
-    "5F1E" : "Image of document rear",
-    "5F1F" : "MRZ data elements",
-
-    "5F26" : "Date of Issue",
-    "5F2B" : "Date of birth (8 digit)",
-    "5F2E" : "Biometric data block",
-
-    "5F36" : "Unicode Version Level",
-
-    "5F40" : "Compressed image template",
-    "5F42" : "Address",
-    "5F43" : "Compressed image template",
-
-    "5F50" : "Date data recorded",
-    "5F51" : "Name of person",
-    "5F52" : "Telephone",
-    "5F53" : "Address",
-
-    "5F55" : "Date and time document personalized",
-    "5F56" : "Serial number of personalization system",
-    
-    "7F2E" : "Biometric data block (enciphered)",
-    "7F60" : "Biometric Information Template",
-    "7F61" : "Biometric Information Group Template",
-
-    "80" : "ICAO header version",
-    "81" : "Biometric Type",
-    "82" : "Biometric subtype",
-    "83" : "Creation date and time",
-    "84" : "Validity period", # (revized in nov 2008)
-    "85" : "Validity period", # (since 2008)
-    "86" : "Creator of biometric reference data",
-    "87" : "Format Owner",
-    "88" : "Format Type",
-    "89" : "Context specific tags",
-    "8A" : "Context specific tags",
-    "8B" : "Context specific tags",
-    "8C" : "Context specific tags",
-    "8D" : "Context specific tags",
-    "8E" : "Context specific tags",
-    "8F" : "Context specific tags",
-
-    "90" : "Enciphered hash code",
-
-    "A0" : "Context specific constructed data objects",
-
-    "A1" : "Repeating template, 1 occurrence Biometric header",
-    "A2" : "Repeating template, 2 occurrence Biometric header",
-    "A3" : "Repeating template, 3 occurrence Biometric header",
-    "A4" : "Repeating template, 4 occurrence Biometric header",
-    "A5" : "Repeating template, 5 occurrence Biometric header",
-    "A6" : "Repeating template, 6 occurrence Biometric header",
-    "A7" : "Repeating template, 7 occurrence Biometric header",
-    "A8" : "Repeating template, 8 occurrence Biometric header",
-    "A9" : "Repeating template, 9 occurrence Biometric header",
-    "AA" : "Repeating template, 10 occurrence Biometric header",
-    "AB" : "Repeating template, 11 occurrence Biometric header",
-    "AC" : "Repeating template, 12 occurrence Biometric header",
-    "AD" : "Repeating template, 13 occurrence Biometric header",
-    "AE" : "Repeating template, 14 occurrence Biometric header",
-    "AF" : "Repeating template, 15 occurrence Biometric header",
-
-    "B0" : "Repeating template, 0 occurrence Biometric header",
-    "B1" : "Repeating template, 1 occurrence Biometric header",
-    "B2" : "Repeating template, 2 occurrence Biometric header",
-    "B3" : "Repeating template, 3 occurrence Biometric header",
-    "B4" : "Repeating template, 4 occurrence Biometric header",
-    "B5" : "Repeating template, 5 occurrence Biometric header",
-    "B6" : "Repeating template, 6 occurrence Biometric header",
-    "B7" : "Repeating template, 7 occurrence Biometric header",
-    "B8" : "Repeating template, 8 occurrence Biometric header",
-    "B9" : "Repeating template, 9 occurrence Biometric header",
-    "BA" : "Repeating template, 10 occurrence Biometric header",
-    "BB" : "Repeating template, 11 occurrence Biometric header",
-    "BC" : "Repeating template, 12 occurrence Biometric header",
-    "BD" : "Repeating template, 13 occurrence Biometric header",
-    "BE" : "Repeating template, 14 occurrence Biometric header",
-    "BF" : "Repeating template, 15 occurrence Biometric header",
-
+    "60": "Common data elements",
+    "61": "Template for MRZ data group",
+    "63": "Template for Finger biometric data group",
+    "65": "Template for digitized facial image",
+    "66": "Reserved for Future Use",
+    "67": "Template for digitized Signature or usual mark",
+    "68": "Template for Machine Assisted Security - Encoded Data",
+    "69": "Template for Machine Assisted Security - Structure",
+    "6A": "Template for Machine Assisted Security - Substance",
+    "6B": "Template for Additional Personal Details",
+    "6C": "Template for Additional Document Details",
+    "6D": "Optional details (Country Specific)",
+    "6E": "Reserved for future use",
+    "6F": "Active Authentication Public Key Info",
+    "70": "Person to Notify",
+    "75": "Template for facial biometric data group",
+    "76": "Template for Iris (eye) biometric template",
+    "77": "Security Object (EF for security data)",
+    "5F01": "LDS Version Number",
+    "5F08": "Date of birth (truncated)",
+    "5F09": "Compressed image (ANSI/NIST-ITL 1-2000)",
+    "5F0A": "Security features - Encoded Data",
+    "5F0B": "Security features - Structure",
+    "5F0C": "Security features",
+    "5F0E": "Full name, in national characters",
+    "5F0F": "Other names",
+    "5F10": "Personal Number",
+    "5F11": "Place of birth",
+    "5F12": "Telephone",
+    "5F13": "Profession",
+    "5F14": "Title",
+    "5F15": "Personal Summary",
+    "5F16": "Proof of citizenship (10918 image)",
+    "5F17": "Other valid TD Numbers",
+    "5F18": "Custody information",
+    "5F19": "Issuing Authority",
+    "5F1A": "Other people on document",
+    "5F1B": "Endorsement/Observations",
+    "5F1C": "Tax/Exit requirements",
+    "5F1D": "Image of document front",
+    "5F1E": "Image of document rear",
+    "5F1F": "MRZ data elements",
+    "5F26": "Date of Issue",
+    "5F2E": "Biometric data block",
+    "5F36": "Unicode Version Level",
+    "5F40": "Compressed image template",
+    "5F42": "Address",
+    "5F43": "Compressed image template",
+    "5F50": "Date data recorded",
+    "5F51": "Name of person",
+    "5F52": "Telephone",
+    "5F53": "Address",
+    "5F55": "Date and time document personalized",
+    "5F56": "Serial number of personalization system",
+    "7F2E": "Biometric data block (enciphered)",
+    "7F60": "Biometric Information Template",
+    "7F61": "Biometric Information Group Template",
+    "80": "ICAO header version",
+    "81": "Biometric Type",
+    "82": "Biometric subtype",
+    "83": "Creation date and time",
+    "84": "Validity period",  # (revized in nov 2008)
+    "85": "Validity period",  # (since 2008)
+    "86": "Creator of biometric reference data",
+    "87": "Format Owner",
+    "88": "Format Type",
+    "89": "Context specific tags",
+    "8A": "Context specific tags",
+    "8B": "Context specific tags",
+    "8C": "Context specific tags",
+    "8D": "Context specific tags",
+    "8E": "Context specific tags",
+    "8F": "Context specific tags",
+    "90": "Enciphered hash code",
+    "A0": "Context specific constructed data objects",
+    "A1": "Repeating template, 1 occurrence Biometric header",
+    "A2": "Repeating template, 2 occurrence Biometric header",
+    "A3": "Repeating template, 3 occurrence Biometric header",
+    "A4": "Repeating template, 4 occurrence Biometric header",
+    "A5": "Repeating template, 5 occurrence Biometric header",
+    "A6": "Repeating template, 6 occurrence Biometric header",
+    "A7": "Repeating template, 7 occurrence Biometric header",
+    "A8": "Repeating template, 8 occurrence Biometric header",
+    "A9": "Repeating template, 9 occurrence Biometric header",
+    "AA": "Repeating template, 10 occurrence Biometric header",
+    "AB": "Repeating template, 11 occurrence Biometric header",
+    "AC": "Repeating template, 12 occurrence Biometric header",
+    "AD": "Repeating template, 13 occurrence Biometric header",
+    "AE": "Repeating template, 14 occurrence Biometric header",
+    "AF": "Repeating template, 15 occurrence Biometric header",
+    "B0": "Repeating template, 0 occurrence Biometric header",
+    "B1": "Repeating template, 1 occurrence Biometric header",
+    "B2": "Repeating template, 2 occurrence Biometric header",
+    "B3": "Repeating template, 3 occurrence Biometric header",
+    "B4": "Repeating template, 4 occurrence Biometric header",
+    "B5": "Repeating template, 5 occurrence Biometric header",
+    "B6": "Repeating template, 6 occurrence Biometric header",
+    "B7": "Repeating template, 7 occurrence Biometric header",
+    "B8": "Repeating template, 8 occurrence Biometric header",
+    "B9": "Repeating template, 9 occurrence Biometric header",
+    "BA": "Repeating template, 10 occurrence Biometric header",
+    "BB": "Repeating template, 11 occurrence Biometric header",
+    "BC": "Repeating template, 12 occurrence Biometric header",
+    "BD": "Repeating template, 13 occurrence Biometric header",
+    "BE": "Repeating template, 14 occurrence Biometric header",
+    "BF": "Repeating template, 15 occurrence Biometric header",
     # DOC9303-2 pg III-40
-    "53" : "Optional Data",
-    "59" : "Date of Expiry or valid Until Date",
-    "02" : "Document Number",
-
-    "5F02" : "Check digit - Optional data (ID-3 only)",
-    "5F03" : "Document Type",
-    "5F04" : "Check digit - Doc Number",
-    "5F05" : "Check digit - DOB",
-    "5F06" : "Expiry date",
-    "5F07" : "Composite",
-
-    "5F20" : "Issuing State or Organization",
-    "5F2B" : "Date of birth",
-    "5F2C" : "Nationality",
-
-    "5F35" : "Sex",
-    "5F57" : "Date of birth (6 digit)",
-
+    "53": "Optional Data",
+    "59": "Date of Expiry or valid Until Date",
+    "02": "Document Number",
+    "5F02": "Check digit - Optional data (ID-3 only)",
+    "5F03": "Document Type",
+    "5F04": "Check digit - Doc Number",
+    "5F05": "Check digit - DOB",
+    "5F06": "Expiry date",
+    "5F07": "Composite",
+    "5F20": "Issuing State or Organization",
+    "5F2B": "Date of birth",
+    "5F2C": "Nationality",
+    "5F35": "Sex",
+    "5F57": "Date of birth (6 digit)",
     # From DG1 (information tags)
-    "5F28" : "Issuing State or Organization",
-    "5F5B" : "Name of Holder", # version 2006
-    "5B" : "Name of Holder",   # version 2008
-    "5A" : "Document Number",
-
+    "5F28": "Issuing State or Organization",
+    "5F5B": "Name of Holder",  # version 2006
+    "5B": "Name of Holder",  # version 2008
+    "5A": "Document Number",
     # DOC9303-2 pg III-40
-    "5F44" : "Country of entry/exit",
-    "5F45" : "Date of entry/exit",
-    "5F46" : "Port of entry/exit",
-    "5F47" : "Entry/Exit indicator",
-    "5F48" : "Length of stay",
-    "5F49" : "Category (classification)",
-    "5F4A" : "Inspector reference",
-    "5F4B" : "Entry/Exit indicator",
-    "71" : "Template for Electronic Visas",
-    "72" : "Template for Border Crossing Schemes",
-    "73" : "Template for Travel Record Data Group"
+    "5F44": "Country of entry/exit",
+    "5F45": "Date of entry/exit",
+    "5F46": "Port of entry/exit",
+    "5F47": "Entry/Exit indicator",
+    "5F48": "Length of stay",
+    "5F49": "Category (classification)",
+    "5F4A": "Inspector reference",
+    "5F4B": "Entry/Exit indicator",
+    "71": "Template for Electronic Visas",
+    "72": "Template for Border Crossing Schemes",
+    "73": "Template for Travel Record Data Group",
 }
+
 
 def readElementaryFile(tag, iso7816, maxSize=0xDF):
     try:
@@ -219,12 +197,12 @@ def readElementaryFile(tag, iso7816, maxSize=0xDF):
         # Read DG header (to know the body size)
         headerRaw = iso7816.readBinary(offset, 4)
         header = ElementaryFileHeader(headerRaw)
-        if(header.tag != tag):
+        if header.tag != tag:
             raise ElementaryFileException(f"Wrong AID: {header.tag} instead of " + tag)
 
         # Read the DG body
         offset += header.headerSize
-        logging.debug(f"Read EF body")
+        logging.debug("Read EF body")
         body = b""
         remaining = header.bodySize
 
@@ -235,14 +213,16 @@ def readElementaryFile(tag, iso7816, maxSize=0xDF):
             offset += toRead
 
         if header.bodySize != len(body):
-            raise Exception("The file is not entirely read: expected: " + str(header.bodySize) + " read: " + str(len(body)))
+            raise Exception(
+                "The file is not entirely read: expected: " + str(header.bodySize) + " read: " + str(len(body))
+            )
 
         # Creating the DG
         file = header.raw + body
         return eval(converter.toClass(tag))(file=file)
     except ISO7816Exception as e:
         raise e
-    #except Exception as e:
+    # except Exception as e:
     #    logging.error(f"Could not create the elementary file {tag}. Reason: {e}")
     #    return None
 
@@ -252,7 +232,7 @@ class ElementaryFileException(Exception):
         Exception.__init__(self, *params)
 
 
-class ElementaryFileHeader():
+class ElementaryFileHeader:
     def __init__(self, header):
         if isinstance(header, list):
             header = bytes(header)
@@ -262,7 +242,7 @@ class ElementaryFileHeader():
         self.tag = toHexString(header[0])
         (self.bodySize, lenSize) = asn1Length(header[1:])
         self.headerSize = lenSize + 1
-        self.raw = header[:self.headerSize]
+        self.raw = header[: self.headerSize]
 
 
 class ElementaryFile(dict):
@@ -271,10 +251,14 @@ class ElementaryFile(dict):
         self._header = None
         self._body = b""
 
-        if tag: self.tag = tag
-        if header: self.header = header
-        if body: self.body = body
-        if file: self.file = file
+        if tag:
+            self.tag = tag
+        if header:
+            self.header = header
+        if body:
+            self.body = body
+        if file:
+            self.file = file
 
     def _setHeader(self, header):
         if isinstance(header, ElementaryFileHeader):
@@ -321,7 +305,7 @@ class ElementaryFile(dict):
         return len(self.file)
 
     def init_parse(self):
-        #logging.debug(f"Body: {self.body}")
+        # logging.debug(f"Body: {self.body}")
         if self.tag not in ["65", "67", "6F", "77"]:
             self.update(self.parse_dict(self.body))
             self.parse_map()
@@ -364,7 +348,7 @@ class ElementaryFile(dict):
             while index < len(map):
                 current = map[index]
                 if (current & 0x5F) == 0x5F:
-                    reference = [current, map[index+1]]
+                    reference = [current, map[index + 1]]
                     index += 1
                 else:
                     reference = [current]
@@ -375,19 +359,19 @@ class ElementaryFile(dict):
         nl = "\n"
         if isinstance(node, dict):
             for key, value in node.items():
-                tab = "\t"*level
+                tab = "\t" * level
                 try:
                     extra = f" ({tagToName[key]})"
                 except KeyError:
                     extra = ""
                 output += f"{nl}{tab}[{key}]{extra}: "
-                output = self.print_any(value, output, level+1)
+                output = self.print_any(value, output, level + 1)
         if isinstance(node, list):
             index = 0
             for value in node:
-                tab = "\t"*level
+                tab = "\t" * level
                 output += f"{nl}{tab}[{index}]: "
-                output = self.print_any(value, output, level+1)
+                output = self.print_any(value, output, level + 1)
                 index += 1
         if isinstance(node, int):
             output += toHexString(node)
@@ -454,7 +438,7 @@ class BiometricTemplates(ElementaryFile):
 class DisplayedImageTemplates(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
-    
+
     def parse(self):
         tag, value, offset = self.parse_array(self.body)
         assert tag in ["5F40", "5F43"]
@@ -499,47 +483,47 @@ class DataGroup1(ElementaryFile):
     def _parseTD1(self, data):
         self["5F1F"]["5F03"] = data[0:2]
         self["5F1F"]["5F28"] = data[2:5]
-        self["5F1F"]["5A"]   = data[5:14]
+        self["5F1F"]["5A"] = data[5:14]
         self["5F1F"]["5F04"] = data[14:15]
-        self["5F1F"]["53"]   = data[15:30]
+        self["5F1F"]["53"] = data[15:30]
         self["5F1F"]["5F57"] = data[30:36]
         self["5F1F"]["5F05"] = data[36:37]
         self["5F1F"]["5F35"] = data[37:38]
-        self["5F1F"]["59"]   = data[38:44]
+        self["5F1F"]["59"] = data[38:44]
         self["5F1F"]["5F06"] = data[44:45]
         self["5F1F"]["5F2C"] = data[45:48]
-        self["5F1F"]["53"]   = data[48:59]
+        self["5F1F"]["53"] = data[48:59]
         self["5F1F"]["5F07"] = data[59:60]
-        self["5F1F"]["5B"]   = data[60:]
+        self["5F1F"]["5B"] = data[60:]
 
     def _parseTD2(self, data):
         self["5F1F"]["5F03"] = data[0:2]
         self["5F1F"]["5F28"] = data[2:5]
-        self["5F1F"]["5B"]   = data[5:36]
-        self["5F1F"]["5A"]   = data[36:45]
+        self["5F1F"]["5B"] = data[5:36]
+        self["5F1F"]["5A"] = data[36:45]
         self["5F1F"]["5F04"] = data[45]
         self["5F1F"]["5F2C"] = data[46:49]
         self["5F1F"]["5F57"] = data[49:55]
         self["5F1F"]["5F05"] = data[55]
         self["5F1F"]["5F35"] = data[56]
-        self["5F1F"]["59"]   = data[57:63]
+        self["5F1F"]["59"] = data[57:63]
         self["5F1F"]["5F06"] = data[63]
-        self["5F1F"]["53"]   = data[64:71]
+        self["5F1F"]["53"] = data[64:71]
         self["5F1F"]["5F07"] = data[71]
 
     def _parseTD3(self, data):
         self["5F1F"]["5F03"] = data[0:2]
         self["5F1F"]["5F28"] = data[2:5]
         self["5F1F"]["5F5B"] = data[5:44]
-        self["5F1F"]["5A"]   = data[44:53]
+        self["5F1F"]["5A"] = data[44:53]
         self["5F1F"]["5F04"] = data[53]
         self["5F1F"]["5F2C"] = data[54:57]
         self["5F1F"]["5F57"] = data[57:63]
         self["5F1F"]["5F05"] = data[63]
         self["5F1F"]["5F35"] = data[64]
-        self["5F1F"]["59"]   = data[65:71]
+        self["5F1F"]["59"] = data[65:71]
         self["5F1F"]["5F06"] = data[71]
-        self["5F1F"]["53"]   = data[72:86]
+        self["5F1F"]["53"] = data[72:86]
         self["5F1F"]["5F02"] = data[86]
         self["5F1F"]["5F07"] = data[87]
 
@@ -601,7 +585,7 @@ class DataGroup10(ElementaryFile):
 class DataGroup11(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
-        #self.parse()
+        # self.parse()
 
     def parse(self):
         assert "A0" in self
@@ -664,23 +648,13 @@ class CardSecurity(ElementaryFile):
         super().__init__(file=file)
 
 
-
-
-
-
-
-
-
-
-
 class DataGroup2Old(ElementaryFile):
-
     def parse(self):
         self._byteNb = 0
 
         # 7F61 (Biometric Information Group Template)
         assert self._getTag() == "7F61", "Reading GD2: Expecting a Biometric Information Group Template (7F61)."
-        length = self._getLength()
+        self._getLength()
 
         tag = self._getTag()
         self[tag] = self._getValue()
@@ -694,18 +668,17 @@ class DataGroup2Old(ElementaryFile):
             templateID = self._getTag()
             # Read A
             v = self._getValue()
-            dgf = DataGroupFile()
+            dgf = ElementaryFile()
             dgf.body = v
-            dg = DataGroup(dgf)
-            dg.parse()
-            data = dg
+            dgf.init_parse()
+            data = dgf
             # Transform the binary data into usable data
             for x in data:
                 data[x] = hexfunctions.binToHexRep(data[x])
             # 5F2E or 7F2E
             tag = self._getTag()
             value = self._getValue()
-            headerSize, data['meta'] = ISO19794_5.analyse(hexfunctions.binToHexRep(value))
+            headerSize, data["meta"] = ISO19794_5.analyse(hexfunctions.binToHexRep(value))
 
             data[tag] = value[headerSize:]
             self[templateID] = {}
@@ -728,7 +701,6 @@ class DataGroup5Old(ElementaryFile):
     def __init__(self, dgFile):
         ElementaryFile.__init__(self, dgFile)
 
-
     def parse(self):
         """
         The returned value is a dictionary with two keys:
@@ -746,7 +718,6 @@ class DataGroup5Old(ElementaryFile):
         tag = self._getTag()
         self[tag] = self._getValue()
         nbInstance = hexfunctions.binToHex(self[tag])
-
 
         data = []
 
@@ -802,7 +773,6 @@ class DataGroup12Old(ElementaryFile):
     def __init__(self, dgFile):
         ElementaryFile.__init__(self, dgFile)
 
-
     def parse(self):
         super(DataGroup12, self).parse()
 
@@ -823,10 +793,8 @@ class DataGroup13Old(ElementaryFile):
 
 
 class DataGroup14Old(ElementaryFile):
-
     def __init__(self, dgFile):
-        ElementaryFile.__init__(self, dgFile)#Reserved for future use (RFU)
-
+        ElementaryFile.__init__(self, dgFile)  # Reserved for future use (RFU)
 
     def parse(self):
         return self
@@ -836,7 +804,6 @@ class DataGroup15Old(ElementaryFile):
     def __init__(self, dgFile):
         ElementaryFile.__init__(self, dgFile)
 
-
     def parse(self):
         return self
 
@@ -845,14 +812,13 @@ class DataGroup16Old(ElementaryFile):
     def __init__(self, dgFile):
         ElementaryFile.__init__(self, dgFile)
 
-
     def parse(self):
-        #Read the number of templates
+        # Read the number of templates
         self._tagOffset = 0
         nbInstance = hexfunctions.binToHex(self._getValue())
 
         for i in range(nbInstance):
-            #Read each Template Element
+            # Read each Template Element
             self[i] = self._parseTemplate(self._getValue())
 
         return self
@@ -874,13 +840,13 @@ class DataGroupFactory(Singleton):
         return dg
 
 
-class DataGroupReader():
+class DataGroupReader:
     """
     Read a specific dataGroup from the passport.
     This is the superclass defining the interface for the classes implementing the reading.
     """
 
-    def __init__(self, iso7816, maxSize = 0xDF):
+    def __init__(self, iso7816, maxSize=0xDF):
         """
         @param iso7816: The layer sending iso7816 apdu to the reader.
         @type iso7816: A iso7816 object
@@ -892,7 +858,6 @@ class DataGroupReader():
         self._bodySize = 0
         self._offset = 0
         self._maxSize = maxSize
-
 
     def readDG(self, dg):
         """
@@ -917,17 +882,16 @@ class DataGroupReader():
         logging.info(f"Reading {dg}...")
         self.offset = 0
         self._iso7816.selectElementaryFile(converter.toFID(dg))
-        self.file = DataGroupFile()
+        self.file = ElementaryFile()
 
         headerRaw = self._iso7816.readBinary(self.offset, 4)
-        self.file.header = DataGroupHeader(headerRaw)
-        if(int(converter.toTAG(dg), 16) != self.file.header.tag):
-            raise DataGroupException(f"Wrong AID: {hex(self.file.header.tag)} instead of " + str(self.file.tag))
+        self.file.header = ElementaryFileHeader(headerRaw)
+        if int(converter.toTAG(dg), 16) != self.file.header.tag:
+            raise ElementaryFileException(f"Wrong AID: {hex(self.file.header.tag)} instead of " + str(self.file.tag))
 
         self.file.body = self._readBody()
 
         return self._file
-
 
     @staticmethod
     def parse(dgFile):
@@ -938,23 +902,23 @@ class DataGroupReader():
             logging.info("Parsing failed ({}): {}".format(converter.toDG(dg.tag), msg))
         return dg
 
-
     def _readHeader(self, dg):
-        logging.debug(f"Read EF header")
+        logging.debug("Read EF header")
         header = self._iso7816.readBinary(self.offset, 4)
         (self._bodySize, self.offset) = asn1Length(header[1:])
         logging.debug(f"Body size: {self._bodySize} - Offset: {self.offset}")
 
         self.offset += 1
 
-        if(int(converter.toTAG(dg), 16) != header[0]):
-            raise DataGroupException("Wrong AID: " + hexfunctions.binToHexRep(header[0]) + " instead of " + str(self.file.tag))
+        if int(converter.toTAG(dg), 16) != header[0]:
+            raise ElementaryFileException(
+                "Wrong AID: " + hexfunctions.binToHexRep(header[0]) + " instead of " + str(self.file.tag)
+            )
 
-        return header[:self.offset]
-
+        return header[: self.offset]
 
     def _readBody(self):
-        logging.debug(f"Read EF body")
+        logging.debug("Read EF body")
         body = b""
         remaining = self._bodySize
 
@@ -965,7 +929,9 @@ class DataGroupReader():
             self.offset += toRead
 
         if self._bodySize != len(body):
-            raise Exception("The file is not entirely read: expected: " + str(self._bodySize) + " read: " + str(len(body)))
+            raise Exception(
+                "The file is not entirely read: expected: " + str(self._bodySize) + " read: " + str(len(body))
+            )
 
         return body
 
@@ -989,7 +955,6 @@ class DataGroupDump(object):
         else:
             raise Exception(path + " is not a valid directory")
 
-
     def dump(self, ep, format="FID"):
         """
         Save the dataGroup binaries on the HDD.
@@ -1003,7 +968,6 @@ class DataGroupDump(object):
         for tag in ep:
             self.dumpDG(ep[tag], format)
 
-
     def dumpDG(self, dg, format="FID"):
         """
         Save the specified dataGroup on the HDD.
@@ -1016,7 +980,6 @@ class DataGroupDump(object):
         f = open(self._path + converter.to(format, dg.tag) + self._ext, "wb")
         f.write(dg.file)
         f.close()
-
 
     def dumpData(self, data, name):
         """
@@ -1035,10 +998,9 @@ class DataGroupDump(object):
         f.close()
 
 
-
 class DataGroupOld(ElementaryFile):
     def __init__(self, tag="", header=None, body=b"", file=b""):
-        super().__init__(tag, header, body, file) 
+        super().__init__(tag, header, body, file)
         self.data = {}
 
     def parse(self):
@@ -1058,7 +1020,6 @@ class DataGroupOld(ElementaryFile):
             raise ElementaryFileException(msg)
 
         return self
-
 
     def _parseDataElementPresenceMap(self, depm):
         """
@@ -1093,14 +1054,14 @@ class DataGroupOld(ElementaryFile):
         self._data = data
 
         return tags
-    
+
     def _getValue(self):
         length = self._getLength()
-        value = self._data[self._byteNb:self._byteNb + length]
+        value = self._data[self._byteNb : self._byteNb + length]
         self._byteNb += length
         return value
-    
+
     def _getLength(self):
-        (length, offset) = asn1Length(self._data[self._byteNb:])
+        (length, offset) = asn1Length(self._data[self._byteNb :])
         self._byteNb += offset
         return length

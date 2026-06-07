@@ -2,6 +2,7 @@ import logging
 from smartcard.System import readers
 from smartcard.pcsc import PCSCExceptions
 
+
 class ReaderException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
@@ -13,8 +14,9 @@ def listReaders():
         logging.info(f"Available reader(s): {str(list_readers)}")
         return list_readers
     except PCSCExceptions.EstablishContextException:
-        logging.error(f"PC/SC Smart Card service not available")
+        logging.error("PC/SC Smart Card service not available")
         return None
+
 
 def getReader(index=None):
     list_readers = listReaders()

@@ -1,15 +1,14 @@
+import hashlib
 import logging
-from hashlib import *
-from pyasn1.codec.der import decoder
-from pypassport import hexfunctions
-from pypassport.doc9303 import converter
-from pypassport.doc9303 import datagroup
-from pypassport.derobjectidentifier import *
-from pypassport.logger import Logger
-from pypassport.camanager import CAManager
-from pypassport.openssl import OpenSSL
-from pypassport import asn1
 
+from pyasn1.codec.der import decoder
+
+from pypassport import asn1, hexfunctions
+from pypassport.camanager import CAManager
+from pypassport.derobjectidentifier import OID, OIDException
+from pypassport.doc9303 import converter, datagroup
+from pypassport.logger import Logger
+from pypassport.openssl import OpenSSL
 
 
 class PassiveAuthenticationException(Exception):
@@ -18,7 +17,6 @@ class PassiveAuthenticationException(Exception):
 
 
 class PassiveAuthentication(Logger):
-
     """
     This class implements the passive authentication protocol.
     The two main methods are I{verifySODandCDS} and I{executePA}. The first verifies the SOD and the CDS and retrieves the relevant dataGroups
@@ -58,18 +56,18 @@ class PassiveAuthentication(Logger):
         @raise openSSLException: See the openssl documentation
         """
 
-        if CSCADirectory == None:
+        if CSCADirectory is None:
             raise PassiveAuthenticationException("CSCADirectory is not set")
 
-        if type(sodObj) != type(datagroup.SOD(None)):
+        if not isinstance(sodObj, datagroup.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
-        if type(CSCADirectory) != type(CAManager("")):
+        if not isinstance(CSCADirectory, CAManager):
             raise PassiveAuthenticationException("CSCADirectory must be a CAManager object")
 
         CDS = self.getCertificate(sodObj)
-        if CDS == None:
-            #No certificate
+        if CDS is None:
+            # No certificate
             raise PassiveAuthenticationException("The certificate could not be retrieved")
 
         self._data = self.getSODContent(sodObj)
@@ -94,15 +92,14 @@ class PassiveAuthentication(Logger):
         @raise openSSLException: See the openssl documentation
         """
 
-        if self._data == None:
+        if self._data is None:
             self._data = self.getSODContent(sodObj)
 
-        if self._content == None:
+        if self._content is None:
             self._content = self._readDGfromLDS(self._data)
 
         hashes = self._calculateHashes(dgs)
         return self._compareHashes(hashes)
-
 
     def getSODContent(self, sodObj):
         """
@@ -117,14 +114,13 @@ class PassiveAuthentication(Logger):
         """
         logging.debug("Verify SOD by using Document Signer Public Key (KPuDS))")
 
-        if type(sodObj) != type(datagroup.SOD(None)):
+        if not isinstance(sodObj, datagroup.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
-        if sodObj.body == None:
+        if sodObj.body is None:
             raise PassiveAuthenticationException("sodObj object is not initialized")
 
         return self._openSSL.getPkcs7SignatureContent(sodObj.body)
-
 
     def verifyDSC(self, CDS, CSCADirectory):
         """
@@ -142,10 +138,10 @@ class PassiveAuthentication(Logger):
 
         logging.debug("Verify CDS by using the Country Signing CA Public Key (KPuCSCA). ")
 
-        if not CDS and type(CDS) == type(""):
+        if not CDS and isinstance(CDS, str):
             raise PassiveAuthenticationException("The CDS is not set")
 
-        if not CSCADirectory and type(CSCADirectory) == type(""):
+        if not CSCADirectory and isinstance(CSCADirectory, str):
             raise PassiveAuthenticationException("The CA is not set")
 
         return self._openSSL.verifyX509Certificate(CDS, CSCADirectory)
@@ -158,7 +154,7 @@ class PassiveAuthentication(Logger):
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
         @raise openSSLException: See the openssl documentation
         """
-        if type(sodObj) != type(datagroup.SOD(None)):
+        if not isinstance(sodObj, datagroup.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
         if sodObj.body is None:
@@ -180,15 +176,17 @@ class PassiveAuthentication(Logger):
         hash = {}
 
         certType = asn1.LDSSecurityObject()
-        cert = decoder.decode(data, asn1Spec = certType)[0]
+        cert = decoder.decode(data, asn1Spec=certType)[0]
 
-        content['version'] = cert.getComponentByName('version').prettyPrint()
-        content['hashAlgorithm'] = cert.getComponentByName('hashAlgorithm').getComponentByName('algorithm').prettyPrint()
+        content["version"] = cert.getComponentByName("version").prettyPrint()
+        content["hashAlgorithm"] = (
+            cert.getComponentByName("hashAlgorithm").getComponentByName("algorithm").prettyPrint()
+        )
 
-        for h in cert.getComponentByName('dataGroupHashValues'):
-            hash[h.getComponentByName('dataGroupNumber').prettyPrint()] = h.getComponentByName('dataGroupHashValue')
+        for h in cert.getComponentByName("dataGroupHashValues"):
+            hash[h.getComponentByName("dataGroupNumber").prettyPrint()] = h.getComponentByName("dataGroupHashValue")
 
-        content['dataGroupHashValues'] = hash
+        content["dataGroupHashValues"] = hash
 
         return content
 
@@ -202,7 +200,7 @@ class PassiveAuthentication(Logger):
         """
         logging.debug("Calculate the hashes of the relevant Data Groups")
         hashes = {}
-        #Find the hash function from the content dictionary
+        # Find the hash function from the content dictionary
         hashAlgo = self._getHashAlgorithm()
         for dg in dgs:
             res = hashAlgo(dg.file)
@@ -224,7 +222,7 @@ class PassiveAuthentication(Logger):
 
         for dg in hashes:
             try:
-                res[converter.toDG(dg)] = (hashes[dg] == self._content["dataGroupHashValues"][converter.toOther(dg)])
+                res[converter.toDG(dg)] = hashes[dg] == self._content["dataGroupHashValues"][converter.toOther(dg)]
             except KeyError:
                 res[converter.toDG(dg)] = None
 
@@ -237,17 +235,17 @@ class PassiveAuthentication(Logger):
         """
         if self._content is None:
             raise PassiveAuthenticationException("The object is not set. Call init first.")
-        return self._getAlgoByOID(self._content['hashAlgorithm'])
+        return self._getAlgoByOID(self._content["hashAlgorithm"])
 
     def _getAlgoByOID(self, oid):
         try:
             algo = OID[oid]
-            return eval(algo)
-        except KeyError:
+            return getattr(hashlib, algo)
+        except (KeyError, AttributeError):
             raise OIDException("No such algorithm for OID " + str(oid))
 
     def __str__(self):
-        res =  "version: " + self._content["version"] + "\n"
+        res = "version: " + self._content["version"] + "\n"
         res += "Hash algorithm: " + OID[self._content["hashAlgorithm"]] + " (" + self._content["hashAlgorithm"] + ")\n"
         res += "Data group hash values: " + "\n"
 

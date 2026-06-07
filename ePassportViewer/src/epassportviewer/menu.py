@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+
 
 class MenuBar:
     def __init__(self, main):
@@ -20,7 +20,7 @@ class MenuBar:
 
         if main.history:
             self.setMRZ(main.history[-1])
-    
+
         configure_menu.add_cascade(label="History", menu=history_menu)
         configure_menu.add_command(label="Settings")
 
@@ -30,7 +30,6 @@ class MenuBar:
         self.root.menu_bar.add_cascade(label="File", menu=file_menu)
         self.root.menu_bar.add_cascade(label="Configure", menu=configure_menu)
         self.root.menu_bar.add_cascade(label="Help", menu=help_menu)
-
 
     def setMRZ(self, mrz):
         mrz = mrz.strip()

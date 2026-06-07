@@ -17,21 +17,20 @@
 # If not, see <http://www.gnu.org/licenses/>.
 
 import os
-from decimal import *
 
-from signEverything import *
+from smartcard.util import PACK, toHexString
 
-from pypassport.logger import Logger
+from pypassport.attacks.signEverything import SignEverything
+from pypassport.doc9303 import bac
+from pypassport.hexfunctions import binToHexRep, hexRepToHex
 from pypassport.iso7816 import Iso7816, Iso7816Exception
-from pypassport.reader import PcscReader, ReaderException
-from pypassport.doc9303 import mrz, bac
-from pypassport.iso9797 import *
-from pypassport.hexfunctions import hexToHexRep, binToHexRep
-from smartcard.util import toBytes, toHexString, toASCIIBytes, PACK
+from pypassport.logger import Logger
+
 
 class AATraceabilityException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
+
 
 class AATraceability(Logger):
     """
@@ -47,7 +46,7 @@ class AATraceability(Logger):
         Logger.__init__(self, "AA TRACEABILITY")
         self._iso7816 = iso7816
 
-        if type(self._iso7816) != type(Iso7816(None)):
+        if not isinstance(self._iso7816, Iso7816):
             raise AATraceabilityException("The sublayer iso7816 is not available")
 
         self._iso7816.rstConnection()
@@ -91,14 +90,14 @@ class AATraceability(Logger):
         higher = ""
         i = 0
         self.log("Start the internal authentication loop {0} times".format(max))
-        while i<max:
+        while i < max:
             try:
                 rnd = toHexString(list(os.urandom(8)), PACK)
                 signature = binToHexRep(self._iso7816.internalAuthentication(rnd))
                 if signature > higher:
                     higher = signature
-            except Iso7816Exception, msg:
-                print msg
+            except Iso7816Exception as msg:
+                self.log(str(msg))
             i += 1
 
         return higher
@@ -149,7 +148,7 @@ class AATraceability(Logger):
         highest = hexRepToHex(highest[:accuracy])
         diff = modulo - highest
 
-        return (1.0*diff/modulo)*100
+        return (1.0 * diff / modulo) * 100
 
     def mayBelongsTo(self, modulo, highest):
         """
@@ -189,22 +188,23 @@ class AATraceability(Logger):
         @return: the path and the name of the file where the pair has been saved.
         """
 
-        if not os.path.exists(path): os.makedirs(path)
+        if not os.path.exists(path):
+            os.makedirs(path)
         if os.path.exists(os.path.join(path, filename)):
-            i=0
-            while os.path.exists(os.path.join(path, filename+str(i))):
-                i+=1
-            fullpath = os.path.join(path, filename+str(i))
+            i = 0
+            while os.path.exists(os.path.join(path, filename + str(i))):
+                i += 1
+            fullpath = os.path.join(path, filename + str(i))
         else:
             fullpath = os.path.join(path, filename)
 
-        with open(fullpath, 'wb') as file_modulo:
+        with open(fullpath, "wb") as file_modulo:
             file_modulo.write(modulo)
         self.log("Modulo/Signature saved at: {0}".format(fullpath))
 
         return fullpath
 
-    def checkFromFile(self, highest, path=os.path.join(".","modulo"), accuracy=None):
+    def checkFromFile(self, highest, path=os.path.join(".", "modulo"), accuracy=None):
         """
         Read a signature stored in a file (by the method self.save()) and compare it with the signature (highest)
         If accuracy is set, the method works like the method compare()
@@ -220,17 +220,18 @@ class AATraceability(Logger):
         @return: percentage (if accuracy set) OR boolean
         """
 
-        if not os.path.exists(path): raise MacTraceabilityException("The signature file doesn't exist (path={0})".format(path))
-        with open(path, 'rb') as file_modulo:
+        if not os.path.exists(path):
+            raise AATraceabilityException("The signature file doesn't exist (path={0})".format(path))
+        with open(path, "rb") as file_modulo:
             signature = file_modulo.read()
 
         if accuracy:
             sign_dec = hexRepToHex(signature[:accuracy])
             highest_dec = hexRepToHex(highest[:accuracy])
             diff = sign_dec - highest_dec
-            return (1.0*diff/sign_dec)*100
+            return (1.0 * diff / sign_dec) * 100
         else:
-            if signature > highest: return True
-            else:   return False
-
-
+            if signature > highest:
+                return True
+            else:
+                return False

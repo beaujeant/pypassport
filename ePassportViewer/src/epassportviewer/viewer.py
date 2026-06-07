@@ -6,8 +6,8 @@ from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
 
-class ViewerPane:
 
+class ViewerPane:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
@@ -24,7 +24,9 @@ class ViewerPane:
         image_frame.pack(side="left", padx=10, anchor="n")
 
         # Placeholder for the passport photo
-        self.passport_photo = tk.Label(image_frame, text="Passport Photo\n(200px x 300px)", relief="solid", width=25, height=15)
+        self.passport_photo = tk.Label(
+            image_frame, text="Passport Photo\n(200px x 300px)", relief="solid", width=25, height=15
+        )
         self.passport_photo.pack(padx=5, pady=5)
 
         # Right side for textual information
@@ -79,7 +81,6 @@ class ViewerPane:
         self.fields["optional"] = ttk.Label(info_frame, text=default_val)
         self.fields["optional"].grid(row=9, column=1, sticky="w", pady=(4, 10), padx=5)
 
-
     def read_passport(self):
         doc_number = self.parent.doc_number.get()
         dob = self.parent.dob.get()
@@ -112,13 +113,11 @@ class ViewerPane:
 
             tk_image = ImageTk.PhotoImage(image)
             self.passport_photo.configure(image=tk_image, width=max_width, height=new_height)
-            self.passport_photo.image=tk_image
+            self.passport_photo.image = tk_image
 
         except EPassportException as e:
             messagebox.showerror("Error", e)
-        #self.update_field("signature", mrz._mrz)
-
+        # self.update_field("signature", mrz._mrz)
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)
-

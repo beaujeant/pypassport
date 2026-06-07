@@ -3,8 +3,7 @@ class MRZException(Exception):
         Exception.__init__(self, *params)
 
 
-class MRZ():
-
+class MRZ:
     """
     This class implements the mrz check digit test.
     The class is used when the mrz is encoded by the user, to verify the mrz validity.
@@ -18,10 +17,43 @@ class MRZ():
     def __init__(self, mrz):
         self._weighting = [7, 3, 1]
         self._weight = {
-            '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '<': 0,
-            'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14, 'F': 15, 'G': 16, 'H': 17, 'I': 18, 'J': 19,
-            'K': 20, 'L': 21, 'M': 22, 'N': 23, 'O': 24, 'P': 25, 'Q': 26, 'R': 27, 'S': 28, 'T': 29,
-            'U': 30, 'V': 31, 'W': 32, 'X': 33, 'Y': 34, 'Z': 35
+            "0": 0,
+            "1": 1,
+            "2": 2,
+            "3": 3,
+            "4": 4,
+            "5": 5,
+            "6": 6,
+            "7": 7,
+            "8": 8,
+            "9": 9,
+            "<": 0,
+            "A": 10,
+            "B": 11,
+            "C": 12,
+            "D": 13,
+            "E": 14,
+            "F": 15,
+            "G": 16,
+            "H": 17,
+            "I": 18,
+            "J": 19,
+            "K": 20,
+            "L": 21,
+            "M": 22,
+            "N": 23,
+            "O": 24,
+            "P": 25,
+            "Q": 26,
+            "R": 27,
+            "S": 28,
+            "T": 29,
+            "U": 30,
+            "V": 31,
+            "W": 32,
+            "X": 33,
+            "Y": 34,
+            "Z": 35,
         }
 
         self._mrz = ""
@@ -40,44 +72,37 @@ class MRZ():
             number, dob, expiry = mrz
             if isinstance(number, str) and isinstance(dob, str) and isinstance(expiry, str):
                 number = number.upper()
-                buf =  number.ljust(9, "<")
+                buf = number.ljust(9, "<")
                 buf += self._calculCheckDigit(number)
-                buf += "<"*3 # Country
+                buf += "<" * 3  # Country
                 buf += dob
                 buf += self._calculCheckDigit(dob)
-                buf += "<" # Gender
+                buf += "<"  # Gender
                 buf += expiry
                 buf += self._calculCheckDigit(expiry)
-                buf += "<"*14 # Personal number
-                buf += self._calculCheckDigit("<"*14)
+                buf += "<" * 14  # Personal number
+                buf += self._calculCheckDigit("<" * 14)
                 buf += self._calculCheckDigit(buf[0:10] + buf[13:20] + buf[21:-1])
                 self._mrz = buf
                 self.checkMRZ()
 
-
     def getDocNumber(self):
         return (self._docNumber, self._docNumberCD)
-
 
     def getDateOfBirth(self):
         return (self._dateOfBirth, self._dateOfBirthCD)
 
-
     def getDateOfExpiry(self):
         return (self._dateOfExpiry, self._dateOfExpiryCD)
-
 
     def getChecked(self):
         return self._checked
 
-
     def getMrz(self):
         return self._mrz
 
-
     def __str__(self):
         return self._mrz
-
 
     def checkMRZ(self):
         """
@@ -99,11 +124,10 @@ class MRZ():
 
         return self._checked
 
-
     def _checkDigitsTD1(self, mrz1, mrz2):
 
         if mrz1[14] == "<":
-            #Document number is bigger than 9 caracters
+            # Document number is bigger than 9 caracters
             tmp = mrz1[15:30].strip("<")
             self._docNumber = mrz1[5:14] + tmp[:-1]
             self._docNumberCD = tmp[-1]
@@ -120,16 +144,15 @@ class MRZ():
             (self._docNumber, self._docNumberCD),
             (self._dateOfBirth, self._dateOfBirthCD),
             (self._dateOfExpiry, self._dateOfExpiryCD),
-            (mrz1[5:30] + mrz2[0:7] + mrz2[8:15] + mrz2[18:29], mrz2[29])
+            (mrz1[5:30] + mrz2[0:7] + mrz2[8:15] + mrz2[18:29], mrz2[29]),
         ]
 
         return self._checkDigits(fields)
 
-
     def _checkDigitsTD2(self, mrz):
 
         if mrz[9] == "<":
-            #Document number is bigger than 9 caracters
+            # Document number is bigger than 9 caracters
             tmp = mrz[24:35].strip("<")
             self._docNumber = mrz[0:9] + tmp[:-1]
             self._docNumberCD = tmp[-1]
@@ -146,16 +169,15 @@ class MRZ():
             (self._docNumber, self._docNumberCD),
             (self._dateOfBirth, self._dateOfBirthCD),
             (self._dateOfExpiry, self._dateOfExpiryCD),
-            (mrz[0:10] + mrz[13:20] + mrz[21:-1], mrz[-1])
+            (mrz[0:10] + mrz[13:20] + mrz[21:-1], mrz[-1]),
         ]
 
         return self._checkDigits(fields)
 
-
     def _checkDigits(self, data):
 
         try:
-            for (field, cd) in data:
+            for field, cd in data:
                 res = self._calculCheckDigit(field)
                 if str(res) != str(cd):
                     return False
@@ -163,16 +185,15 @@ class MRZ():
         except KeyError:
             return False
 
-
     def _calculCheckDigit(self, values):
-        """ Create check digit for a value of the MRZ
+        """Create check digit for a value of the MRZ
 
-            @param value: initial value
-            @type value: String
-            @return: Check digit
-            @rtype: String
+        @param value: initial value
+        @type value: String
+        @return: Check digit
+        @rtype: String
 
-            @note: Code fragment from the pyPassport.mrz.MRZ class
+        @note: Code fragment from the pyPassport.mrz.MRZ class
         """
         cpt = 0
         res = 0
@@ -182,17 +203,16 @@ class MRZ():
             cpt += 1
         return str(res % 10)
 
-
     def buildMRZ(self, type, issuer, name, firstname, nat, sex, num, birth, exp):
-        """ Build MRZ using the informations given by dates and passport number
+        """Build MRZ using the informations given by dates and passport number
 
-            @note: sex and nat field are not necessary to BAC and are then
-                   replaced by '<' characters
+        @note: sex and nat field are not necessary to BAC and are then
+               replaced by '<' characters
 
-            @attention: this method builds a 44 characters MRZ based on TD2 specs
-            @attention: if passport number is larger than its reserved space
-                        the rest is put in the optional field with the check digit
-                        initial check digit is replaced by a '<' character
+        @attention: this method builds a 44 characters MRZ based on TD2 specs
+        @attention: if passport number is larger than its reserved space
+                    the rest is put in the optional field with the check digit
+                    initial check digit is replaced by a '<' character
         """
         type = self._transformField(type, 2)
         issuer = self._transformField(issuer, 3)
@@ -204,7 +224,7 @@ class MRZ():
         sex = self._transformField(sex, 1)
         exp = self._transformField(exp, 6)
 
-        line2 = ''
+        line2 = ""
 
         if len(num) <= 9:
             optional = ""
@@ -213,7 +233,7 @@ class MRZ():
         else:
             optional = num[9:]
             num = num[:9]
-            numCD = '<'
+            numCD = "<"
             optional = optional + self._calculCheckDigit(optional)
 
         birthCD = self._calculCheckDigit(birth)
@@ -224,29 +244,23 @@ class MRZ():
         optionalCD = self._calculCheckDigit(optional)
         data = line2 + optional + optionalCD
 
-        compositeCD = self._calculCheckDigit(
-            num + numCD
-            + birth + birthCD
-            + exp + expCD
-            + optional + optionalCD
-        )
+        compositeCD = self._calculCheckDigit(num + numCD + birth + birthCD + exp + expCD + optional + optionalCD)
 
         line2 = data + compositeCD
 
         return line1 + line2
 
-
     def _transformField(self, field, size):
         if len(field) > size:
-            raise MRZException("The filed length is incorrect (" + field + "): " + str(len(field)) + " instead of " + str(size))
+            raise MRZException(
+                "The filed length is incorrect (" + field + "): " + str(len(field)) + " instead of " + str(size)
+            )
 
-        field = field.replace(' ', '<').upper()
-        field = field.replace('.', '<').upper()
-        field = field.replace('-', '<').upper()
-        field = field.replace(',', '').upper()
+        field = field.replace(" ", "<").upper()
+        field = field.replace(".", "<").upper()
+        field = field.replace("-", "<").upper()
+        field = field.replace(",", "").upper()
         return field + "<" * (size - len(field))
-
-
 
     docNumber = property(getDocNumber)
     dateOfBirth = property(getDateOfBirth)

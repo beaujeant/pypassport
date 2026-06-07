@@ -20,16 +20,15 @@ import datetime
 import pickle
 import os
 
-from pypassport.logger import Logger
+from pypassport.hexfunctions import binToHexRep
 from pypassport.iso7816 import Iso7816, Iso7816Exception
-from pypassport.reader import PcscReader, ReaderException
-from pypassport import apdu
-from pypassport.iso9797 import *
-from pypassport.hexfunctions import hexToHexRep, binToHexRep
+from pypassport.logger import Logger
+
 
 class ErrorFingerprintingException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
+
 
 class ErrorFingerprinting(Logger):
     """
@@ -43,23 +42,19 @@ class ErrorFingerprinting(Logger):
         Logger.__init__(self, "ERROR FINGERPRINTING")
         self._iso7816 = iso7816
 
-        if type(self._iso7816) != type(Iso7816(None)):
-            raise MacTraceabilityException("The sublayer iso7816 is not available")
+        if not isinstance(self._iso7816, Iso7816):
+            raise ErrorFingerprintingException("The sublayer iso7816 is not available")
 
         self._iso7816.rstConnection()
 
         self._path = path
 
         if os.path.exists(path):
-            with open(path, 'rb') as file_errors:
+            with open(path, "rb") as file_errors:
                 my_unpickler = pickle.Unpickler(file_errors)
                 self.errors = my_unpickler.load()
         else:
-            self.errors = { "0000000000": { "0x6d 0x0": {   "BEL": ["2009", "2011"],
-                                                            "FRA": ["2010"]
-                                                        }
-                                          }
-                          }
+            self.errors = {"0000000000": {"0x6d 0x0": {"BEL": ["2009", "2011"], "FRA": ["2010"]}}}
 
     def sendCustom(self, cla="00", ins="00", p1="00", p2="00", lc="", data="", le="00"):
         """
@@ -77,7 +72,7 @@ class ErrorFingerprinting(Logger):
             self.log("Send APDU: {0}:{1}:{2}:{3}:{4}:{5}:{6}".format(cla, ins, p1, p2, lc, data, le))
             ans = self._iso7816.transmit(toSend, "Custom APDU")
             return (True, binToHexRep(ans))
-        except Iso7816Exception, msg:
+        except Iso7816Exception as msg:
             return (False, msg)
 
     def addError(self, new_query, ans, new_country, year=str(datetime.datetime.today().year)):
@@ -99,40 +94,40 @@ class ErrorFingerprinting(Logger):
         """
 
         (valide, err) = ans
-        if valide==True:
-            print new_query
+        if valide:
+            self.log(str(new_query))
             raise ErrorFingerprintingException("The query triggered no error")
         (error_text, nb1, nb2) = err
         new_error = "{0} {1}".format(hex(nb1), hex(nb2))
-        i=True
+        i = True
         for query in self.errors:
-            if query==new_query:
+            if query == new_query:
                 for error in self.errors[query]:
-                    if error==new_error:
+                    if error == new_error:
                         for country in self.errors[query][error]:
-                            if country==new_country:
+                            if country == new_country:
                                 for date in self.errors[query][error][country]:
-                                    if date==year:
+                                    if date == year:
                                         self.log("The entry already exists")
-                                        i=False
+                                        i = False
                                 if i:
                                     self.errors[new_query][new_error][new_country].append(year)
                                     self.log("The entry has been added")
-                                    i=False
+                                    i = False
                         if i:
                             self.errors[new_query][new_error][new_country] = [year]
                             self.log("The entry has been added")
-                            i=False
+                            i = False
                 if i:
-                    self.errors[new_query][new_error] = { new_country: [year] }
+                    self.errors[new_query][new_error] = {new_country: [year]}
                     self.log("The entry has been added")
-                    i=False
+                    i = False
         if i:
-            self.errors[new_query] = { new_error: { new_country: [year] } }
+            self.errors[new_query] = {new_error: {new_country: [year]}}
             self.log("The entry has been added")
-            i=False
+            i = False
 
-        with open(self._path, 'wb') as file_errors:
+        with open(self._path, "wb") as file_errors:
             self.log("Save the dictionary")
             my_pickler = pickle.Pickler(file_errors)
             my_pickler.dump(self.errors)
@@ -151,7 +146,7 @@ class ErrorFingerprinting(Logger):
 
         cur_query = cla + ins + p1 + p2 + lc + data + le
         (valide, err) = self.sendCustom(cla, ins, p1, p2, lc, data, le)
-        if valide==True:
+        if valide:
             raise ErrorFingerprintingException("Not possible to identify the passport since the query is correct")
         (error_text, nb1, nb2) = err
         new_error = "{0} {1}".format(hex(nb1), hex(nb2))
@@ -159,23 +154,12 @@ class ErrorFingerprinting(Logger):
 
         self.log("Check for error: {0}".format(new_error))
         for query in self.errors:
-            if query==cur_query:
+            if query == cur_query:
                 for error in self.errors[query]:
-                    if error==new_error:
+                    if error == new_error:
                         for country in self.errors[query][error]:
                             cur_country = country
                             for date in self.errors[query][error][country]:
                                 possibilities.append("{0} {1}".format(cur_country, date))
 
         return possibilities
-
-
-
-
-
-
-
-
-
-
-

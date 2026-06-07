@@ -22,17 +22,16 @@ class LoggingHandler(logging.Handler):
         self.log_entries.append(log_entry)
 
 
-class EPassportViewer():
+class EPassportViewer:
     def __init__(self):
         # CONFIGURATION
         ## Logging
         log_handler = LoggingHandler()
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[logging.StreamHandler(), log_handler]
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[logging.StreamHandler(), log_handler],
         )
-
 
         # BUILDING UI
         ## Initialize the main window
@@ -41,7 +40,6 @@ class EPassportViewer():
         self.root.geometry("915x775")
         self.root.minsize(915, 775)
         self.root.log_handler = log_handler
-
 
         ## History
         HISTORY_FILE_NAME = "history"
@@ -60,14 +58,13 @@ class EPassportViewer():
         self.reader = None
         self.iso7816 = None
 
-
         ## Create a canvas with vertical scrollbar
         canvas = tk.Canvas(self.root)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=canvas.yview)
         scrollbar.pack(side="right", fill="y")
         canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         main_frame = tk.Frame(canvas)
         canvas.create_window((0, 0), window=main_frame, anchor="nw")
 
@@ -77,7 +74,7 @@ class EPassportViewer():
 
         ## Create menu bar
         menu_bar = tk.Menu(self.root)
-        self.root.menu_bar = menu_bar 
+        self.root.menu_bar = menu_bar
         MenuBar(self)
         self.root.config(menu=menu_bar)
 
@@ -126,7 +123,6 @@ class EPassportViewer():
         AttacksPane(self)
         CustomPane(self)
 
-
         ## Footer pane with "Verbose" dropdown, "Logs" button, and version info
         footer_frame = ttk.Frame(main_frame)
         footer_frame.pack(fill=tk.X, pady=5, padx=10)
@@ -137,7 +133,6 @@ class EPassportViewer():
 
         # RUN THE APPLICATION
         self.root.mainloop()
-
 
     def get_reader(self):
         self.reader = reader.getReader()

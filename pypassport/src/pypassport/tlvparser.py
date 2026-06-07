@@ -1,6 +1,7 @@
 from pypassport.asn1 import asn1Exception, asn1Length
 from pypassport import hexfunctions
 
+
 class TLVParserException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
@@ -13,7 +14,7 @@ class TLVParser(dict):
 
     def _getTag(self):
         if (hexfunctions.binToHex(self._data[self._byteNb]) & 0x0F) == 0x0F:
-            tag = hexfunctions.binToHexRep(self._data[self._byteNb:self._byteNb + 2]).upper()
+            tag = hexfunctions.binToHexRep(self._data[self._byteNb : self._byteNb + 2]).upper()
             self._byteNb += 2
         else:
             tag = hexfunctions.binToHexRep(self._data[self._byteNb]).upper()
@@ -21,13 +22,13 @@ class TLVParser(dict):
         return tag
 
     def _getLength(self):
-        (length, offset) = asn1Length(self._data[self._byteNb:])
+        (length, offset) = asn1Length(self._data[self._byteNb :])
         self._byteNb += offset
         return length
 
     def _getValue(self):
         length = self._getLength()
-        value = self._data[self._byteNb:self._byteNb + length]
+        value = self._data[self._byteNb : self._byteNb + length]
         self._byteNb += length
         return value
 

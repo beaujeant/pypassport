@@ -7,14 +7,13 @@ from tkinter import messagebox
 from Crypto.Cipher import DES3
 from pypassport.doc9303 import securemessaging
 from hashlib import sha1
-from pypassport import reader, asn1
+from pypassport import asn1
 from pypassport.doc9303 import mrz, bac
 from pypassport.iso7816 import ISO7816, APDUCommand
-from pypassport.epassport import EPassport, EPassportException
 from pypassport.utils import toHexString, toBytes
 
-class CustomPane:
 
+class CustomPane:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
@@ -22,7 +21,7 @@ class CustomPane:
         # Block 1: Analyzing
         block1 = ttk.LabelFrame(self.root.custom_tab, text=" Analyzing ", padding=10)
         block1.pack(fill="x", pady=8, padx=5)
-        
+
         tk.Button(block1, text="Dump randomness", command=self.dump_randomness).grid(row=0, column=0, padx=5, pady=5)
         tk.Label(block1, text="Nb of get challenge").grid(row=0, column=1, padx=5, pady=5)
         self.nb_challenge = tk.Entry(block1, width=6)
@@ -52,8 +51,12 @@ class CustomPane:
         # Row 2
         tk.Label(block3, text="Functions:").grid(row=1, column=0, padx=5, pady=5)
         tk.Button(block3, text="XOR", width=12, command=self.xor).grid(row=1, column=1, padx=3, pady=5)
-        tk.Button(block3, text="Key derivation", width=12, command=self.key_derivation).grid(row=1, column=2, padx=3, pady=5)
-        tk.Button(block3, text="SSC generator", width=12, command=self.generate_ssc).grid(row=1, column=3, padx=3, pady=5)
+        tk.Button(block3, text="Key derivation", width=12, command=self.key_derivation).grid(
+            row=1, column=2, padx=3, pady=5
+        )
+        tk.Button(block3, text="SSC generator", width=12, command=self.generate_ssc).grid(
+            row=1, column=3, padx=3, pady=5
+        )
         tk.Button(block3, text="Read header", width=12, command=self.read_header).grid(row=1, column=4, padx=3, pady=5)
 
         # Row 3
@@ -143,19 +146,19 @@ class CustomPane:
 
         response_labels = ["Response data", "", "SW1", "SW2"]
         for i, text in enumerate(response_labels):
-            tk.Label(block5, text=text).grid(row=1, column=i+1, padx=0, pady=0)
-
+            tk.Label(block5, text=text).grid(row=1, column=i + 1, padx=0, pady=0)
 
     def get_ready(self):
         if not self.parent.reader:
             self.parent.get_reader()
         if not self.parent.reader:
-            messagebox.showerror("Reader missing", "Make sure you have the reader connected and the PCSC service running.")
+            messagebox.showerror(
+                "Reader missing", "Make sure you have the reader connected and the PCSC service running."
+            )
             return False
         if not self.parent.iso7816:
             self.parent.iso7816 = ISO7816(self.parent.reader)
         return True
-
 
     def dump_randomness(self):
         if not self.get_ready():
@@ -164,14 +167,16 @@ class CustomPane:
         file_path = filedialog.asksaveasfilename(
             defaultextension=".bin",  # Default file extension
             filetypes=[("Binary files", "*.bin"), ("All files", "*.*")],  # Allowed file types
-            title="Select a file to save data"
+            title="Select a file to save data",
         )
-        
+
         if file_path:
             output = ""
             try:
-                if self.nb_challenge.get(): until = int(self.nb_challenge.get())
-                else: until = 200
+                if self.nb_challenge.get():
+                    until = int(self.nb_challenge.get())
+                else:
+                    until = 200
                 self.parent.iso7816.rstConnection()
                 for i in range(until):
                     random = toHexString(self.parent.iso7816.getChallenge())
@@ -184,13 +189,11 @@ class CustomPane:
                 return False
             return True
 
-
     def init(self):
         if not self.get_ready():
             return False
         self.parent.iso7816.rstConnection()
         return True
-
 
     def reset(self):
         if not self.get_ready():
@@ -198,7 +201,6 @@ class CustomPane:
         self.parent.iso7816.rstConnectionRaw()
         self.parent.iso7816.ciphering = False
         return True
-
 
     def bac(self):
         if not self.get_ready():
@@ -217,7 +219,6 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: BAC", str(msg))
 
-
     def gen_bac_keys(self):
         if not self.get_ready():
             return False
@@ -235,19 +236,17 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: BAC", str(msg))
 
-
     def get_atr(self):
         if not self.get_ready():
             return False
         self.field_one.set(toHexString(self.parent.reader.getATR()))
         self.field_two.set("")
 
-
     def enc_3des(self):
         try:
             key = self.field_two.get()
             cleartext = self.field_one.get()
-            tdes = DES3.new(toBytes(key), DES3.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+            tdes = DES3.new(toBytes(key), DES3.MODE_CBC, b"\x00\x00\x00\x00\x00\x00\x00\x00")
             m = toHexString(tdes.encrypt(toBytes(cleartext)))
 
             logging.info(f"TDES ENCRYPTION:\n  message: {cleartext}\n  key: {key}\n  cipher: {m}")
@@ -258,12 +257,11 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: 3DES Encryption", str(msg))
 
-
     def dec_3des(self):
         try:
             key = self.field_two.get()
             cipher = self.field_one.get()
-            tdes = DES3.new(toBytes(key), DES3.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+            tdes = DES3.new(toBytes(key), DES3.MODE_CBC, b"\x00\x00\x00\x00\x00\x00\x00\x00")
             m = toHexString(tdes.decrypt(toBytes(cipher)))
 
             logging.info(f"TDES DECRYPTION:\n  cipher: {cipher}\n  key: {key}\n  cleartext: {m}")
@@ -274,7 +272,6 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: 3DES Decryption", str(msg))
 
-
     def sha1_hash(self):
         message = self.field_one.get()
         h = toHexString(sha1(message).digest())
@@ -284,20 +281,18 @@ class CustomPane:
         self.field_one.set(h)
         self.field_two("")
 
-
     def xor(self):
         out = ""
         a = self.field_one.get()
         b = self.field_two.get()
 
         for i in range(len(a)):
-            out += hex(int(a[i],16) ^ int(b[i],16))[2:]
+            out += hex(int(a[i], 16) ^ int(b[i], 16))[2:]
 
         logging.info(f"XOR:\n  HEX 1: {a}\n  HEX 2: {b}\n  XOR:   {out.upper()}")
 
         self.field_one.set(out.upper())
         self.field_two.set("")
-
 
     def mac(self):
         if not self.get_ready():
@@ -314,7 +309,6 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: MAC", str(msg))
 
-
     def key_derivation(self):
 
         keyBin = toBytes(self.field_one.get())
@@ -326,46 +320,44 @@ class CustomPane:
         Ka = self.des_parity(Ka)
         Kb = self.des_parity(Kb)
 
-        key = toHexString(Ka+Kb)
+        key = toHexString(Ka + Kb)
 
         logging.info(f"KEY DERIVATION:\n  key: {self.field_one.get()}\n  derived key: {key}")
         self.field_one.set(key)
         self.field_two.set("")
 
-
     def des_parity(self, data):
         adjusted = []
         for c in data:
-            y = c & 0xfe
+            y = c & 0xFE
             parity = 0
             for z in range(8):
-                parity += y >>  z & 1
+                parity += y >> z & 1
             adjusted.append(y + (not parity % 2))
         return bytes(adjusted)
-
 
     def generate_ssc(self):
         rnd_icc = toBytes(self.field_one.get())
         rnd_ifd = toBytes(self.field_two.get())
         ssc = toHexString(rnd_icc[-4:] + rnd_ifd[-4:])
-        logging.info(f"SSC GENERATOR:\n  RND ICC: {self.field_one.get()}\n  RND IFD: {self.field_two.get()}\n  SSC: {ssc}")
+        logging.info(
+            f"SSC GENERATOR:\n  RND ICC: {self.field_one.get()}\n  RND IFD: {self.field_two.get()}\n  SSC: {ssc}"
+        )
 
         self.field_one.set(ssc)
         self.field_two.set("")
-
 
     def read_header(self):
         try:
             header = toBytes(self.field_one.get())
             (bodySize, offset) = asn1.asn1Length(header[1:])
             bodySize = toHexString(bodySize)
-            offset = toHexString(offset+1)
+            offset = toHexString(offset + 1)
             logging.info(f"HEADER:\n  Body size: {bodySize}\n  Offset: {offset}")
             self.field_one.set(bodySize)
             self.field_two.set(offset)
         except Exception as msg:
             messagebox.showerror("Error: Read header", str(msg))
-
 
     def set_request(self, cla="00", ins="00", p1="00", p2="00", lc="", data="", le="00"):
         self.cla.set(cla)
@@ -375,7 +367,6 @@ class CustomPane:
         self.lc.set(lc)
         self.data.set(data)
         self.le.set(le)
-
 
     def external_auth(self):
         self.set_request(ins="82", le="28")
@@ -400,7 +391,6 @@ class CustomPane:
 
     def get_challenge(self):
         self.set_request(ins="84", le="08")
-
 
     def send_apdu(self):
         if not self.get_ready():
@@ -432,7 +422,6 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: Send", str(msg))
 
-
     def set_ciphering(self):
         if not self.get_ready():
             return False
@@ -446,19 +435,20 @@ class CustomPane:
         except Exception as msg:
             messagebox.showerror("Error: Set ciphering", str(msg))
 
-
     def download_data(self):
         file_path = filedialog.asksaveasfilename(
             defaultextension=".bin",
             filetypes=[("Binary files", "*.bin"), ("All files", "*.*")],
-            title="Select a file to save data"
+            title="Select a file to save data",
         )
-        
+
         if file_path:
             output = ""
             try:
-                if self.nb_challenge.get(): until = int(self.nb_challenge.get())
-                else: until = 200
+                if self.nb_challenge.get():
+                    until = int(self.nb_challenge.get())
+                else:
+                    until = 200
                 self.parent.iso7816.rstConnection()
                 for i in range(until):
                     random = toHexString(self.parent.iso7816.getChallenge())

@@ -3,8 +3,8 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
 
-class AttacksPane:
 
+class AttacksPane:
     def __init__(self, main):
         self.root = main.root
 
@@ -28,7 +28,6 @@ class AttacksPane:
 class FingerprintPane:
     def __init__(self, root):
         self.root = root
-
 
         first_line = tk.Frame(self.root.fingerprint_tab)
         first_line.pack(fill="x", pady=5)
@@ -72,19 +71,14 @@ class FingerprintPane:
         fourth_line.pack(fill="x", pady=5)
         tk.Button(fourth_line, text="Identify", command=self.identify).pack(side="left", padx=5)
 
-
     def send_apdu(self):
         return
-
 
     def save_error(self):
         return
 
-
     def identify(self):
         return
-
-
 
 
 class ActiveAuthenticationPane:
@@ -109,7 +103,9 @@ class ActiveAuthenticationPane:
 
         # GET HIGHEST SIGNATURE
         modulusAttack = tk.Frame(self.root.aa_tab, border=1)
-        modulusAttack.pack(fill="x",)
+        modulusAttack.pack(
+            fill="x",
+        )
 
         getHighestFrame = tk.Frame(modulusAttack)
         getHighestFrame.pack(fill="x")
@@ -237,15 +233,11 @@ class ActiveAuthenticationPane:
         helpSignEverything.image = image
         helpSignEverything.pack(side="right", padx=5, pady=5)
 
-
-
     def isVulnerableAA(self):
         return
 
-
     def helpVulnAADialog(self):
         return
-
 
     def getHighestSign(self):
         return

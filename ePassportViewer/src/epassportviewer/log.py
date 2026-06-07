@@ -4,7 +4,6 @@ from tkinter import ttk, scrolledtext
 
 
 class LogPane:
-
     def __init__(self, root):
         self.root = root
 
@@ -12,7 +11,7 @@ class LogPane:
             "DEBUG": logging.DEBUG,
             "INFO": logging.INFO,
             "WARNING": logging.WARNING,
-            "ERROR": logging.ERROR
+            "ERROR": logging.ERROR,
         }
 
         # "Verbose" dropdown menu
@@ -21,10 +20,10 @@ class LogPane:
 
         self.logging_level_var = tk.StringVar(value="INFO")
         dropdown = ttk.Combobox(
-            self.root.footer_frame, 
-            textvariable=self.logging_level_var, 
-            values=list(self.logging_levels.keys()), 
-            state="readonly"
+            self.root.footer_frame,
+            textvariable=self.logging_level_var,
+            values=list(self.logging_levels.keys()),
+            state="readonly",
         )
         dropdown.pack(side=tk.LEFT, padx=(0, 10))
         dropdown.bind("<<ComboboxSelected>>", self.set_logging_level)
@@ -37,12 +36,10 @@ class LogPane:
         version_label = ttk.Label(self.root.footer_frame, text="Version 2")
         version_label.pack(side=tk.RIGHT)
 
-
     def set_logging_level(self, event):
-            selected_level = self.logging_levels.get(self.logging_level_var.get(), logging.INFO)
-            logging.getLogger().setLevel(selected_level)
-            logging.info(f"Logging level set to {self.logging_level_var.get()}")
-
+        selected_level = self.logging_levels.get(self.logging_level_var.get(), logging.INFO)
+        logging.getLogger().setLevel(selected_level)
+        logging.info(f"Logging level set to {self.logging_level_var.get()}")
 
     # Function to open the logs window and periodically refresh the content
     def open_logs_window_2(self):
@@ -73,17 +70,16 @@ class LogPane:
 
         update_log_content()  # Initial call to load content
 
-
     def open_logs_window(self):
         log_window = tk.Toplevel(self.root)
         log_window.title("Logs")
         log_window.geometry("600x400")
 
-        log_text = scrolledtext.ScrolledText(log_window, wrap=tk.WORD, state='normal')
+        log_text = scrolledtext.ScrolledText(log_window, wrap=tk.WORD, state="normal")
         log_text.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
         # Add logs to the text box
         for log_entry in self.root.log_handler.log_entries:
-            log_text.insert(tk.END, log_entry + '\n')
+            log_text.insert(tk.END, log_entry + "\n")
 
-        log_text.configure(state='disabled')
+        log_text.configure(state="disabled")

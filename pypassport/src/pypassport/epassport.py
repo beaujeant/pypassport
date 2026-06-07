@@ -5,8 +5,7 @@ from pypassport.doc9303 import securemessaging
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.bac import BAC
 from pypassport.doc9303.pace import PACE
-from pypassport.doc9303.datagroup import readElementaryFile, ElementaryFileException
-#from pypassport.doc9303.datagroup import DataGroupReader, DataGroupException, DataGroupDump
+from pypassport.doc9303.datagroup import DataGroupDump, readElementaryFile, ElementaryFileException
 from pypassport.doc9303.activeauthentication import ActiveAuthentication, ActiveAuthenticationException
 from pypassport.doc9303.passiveauthentication import PassiveAuthentication, PassiveAuthenticationException
 from pypassport.iso7816 import ISO7816, ISO7816Exception
@@ -152,7 +151,7 @@ class EPassport(dict):
             raise EPassportException("No passport present on the reader")
 
         self.iso7816 = ISO7816(reader)
-        #self._dgReader = DataGroupReader(self.iso7816)
+        # self._dgReader = DataGroupReader(self.iso7816)
         self._bac = BAC(self.iso7816)
         self._pace = PACE(self.iso7816, self._mrz)
         self._openSSL = OpenSSL()
@@ -166,18 +165,14 @@ class EPassport(dict):
         except ISO7816Exception:
             raise EPassportException("The chip does not contain eMRTD applet")
 
-
     def _getOpenSslDirectory(self):
         return self._openSSL.location
-
 
     def _setOpenSslDirectory(self, value):
         self._openSSL.location = value
 
-
     def getCSCADirectory(self):
         return self._CSCADirectory
-
 
     def setCSCADirectory(self, value, hash=False):
         self._CSCADirectory = camanager.CAManager(value)
@@ -185,11 +180,9 @@ class EPassport(dict):
             logging.debug("Document Signer Certificate hash creation")
             self._CSCADirectory.toHashes()
 
-
     def rstConnection(self):
         logging.debug("Reset Connection")
         return self.iso7816.rstConnection()
-
 
     def doBasicAccessControl(self):
         """
@@ -207,7 +200,6 @@ class EPassport(dict):
         (KSenc, KSmac, ssc) = self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
         sm = securemessaging.SecureMessaging(KSenc, KSmac, ssc)
         self.iso7816.ciphering = sm
-
 
     def doActiveAuthentication(self, dg15=None):
         """
@@ -237,7 +229,6 @@ class EPassport(dict):
         finally:
             logging.debug("Active Authentication: " + str(res))
 
-
     def doVerifySODCertificate(self):
         """
         Execute the first part of the passive authentication: The verification of the certificate validity.
@@ -262,7 +253,6 @@ class EPassport(dict):
             raise OpenSSLException(msg)
         finally:
             logging.debug("Document Signer Certificate verification: " + str(res))
-
 
     def doVerifyDGIntegrity(self, dgs=None):
         """
@@ -293,15 +283,13 @@ class EPassport(dict):
         finally:
             logging.debug("Data Groups integrity verification: " + str(res))
 
-
     def doPACE(self):
         PWD_MRZ = bytes([0x01])
-        PWD_CAN = bytes([0x02])
-        PWD_PIN = bytes([0x03])
-        CHAT = b"\x06\x09\x04\x00\x7F\x00\x07\x03\x01\x02\x02\x53\x05\x00\x00\x00\x01\x10"
+        bytes([0x02])
+        bytes([0x03])
+        CHAT = b"\x06\x09\x04\x00\x7f\x00\x07\x03\x01\x02\x02\x53\x05\x00\x00\x00\x01\x10"
         oid, domain = self._pace.getPACEInfo(self["DG14"].body)
         self._pace.performPACE(oid, PWD_MRZ, domain_params=domain, chat=CHAT)
-
 
     def readSod(self):
         """
@@ -310,7 +298,6 @@ class EPassport(dict):
         @return: A sod object.
         """
         return self["SecurityData"]
-
 
     def readCom(self):
         """
@@ -322,7 +309,6 @@ class EPassport(dict):
         for tag in self["Common"]["5C"]:
             list.append(converter.toDG(tag))
         return list
-
 
     def readDataGroups(self):
         """
@@ -339,7 +325,6 @@ class EPassport(dict):
                 self.iso7816.rstConnection()
         return list
 
-
     def readPassport(self):
         """
         Read every files of the passport (COM, DG1..DG15, SOD)
@@ -353,7 +338,7 @@ class EPassport(dict):
 
         return self
 
-    #Dict overwriting
+    # Dict overwriting
     def __getitem__(self, tag):
         """
         @param tag: A Valid tag representing a dataGroup
@@ -391,7 +376,6 @@ class EPassport(dict):
                     dg = readElementaryFile(tag, self.iso7816)
                 else:
                     logging.error(f"Could not read the DG ({e.data})")
-                    dgFile = None
             except Exception as msg:
                 logging.exception(msg)
             if dg:
@@ -401,7 +385,6 @@ class EPassport(dict):
                 return None
         else:
             return super(EPassport, self).__getitem__(tag)
-
 
     def __iter__(self):
         """
@@ -473,7 +456,7 @@ class EPassport(dict):
         except Exception:
             return None
 
-    def dump(self, directory=os.path.expanduser('~'), format="GRT", extension = ".bin"):
+    def dump(self, directory=os.path.expanduser("~"), format="GRT", extension=".bin"):
         """
         Dump the ePassport content on disk as well as the faces ans signatures in jpeg,
         the DG15 public key and the Document Signer Certificate.
@@ -516,4 +499,5 @@ class EPassport(dict):
 
 if __name__ == "__main__":
     import doctest
+
     doctest.testmod()

@@ -3,16 +3,12 @@ import subprocess
 from pypassport.logger import Logger
 
 
-
-
-
 class OpenSSLException(Exception):
     def __init__(self, *params):
         Exception.__init__(self, *params)
 
 
 class OpenSSL(Logger):
-
     def __init__(self, config="", opensslLocation="openssl"):
         Logger.__init__(self, "OPENSSL")
         self._opensslLocation = opensslLocation
@@ -20,7 +16,6 @@ class OpenSSL(Logger):
 
     def _getOpensslLocation(self):
         return self._opensslLocation
-
 
     def _setOpensslLocation(self, value):
         self._opensslLocation = value
@@ -89,7 +84,7 @@ class OpenSSL(Logger):
         @return: The data contained in the signature
         """
 
-        #Verify if openSSL is installed
+        # Verify if openSSL is installed
         self._execute("version")
 
         try:
@@ -119,7 +114,10 @@ class OpenSSL(Logger):
             self._toDisk("ds.cer", dsDer)
 
             self._opensslLocation = "java -jar "
-            cmd = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "createSod.jar") + " --certificate ds.cer --content sodContent --keypass titus --privatekey p12 --out signed"
+            cmd = (
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "createSod.jar")
+                + " --certificate ds.cer --content sodContent --keypass titus --privatekey p12 --out signed"
+            )
             res = self._execute(cmd, True)
             f = open("signed", "rb")
             res = f.read()
@@ -132,15 +130,11 @@ class OpenSSL(Logger):
             self._remFromDisk("ds.cer")
             self._remFromDisk("signed")
 
-
-
     def genRSAprKey(self, size):
         """
         Return an RSA private key of the specified size in PEM format.
         """
         return self._execute("genrsa " + str(size))
-
-
 
     def genRootX509(self, cscaKey, validity="", distinguishedName=None):
         """
@@ -151,6 +145,7 @@ class OpenSSL(Logger):
                 subj = distinguishedName.getSubject()
             else:
                 from pypassport.pki import DistinguishedName
+
                 subj = DistinguishedName(C="BE", O="Gouv", CN="CSCA-BELGIUM").getSubject()
 
             self._toDisk("csca.key", cscaKey)
@@ -174,6 +169,7 @@ class OpenSSL(Logger):
                 subj = distinguishedName.getSubject()
             else:
                 from pypassport.pki import DistinguishedName
+
                 subj = DistinguishedName(C="BE", O="Gouv", CN="Document Signer BELGIUM").getSubject()
 
             self._toDisk("ds.key", dsKey)
@@ -246,7 +242,6 @@ class OpenSSL(Logger):
             self._remFromDisk("csca.pem")
             self._remFromDisk("csca.key")
 
-
     def toPKCS12(self, certif, prK, pwd):
         """
         Return a RSA key pair under the PKCS#12 format.
@@ -315,7 +310,7 @@ class OpenSSL(Logger):
         out = res.stdout.read()
         err = res.stderr.read()
 
-        if ((not out) and err and not empty):
+        if (not out) and err and not empty:
             raise OpenSSLException(err)
 
         return out
@@ -330,7 +325,7 @@ class OpenSSL(Logger):
     def printCrl(self, crl):
         try:
             self._toDisk("crl", crl)
-            cmd = 'crl -in crl -text -noout -inform DER'
+            cmd = "crl -in crl -text -noout -inform DER"
             return self._execute(cmd)
         finally:
             self._remFromDisk("crl")

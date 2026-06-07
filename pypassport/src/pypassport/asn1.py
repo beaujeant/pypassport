@@ -1,8 +1,9 @@
-from pypassport.hexfunctions import binToHex, binToHexRep, hexToBin, hexRepToBin
-from pyasn1.type.univ import *
-from pyasn1.type.namedtype import *
-from pyasn1.type.namedval import *
-from pyasn1.type.constraint import *
+from pyasn1.type.constraint import ValueSizeConstraint
+from pyasn1.type.namedtype import NamedType, NamedTypes, OptionalNamedType
+from pyasn1.type.namedval import NamedValues
+from pyasn1.type.univ import BitString, Integer, Null, ObjectIdentifier, OctetString, Sequence, SequenceOf
+
+from pypassport.hexfunctions import binToHex, binToHexRep, hexRepToBin, hexToBin
 
 ub_DataGroups = Integer(16)
 
@@ -13,37 +14,32 @@ class asn1Exception(Exception):
 
 
 class LDSSecurityObjectVersion(Integer):
-    namedValues = NamedValues(
-        ('V0', 0)
-    )
+    namedValues = NamedValues(("V0", 0))
 
 
 class DataGroupNumber(Integer):
     namedValues = NamedValues(
-        ('dataGroup1', 1),
-        ('dataGroup2', 2),
-        ('dataGroup3', 3),
-        ('dataGroup4', 4),
-        ('dataGroup5', 5),
-        ('dataGroup6', 6),
-        ('dataGroup7', 7),
-        ('dataGroup8', 8),
-        ('dataGroup9', 9),
-        ('dataGroup10', 10),
-        ('dataGroup11', 11),
-        ('dataGroup12', 12),
-        ('dataGroup13', 13),
-        ('dataGroup14', 14),
-        ('dataGroup15', 15),
-        ('dataGroup16', 16)
+        ("dataGroup1", 1),
+        ("dataGroup2", 2),
+        ("dataGroup3", 3),
+        ("dataGroup4", 4),
+        ("dataGroup5", 5),
+        ("dataGroup6", 6),
+        ("dataGroup7", 7),
+        ("dataGroup8", 8),
+        ("dataGroup9", 9),
+        ("dataGroup10", 10),
+        ("dataGroup11", 11),
+        ("dataGroup12", 12),
+        ("dataGroup13", 13),
+        ("dataGroup14", 14),
+        ("dataGroup15", 15),
+        ("dataGroup16", 16),
     )
 
 
 class DataGroupHash(Sequence):
-    componentType = NamedTypes(
-        NamedType('dataGroupNumber', Integer()),
-        NamedType('dataGroupHashValue', OctetString())
-    )
+    componentType = NamedTypes(NamedType("dataGroupNumber", Integer()), NamedType("dataGroupHashValue", OctetString()))
 
 
 class DataGroupHashValues(SequenceOf):
@@ -52,26 +48,23 @@ class DataGroupHashValues(SequenceOf):
 
 
 class AlgorithmIdentifier(Sequence):
-    componentType = NamedTypes(
-        NamedType('algorithm', ObjectIdentifier()),
-        OptionalNamedType('parameters', Null())
-    )
+    componentType = NamedTypes(NamedType("algorithm", ObjectIdentifier()), OptionalNamedType("parameters", Null()))
+
 
 DigestAlgorithmIdentifier = AlgorithmIdentifier()
 
 
 class LDSSecurityObject(Sequence):
     componentType = NamedTypes(
-        NamedType('version', LDSSecurityObjectVersion()),
-        NamedType('hashAlgorithm', DigestAlgorithmIdentifier),
-        NamedType('dataGroupHashValues', DataGroupHashValues())
+        NamedType("version", LDSSecurityObjectVersion()),
+        NamedType("hashAlgorithm", DigestAlgorithmIdentifier),
+        NamedType("dataGroupHashValues", DataGroupHashValues()),
     )
 
 
 class SubjectPublicKeyInfo(Sequence):
     componentType = NamedTypes(
-        NamedType('algorithm', AlgorithmIdentifier()),
-        NamedType('subjectPublicKey', BitString())
+        NamedType("algorithm", AlgorithmIdentifier()), NamedType("subjectPublicKey", BitString())
     )
 
 
@@ -79,8 +72,6 @@ id_icao = ObjectIdentifier((2, 23, 136))
 id_icao_mrtd = ObjectIdentifier(id_icao + (1,))
 id_icao_mrtdsecurity = ObjectIdentifier(id_icao_mrtd + (1,))
 id_icao_ldsSecurityObject = ObjectIdentifier(id_icao_mrtdsecurity + (1,))
-
-
 
 
 def asn1Length(data):
