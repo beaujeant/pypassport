@@ -1,10 +1,21 @@
-def binToHex(val):
-    """'\xaa\xbb' --> 4307"""
+"""Utility functions for converting between binary, hex-string, integer, and list representations."""
+
+
+# bin to something
+
+def binToHex(val) -> int:
+    """Convert a binary string to an integer.
+
+    '\xaa\xbb' --> 43707
+    """
     return int(binToHexRep(val), 16)
 
 
-def binToHexRep(data):
-    """'\xaa\xbb' --> 'aabb'"""
+def binToHexRep(data) -> str:
+    """Convert a binary string to a lowercase hex string.
+
+    b'\xaa\xbb' --> 'aabb'
+    """
     if isinstance(data, str):
         data = data.encode("utf-8")
     if isinstance(data, int):
@@ -12,37 +23,46 @@ def binToHexRep(data):
     return data.hex()
 
 
-def binToHexList(data):
-    """'\xaa\xbb' --> [0xAA, 0xBB]"""
+def binToHexList(data) -> list:
+    """Convert a binary string to a list of integers.
+
+    b'\xaa\xbb' --> [0xAA, 0xBB]
+    """
     return hexRepToList(binToHexRep(data))
 
 
 # hex to something
 
+def hexToBin(data) -> bytes:
+    """Convert an integer to its binary representation.
 
-def hexToBin(data):
-    """511 --> '\x00\x00\x00\x00\x00\x00\x01\xff'"""
+    511 --> b'\x01\xff'
+    """
     return hexRepToBin("%x" % data)
 
 
-def hexToHexRep(data):
+def hexToHexRep(data) -> str:
+    """Convert a single hex integer to its uppercase two-char hex string."""
     return hexListToHexRep([data])
 
 
-def hexToHexList(string):
-    # translate string of 2 char HEX to int list
+def hexToHexList(string: str) -> list:
+    """Convert a hex string of two-char groups to a list of integers."""
     n = 0
     out = []
     while n < len(string):
-        out.append(int(string[n : n + 2], 16))
+        out.append(int(string[n:n + 2], 16))
         n += 2
     return out
 
 
 # hexRep to something
 
+def hexRepToBin(hexrep) -> bytes:
+    """Convert a hex string to bytes.
 
-def hexRepToBin(hexrep):
+    'aabb' --> b'\xaa\xbb'
+    """
     if not isinstance(hexrep, str):
         hexrep = hexrep.decode("utf-8")
     if len(hexrep) % 2:
@@ -50,61 +70,81 @@ def hexRepToBin(hexrep):
     return bytes.fromhex(hexrep)
 
 
-def hexRepToList(string):
-    """'AABBCC' --> [170, 187, 204]"""
+def hexRepToList(string: str) -> list:
+    """Convert a hex string to a list of integers.
+
+    'AABBCC' --> [170, 187, 204]
+    """
     n = 0
     out = []
     while n < len(string):
-        out.append(int(string[n : n + 2], 16))
+        out.append(int(string[n:n + 2], 16))
         n += 2
     return out
 
 
-def hexRepToHex(string):
+def hexRepToHex(string: str) -> int:
+    """Convert a hex string to an integer."""
     return binToHex(hexRepToBin(string))
 
 
-def listToHexRep(list):
-    """[170, 187, 204] --> 'AABBCC'"""
+def listToHexRep(data) -> str:
+    """Convert a list of integers to an uppercase hex string.
+
+    [170, 187, 204] --> 'AABBCC'
+    """
     out = []
-    for item in list:
-        out.append("%02X" % int(item))
-    return out.upper()
+    for item in data:
+        out.append('%02X' % int(item))
+    return ''.join(out)
 
 
 # hexList to something
 
+def hexListToBin(data) -> bytes:
+    """Convert a list of hex integers to bytes.
 
-def hexListToBin(data):
-    """[0xAA, 0xBB] -> '\xaa\xbb'"""
-    hexRep = hexListToHexRep(data)
-    return hexRepToBin(hexRep)
-
-
-def hexListToHex(data):
-    """[0xAA, 0xBB] --> 43707"""
-    bin = hexListToBin(data)
-    return binToHex(bin)
+    [0xAA, 0xBB] --> b'\xaa\xbb'
+    """
+    return hexRepToBin(hexListToHexRep(data))
 
 
-def hexListToHexRep(data):
-    """[0xAA, 0xBB] -> 'AABB4"""
-    out = ""
+def hexListToHex(data) -> int:
+    """Convert a list of hex integers to an integer.
+
+    [0xAA, 0xBB] --> 43707
+    """
+    return binToHex(hexListToBin(data))
+
+
+def hexListToHexRep(data) -> str:
+    """Convert a list of hex integers to an uppercase hex string.
+
+    [0xAA, 0xBB] --> 'AABB'
+    """
+    out = ''
     for d in data:
-        out += "%02X" % int(d)
+        out += '%02X' % int(d)
     return out
 
 
-def intToBin(data):
-    """13 -> d"""
+def intToBin(data) -> bytes:
+    """Convert an integer to its binary (bytes) representation.
+
+    13 --> b'\r'
+    """
     return hexRepToBin("%x" % int(data))
 
 
-def intToHexRep(data, size=2):
-    """56 -> 38"""
+def intToHexRep(data: int, size: int = 2) -> str:
+    """Convert an integer to an uppercase hex string of the given digit width.
+
+    56 --> '38'
+    """
     mask = "%0" + str(size) + "x"
     return (mask % data).upper()
 
 
-def intToHexList(data):
+def intToHexList(data: int) -> list:
+    """Convert an integer to a list of byte values."""
     return binToHexList(intToBin(data))

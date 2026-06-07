@@ -1,22 +1,32 @@
-import hashlib
 import logging
-
+import hashlib
 from pyasn1.codec.der import decoder
-
-from pypassport import asn1, hexfunctions
-from pypassport.camanager import CAManager
+from pypassport import hexfunctions
+from pypassport.doc9303 import converter
+from pypassport.doc9303 import datagroup
 from pypassport.derobjectidentifier import OID, OIDException
-from pypassport.doc9303 import converter, datagroup
-from pypassport.logger import Logger
+from pypassport.camanager import CAManager
 from pypassport.openssl import OpenSSL
+from pypassport import asn1
+
+
+# Dispatch table mapping OID strings directly to hashlib constructors.
+# Replaces the previous eval(OID[oid]) pattern.
+_HASH_ALGORITHMS = {
+    "1.3.14.3.2.26":          hashlib.sha1,
+    "2.16.840.1.101.3.4.2.4": hashlib.sha224,
+    "2.16.840.1.101.3.4.2.1": hashlib.sha256,
+    "2.16.840.1.101.3.4.2.2": hashlib.sha384,
+    "2.16.840.1.101.3.4.2.3": hashlib.sha512,
+}
 
 
 class PassiveAuthenticationException(Exception):
-    def __init__(self, *params):
-        Exception.__init__(self, *params)
+    pass
 
 
-class PassiveAuthentication(Logger):
+class PassiveAuthentication:
+
     """
     This class implements the passive authentication protocol.
     The two main methods are I{verifySODandCDS} and I{executePA}. The first verifies the SOD and the CDS and retrieves the relevant dataGroups
@@ -67,7 +77,7 @@ class PassiveAuthentication(Logger):
 
         CDS = self.getCertificate(sodObj)
         if CDS is None:
-            # No certificate
+            #No certificate
             raise PassiveAuthenticationException("The certificate could not be retrieved")
 
         self._data = self.getSODContent(sodObj)
@@ -101,6 +111,7 @@ class PassiveAuthentication(Logger):
         hashes = self._calculateHashes(dgs)
         return self._compareHashes(hashes)
 
+
     def getSODContent(self, sodObj):
         """
         Verify SOD by using Document Signer Public Key (KPuDS))
@@ -122,6 +133,7 @@ class PassiveAuthentication(Logger):
 
         return self._openSSL.getPkcs7SignatureContent(sodObj.body)
 
+
     def verifyDSC(self, CDS, CSCADirectory):
         """
         Verify CDS by using the Country Signing CA Public Key (KPuCSCA).
@@ -138,10 +150,10 @@ class PassiveAuthentication(Logger):
 
         logging.debug("Verify CDS by using the Country Signing CA Public Key (KPuCSCA). ")
 
-        if not CDS and isinstance(CDS, str):
+        if not CDS:
             raise PassiveAuthenticationException("The CDS is not set")
 
-        if not CSCADirectory and isinstance(CSCADirectory, str):
+        if not CSCADirectory:
             raise PassiveAuthenticationException("The CA is not set")
 
         return self._openSSL.verifyX509Certificate(CDS, CSCADirectory)
@@ -173,20 +185,18 @@ class PassiveAuthentication(Logger):
         logging.debug("Read the relevant Data Groups from the LDS")
 
         content = {}
-        hash = {}
+        dg_hashes = {}
 
         certType = asn1.LDSSecurityObject()
-        cert = decoder.decode(data, asn1Spec=certType)[0]
+        cert = decoder.decode(data, asn1Spec = certType)[0]
 
-        content["version"] = cert.getComponentByName("version").prettyPrint()
-        content["hashAlgorithm"] = (
-            cert.getComponentByName("hashAlgorithm").getComponentByName("algorithm").prettyPrint()
-        )
+        content['version'] = cert.getComponentByName('version').prettyPrint()
+        content['hashAlgorithm'] = cert.getComponentByName('hashAlgorithm').getComponentByName('algorithm').prettyPrint()
 
-        for h in cert.getComponentByName("dataGroupHashValues"):
-            hash[h.getComponentByName("dataGroupNumber").prettyPrint()] = h.getComponentByName("dataGroupHashValue")
+        for h in cert.getComponentByName('dataGroupHashValues'):
+            dg_hashes[h.getComponentByName('dataGroupNumber').prettyPrint()] = h.getComponentByName('dataGroupHashValue')
 
-        content["dataGroupHashValues"] = hash
+        content['dataGroupHashValues'] = dg_hashes
 
         return content
 
@@ -200,10 +210,10 @@ class PassiveAuthentication(Logger):
         """
         logging.debug("Calculate the hashes of the relevant Data Groups")
         hashes = {}
-        # Find the hash function from the content dictionary
-        hashAlgo = self._getHashAlgorithm()
+        #Find the hash function from the content dictionary
+        hash_fn = self._getHashAlgorithm()
         for dg in dgs:
-            res = hashAlgo(dg.file)
+            res = hash_fn(dg.file)
             hashes[converter.toDG(dg.tag)] = res.digest()
 
         return hashes
@@ -222,7 +232,7 @@ class PassiveAuthentication(Logger):
 
         for dg in hashes:
             try:
-                res[converter.toDG(dg)] = hashes[dg] == self._content["dataGroupHashValues"][converter.toOther(dg)]
+                res[converter.toDG(dg)] = (hashes[dg] == self._content["dataGroupHashValues"][converter.toOther(dg)])
             except KeyError:
                 res[converter.toDG(dg)] = None
 
@@ -235,18 +245,17 @@ class PassiveAuthentication(Logger):
         """
         if self._content is None:
             raise PassiveAuthenticationException("The object is not set. Call init first.")
-        return self._getAlgoByOID(self._content["hashAlgorithm"])
+        return self._getAlgoByOID(self._content['hashAlgorithm'])
 
     def _getAlgoByOID(self, oid):
-        try:
-            algo = OID[oid]
-            return getattr(hashlib, algo)
-        except (KeyError, AttributeError):
+        hash_fn = _HASH_ALGORITHMS.get(oid)
+        if hash_fn is None:
             raise OIDException("No such algorithm for OID " + str(oid))
+        return hash_fn
 
     def __str__(self):
-        res = "version: " + self._content["version"] + "\n"
-        res += "Hash algorithm: " + OID[self._content["hashAlgorithm"]] + " (" + self._content["hashAlgorithm"] + ")\n"
+        res =  "version: " + self._content["version"] + "\n"
+        res += "Hash algorithm: " + OID.get(self._content["hashAlgorithm"], self._content["hashAlgorithm"]) + " (" + self._content["hashAlgorithm"] + ")\n"
         res += "Data group hash values: " + "\n"
 
         for dghv in self._content["dataGroupHashValues"].keys():

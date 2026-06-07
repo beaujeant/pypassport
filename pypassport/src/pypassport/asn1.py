@@ -1,9 +1,19 @@
-from pyasn1.type.constraint import ValueSizeConstraint
-from pyasn1.type.namedtype import NamedType, NamedTypes, OptionalNamedType
-from pyasn1.type.namedval import NamedValues
-from pyasn1.type.univ import BitString, Integer, Null, ObjectIdentifier, OctetString, Sequence, SequenceOf
+"""ASN.1 helper types and length encoding/decoding utilities for pypassport."""
 
-from pypassport.hexfunctions import binToHex, binToHexRep, hexRepToBin, hexToBin
+from pypassport.hexfunctions import binToHex, binToHexRep, hexToBin, hexRepToBin
+
+from pyasn1.type.univ import (
+    Integer,
+    Sequence,
+    SequenceOf,
+    ObjectIdentifier,
+    OctetString,
+    BitString,
+    Null,
+)
+from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
+from pyasn1.type.namedval import NamedValues
+from pyasn1.type.constraint import ValueSizeConstraint
 
 ub_DataGroups = Integer(16)
 
@@ -14,32 +24,37 @@ class asn1Exception(Exception):
 
 
 class LDSSecurityObjectVersion(Integer):
-    namedValues = NamedValues(("V0", 0))
+    namedValues = NamedValues(
+        ('V0', 0)
+    )
 
 
 class DataGroupNumber(Integer):
     namedValues = NamedValues(
-        ("dataGroup1", 1),
-        ("dataGroup2", 2),
-        ("dataGroup3", 3),
-        ("dataGroup4", 4),
-        ("dataGroup5", 5),
-        ("dataGroup6", 6),
-        ("dataGroup7", 7),
-        ("dataGroup8", 8),
-        ("dataGroup9", 9),
-        ("dataGroup10", 10),
-        ("dataGroup11", 11),
-        ("dataGroup12", 12),
-        ("dataGroup13", 13),
-        ("dataGroup14", 14),
-        ("dataGroup15", 15),
-        ("dataGroup16", 16),
+        ('dataGroup1', 1),
+        ('dataGroup2', 2),
+        ('dataGroup3', 3),
+        ('dataGroup4', 4),
+        ('dataGroup5', 5),
+        ('dataGroup6', 6),
+        ('dataGroup7', 7),
+        ('dataGroup8', 8),
+        ('dataGroup9', 9),
+        ('dataGroup10', 10),
+        ('dataGroup11', 11),
+        ('dataGroup12', 12),
+        ('dataGroup13', 13),
+        ('dataGroup14', 14),
+        ('dataGroup15', 15),
+        ('dataGroup16', 16),
     )
 
 
 class DataGroupHash(Sequence):
-    componentType = NamedTypes(NamedType("dataGroupNumber", Integer()), NamedType("dataGroupHashValue", OctetString()))
+    componentType = NamedTypes(
+        NamedType('dataGroupNumber', Integer()),
+        NamedType('dataGroupHashValue', OctetString()),
+    )
 
 
 class DataGroupHashValues(SequenceOf):
@@ -48,7 +63,10 @@ class DataGroupHashValues(SequenceOf):
 
 
 class AlgorithmIdentifier(Sequence):
-    componentType = NamedTypes(NamedType("algorithm", ObjectIdentifier()), OptionalNamedType("parameters", Null()))
+    componentType = NamedTypes(
+        NamedType('algorithm', ObjectIdentifier()),
+        OptionalNamedType('parameters', Null()),
+    )
 
 
 DigestAlgorithmIdentifier = AlgorithmIdentifier()
@@ -56,15 +74,16 @@ DigestAlgorithmIdentifier = AlgorithmIdentifier()
 
 class LDSSecurityObject(Sequence):
     componentType = NamedTypes(
-        NamedType("version", LDSSecurityObjectVersion()),
-        NamedType("hashAlgorithm", DigestAlgorithmIdentifier),
-        NamedType("dataGroupHashValues", DataGroupHashValues()),
+        NamedType('version', LDSSecurityObjectVersion()),
+        NamedType('hashAlgorithm', DigestAlgorithmIdentifier),
+        NamedType('dataGroupHashValues', DataGroupHashValues()),
     )
 
 
 class SubjectPublicKeyInfo(Sequence):
     componentType = NamedTypes(
-        NamedType("algorithm", AlgorithmIdentifier()), NamedType("subjectPublicKey", BitString())
+        NamedType('algorithm', AlgorithmIdentifier()),
+        NamedType('subjectPublicKey', BitString()),
     )
 
 
@@ -74,23 +93,20 @@ id_icao_mrtdsecurity = ObjectIdentifier(id_icao_mrtd + (1,))
 id_icao_ldsSecurityObject = ObjectIdentifier(id_icao_mrtdsecurity + (1,))
 
 
-def asn1Length(data):
-    """
-    Take an asn.1 length, and return a couple with the decoded length in hexa and the total length of the encoding (1,2 or 3 bytes)
+def asn1Length(data: bytes) -> tuple:
+    """Decode an ASN.1 length field and return (length, bytes_consumed).
 
-    >>> from pyPassport.asn1.asn1 import *
-    >>> asn1Length("\x22")
+    >>> asn1Length(b"\\x22")
     (34, 1)
-    >>> asn1Length("\x81\xaa")
+    >>> asn1Length(b"\\x81\\xaa")
     (170, 2)
-    >>> asn1Length("\x82\xaa\xbb")
+    >>> asn1Length(b"\\x82\\xaa\\xbb")
     (43707, 3)
 
-    @param data: A length value encoded in the asn.1 format.
-    @type data: A binary string.
-    @return: A tuple with the decoded hexa length and the length of the asn.1 encoded value.
-    @raise asn1Exception: If the parameter does not follow the asn.1 notation.
-
+    @param data: A length value encoded in ASN.1 format.
+    @type data: bytes
+    @return: A tuple (decoded_length, encoding_size).
+    @raise asn1Exception: If the field does not follow ASN.1 notation.
     """
     if data[0] <= 0x7F:
         return (binToHex(data[0]), 1)
@@ -102,9 +118,8 @@ def asn1Length(data):
     raise asn1Exception("Cannot decode the asn1 length from this field: " + binToHexRep(data))
 
 
-def toAsn1Length(data):
-    """
-    Take an hexa value and return the value encoded in the asn.1 format.
+def toAsn1Length(data: int) -> bytes:
+    """Encode an integer as an ASN.1 length field.
 
     >>> binToHexRep(toAsn1Length(34))
     '22'
@@ -113,17 +128,17 @@ def toAsn1Length(data):
     >>> binToHexRep(toAsn1Length(43707))
     '82aabb'
 
-    @param data: The value to encode in asn.1
-    @type data: An integer (hexa)
-    @return: The asn.1 encoded value
-    @rtype: A binary string
-    @raise asn1Exception: If the parameter is too big, must be >= 0 and <= FFFF
+    @param data: The integer value to encode.
+    @type data: int
+    @return: The ASN.1 encoded length as bytes.
+    @rtype: bytes
+    @raise asn1Exception: If the value is out of range (must be 0 <= data <= 0xFFFF).
     """
     if data <= 0x7F:
         return hexToBin(data)
-    if data >= 0x80 and data <= 0xFF:
-        return "\x81" + hexRepToBin("%02x" % data)
-    if data >= 0x0100 and data <= 0xFFFF:
-        return "\x82" + hexRepToBin("%04x" % data)
+    if 0x80 <= data <= 0xFF:
+        return b"\x81" + hexRepToBin("%02x" % data)
+    if 0x0100 <= data <= 0xFFFF:
+        return b"\x82" + hexRepToBin("%04x" % data)
 
     raise asn1Exception("The value is too big, must be <= FFFF")

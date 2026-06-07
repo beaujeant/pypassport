@@ -1,25 +1,28 @@
 import os
 import time
 import logging
+import subprocess
+import tempfile
 
-from pypassport.iso7816 import Iso7816Exception
+from pypassport.iso7816 import ISO7816Exception, APDUCommand
 from pypassport.doc9303 import passiveauthentication
 from pypassport import camanager
 from pypassport import hexfunctions
 from pypassport.doc9303 import converter
 from pypassport.attacks import macTraceability
 from pypassport import derobjectidentifier
+from pypassport.utils import toHexString
 
 from smartcard.CardType import AnyCardType
 from smartcard.CardRequest import CardRequest
-from smartcard.util import toHexString
 
 
 class Fingerprint(object):
+
     def __init__(self, epassport, certdir=None, callback=None):
         self._doc = epassport
         self.curMRZ = None
-        self._pa = passiveauthentication.PassiveAuthentication(epassport)
+        self._pa = passiveauthentication.PassiveAuthentication()
         self._certInfo = None
         self.callback = callback
         self.doPA = False
@@ -69,10 +72,11 @@ class Fingerprint(object):
         res["EP"] = dict()
         res["Errors"] = dict()
 
+
         # GET UID
         if self.callback:
-            self.callback.put((None, "slfp", "Get UID"))
-            self.callback.put((None, "fp", 5))
+            self.callback.put((None, 'slfp', "Get UID"))
+            self.callback.put((None, 'fp', 5))
 
         try:
             res["UID"] = hexfunctions.binToHexRep(self._doc.iso7816.getUID())
@@ -81,8 +85,8 @@ class Fingerprint(object):
 
         # GET ATR
         if self.callback:
-            self.callback.put((None, "slfp", "Get ATR"))
-            self.callback.put((None, "fp", 10))
+            self.callback.put((None, 'slfp', "Get ATR"))
+            self.callback.put((None, 'fp', 10))
 
         try:
             res["ATR"] = self.getATR()
@@ -91,8 +95,8 @@ class Fingerprint(object):
 
         # Check if passport blocks after the BAC failed
         if self.callback:
-            self.callback.put((None, "slfp", "Check if it blocks after BAC failed"))
-            self.callback.put((None, "fp", 15))
+            self.callback.put((None, 'slfp', "Check if it blocks after BAC failed"))
+            self.callback.put((None, 'fp', 15))
 
         try:
             res["blockAfterFail"] = self.blockAfterFail()
@@ -101,8 +105,8 @@ class Fingerprint(object):
 
         # Check if AA is possible before BAC
         if self.callback:
-            self.callback.put((None, "slfp", "Check AA before BAC"))
-            self.callback.put((None, "fp", 20))
+            self.callback.put((None, 'slfp', "Check AA before BAC"))
+            self.callback.put((None, 'fp', 20))
 
         try:
             res["activeAuthWithoutBac"] = self.checkInternalAuth()
@@ -111,8 +115,8 @@ class Fingerprint(object):
 
         # Check if passport is vulnerable to MAC traceability
         if self.callback:
-            self.callback.put((None, "slfp", "Check MAC traceability"))
-            self.callback.put((None, "fp", 25))
+            self.callback.put((None, 'slfp', "Check MAC traceability"))
+            self.callback.put((None, 'fp', 25))
 
         try:
             res["macTraceability"] = self.checkMACTraceability()
@@ -121,26 +125,26 @@ class Fingerprint(object):
 
         # Send a SELECT FILE null and check the answer
         if self.callback:
-            self.callback.put((None, "slfp", "Check select application null"))
-            self.callback.put((None, "fp", 30))
+            self.callback.put((None, 'slfp', "Check select application null"))
+            self.callback.put((None, 'fp', 30))
 
         res["selectNull"] = self.selectNull()
 
         # Send a GET CHALLENGE with Le set to 00
         if self.callback:
-            self.callback.put((None, "slfp", "Check Get Challenge length 00"))
-            self.callback.put((None, "fp", 35))
+            self.callback.put((None, 'slfp', "Check Get Challenge length 00"))
+            self.callback.put((None, 'fp', 35))
 
         try:
             res["getChallengeNull"] = self.sendGetChallengeNull()
         except Exception:
             logging.error("Could not send a challenge with an expected length of 0")
 
-        # Check if the secure-messaging is set (BAC)
-        # (Get SOD)
+        #Check if the secure-messaging is set (BAC)
+        #(Get SOD)
         if self.callback:
-            self.callback.put((None, "slfp", "Check BAC"))
-            self.callback.put((None, "fp", 40))
+            self.callback.put((None, 'slfp', "Check BAC"))
+            self.callback.put((None, 'fp', 40))
 
         try:
             self._doc.iso7816.rstConnection()
@@ -152,22 +156,28 @@ class Fingerprint(object):
             self._doc.iso7816.rstConnection()
             logging.error("Could not whether secure messaging (BAC) is set")
 
-        # Read SOD body
+        #Read SOD body
         if self.callback:
-            self.callback.put((None, "slfp", "Read SOD"))
-            self.callback.put((None, "fp", 45))
+            self.callback.put((None, 'slfp', "Read SOD"))
+            self.callback.put((None, 'fp', 45))
 
-        if sod is not None:
-            with open("sod", "wb") as fd:
+        if sod != None:
+            with tempfile.NamedTemporaryFile(suffix='.der', delete=False) as fd:
+                sod_path = fd.name
                 fd.write(sod.body)
-            f = os.popen("openssl asn1parse -in sod -inform DER -i")
-            res["SOD"] = f.read().strip()
-            os.remove("sod")
+            try:
+                result = subprocess.run(
+                    ["openssl", "asn1parse", "-in", sod_path, "-inform", "DER", "-i"],
+                    capture_output=True, text=True
+                )
+                res["SOD"] = result.stdout.strip()
+            finally:
+                os.remove(sod_path)
 
-            # Verify SOD body
+            #Verify SOD body
             if self.callback:
-                self.callback.put((None, "slfp", "Verify SOD with CSCA"))
-                self.callback.put((None, "fp", 50))
+                self.callback.put((None, 'slfp', "Verify SOD with CSCA"))
+                self.callback.put((None, 'fp', 50))
 
             if self.doPA:
                 try:
@@ -177,10 +187,10 @@ class Fingerprint(object):
                     logging.error("Could not execute passive authentication and verify SOD and CDS")
                     res["verifySOD"] = "No certificate imported verify the SOD"
 
-        # Read DGs and get the file content
+        #Read DGs and get the file content
         if self.callback:
-            self.callback.put((None, "slfp", "Read DGs"))
-            self.callback.put((None, "fp", 55))
+            self.callback.put((None, 'slfp', "Read DGs"))
+            self.callback.put((None, 'fp', 55))
 
         self._doc.iso7816.rstConnection()
         data = {}
@@ -199,8 +209,8 @@ class Fingerprint(object):
 
         # Get hashes
         if self.callback:
-            self.callback.put((None, "slfp", "Get hashes of DG files"))
-            self.callback.put((None, "fp", 65))
+            self.callback.put((None, 'slfp', "Get hashes of DG files"))
+            self.callback.put((None, 'fp', 65))
 
         dgs = list()
         for dg in res["EP"]:
@@ -210,42 +220,48 @@ class Fingerprint(object):
         res["Hashes"] = self._pa._calculateHashes(dgs)
 
         try:
-            res["Algo"] = derobjectidentifier.OID[self._pa._content["hashAlgorithm"]]
+            res["Algo"] = derobjectidentifier.OID[self._pa._content['hashAlgorithm']]
         except KeyError:
             logging.error("Hash algorythm not listed")
             res[converter.toDG(dg)] = "Not defined in hash algorithm list"
 
-        # Check if there is a certificate
+        #Check if there is a certificate
         if self.callback:
-            self.callback.put((None, "slfp", "Proceed to AA"))
-            self.callback.put((None, "fp", 70))
+            self.callback.put((None, 'slfp', "Proceed to AA"))
+            self.callback.put((None, 'fp', 70))
 
         try:
             certif = self._doc.getCertificate()
             if certif:
                 res["DSCertificate"] = self._doc.getCertificate()
 
-                f = open("tmp.cer", "w")
-                f.write(certif.decode())
-                f.close()
+                with tempfile.NamedTemporaryFile(suffix='.cer', delete=False, mode='w') as f:
+                    cer_path = f.name
+                    f.write(certif.decode())
 
-                f = os.popen("openssl x509 -in tmp.cer -noout -serial")
-                res["certSerialNumber"] = f.read().strip()
-                f.close()
+                try:
+                    result = subprocess.run(
+                        ["openssl", "x509", "-in", cer_path, "-noout", "-serial"],
+                        capture_output=True, text=True
+                    )
+                    res["certSerialNumber"] = result.stdout.strip()
 
-                f = os.popen("openssl x509 -in tmp.cer -noout -fingerprint")
-                res["certFingerprint"] = f.read().strip()
-                f.close()
-
-                os.remove("tmp.cer")
+                    result = subprocess.run(
+                        ["openssl", "x509", "-in", cer_path, "-noout", "-fingerprint"],
+                        capture_output=True, text=True
+                    )
+                    res["certFingerprint"] = result.stdout.strip()
+                finally:
+                    os.remove(cer_path)
         except Exception:
             logging.error("Could not get certificate")
             self._doc.iso7816.rstConnection()
 
-        # Check if there is a pubKey and the AA
+
+        #Check if there is a pubKey and the AA
         if self.callback:
-            self.callback.put((None, "slfp", "Get public key"))
-            self.callback.put((None, "fp", 80))
+            self.callback.put((None, 'slfp', "Get public key"))
+            self.callback.put((None, 'fp', 80))
         try:
             self._doc.iso7816.rstConnection()
             self._doc.doBasicAccessControl()
@@ -259,8 +275,8 @@ class Fingerprint(object):
 
         # Define generation
         if self.callback:
-            self.callback.put((None, "slfp", "Define the generation"))
-            self.callback.put((None, "fp", 85))
+            self.callback.put((None, 'slfp', "Define the generation"))
+            self.callback.put((None, 'fp', 85))
 
         if not res["bac"]:
             res["generation"] = 1
@@ -276,17 +292,18 @@ class Fingerprint(object):
             except Exception:
                 res["generation"] = 4
 
+
         # Check if passport implements delay security
         if self.callback:
-            self.callback.put((None, "slfp", "Check delay security is implemented"))
-            self.callback.put((None, "fp", 90))
+            self.callback.put((None, 'slfp', "Check delay security is implemented"))
+            self.callback.put((None, 'fp', 90))
 
         res["delaySecurity"] = self.checkDelaySecurity()
 
         # Get error message from different wrong APDU
         if self.callback:
-            self.callback.put((None, "slfp", "Get a sample of error message"))
-            self.callback.put((None, "fp", 95))
+            self.callback.put((None, 'slfp', "Get a sample of error message"))
+            self.callback.put((None, 'fp', 95))
 
         res["Errors"] = self.getErrorsMessage()
 
@@ -306,7 +323,7 @@ class Fingerprint(object):
         try:
             self._doc.iso7816.internalAuthentication(rnd_ifd)
             return True
-        except Iso7816Exception:
+        except ISO7816Exception:
             return False
 
     def checkMACTraceability(self):
@@ -364,17 +381,17 @@ class Fingerprint(object):
     def selectNull(self):
         self._doc.iso7816.rstConnectionRaw()
         try:
-            toSend = self._iso7816.APDUCommand("00", "A4", "00", "00", "", "", "FF")
+            toSend = APDUCommand("00", "A4", "00", "00", "", "", "FF")
             return hexfunctions.binToHexRep(self._doc.iso7816.transmit(toSend, "Select File"))
-        except Iso7816Exception as msg:
+        except ISO7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 
     def sendGetChallengeNull(self):
         self._doc.iso7816.rstConnection()
         try:
-            toSend = self._iso7816.APDUCommand("00", "84", "00", "00", "", "", "01")
+            toSend = APDUCommand("00", "84", "00", "00", "", "", "01")
             return (True, hexfunctions.binToHexRep(self._doc.iso7816.transmit(toSend, "Get Challenge")))
-        except Iso7816Exception as msg:
+        except ISO7816Exception as msg:
             return (False, f"SW1:{msg.sw1} SW2:{msg.sw2}")
 
     def getErrorsMessage(self):
@@ -383,9 +400,9 @@ class Fingerprint(object):
         for ins in test:
             self._doc.iso7816.rstConnection()
             try:
-                toSend = self._iso7816.APDUCommand("00", ins, "00", "00", "", "", "00")
+                toSend = APDUCommand("00", ins, "00", "00", "", "", "00")
                 self._doc.iso7816.transmit(toSend, "Select File")
                 errors[ins] = f"SW1:{114} SW2:{0}"
-            except Iso7816Exception as e:
-                errors[ins] = f"SW1:{e.sw1} SW2:{e.sw2}".format(e.sw1, e.sw2)
+            except ISO7816Exception as e:
+                errors[ins] = f"SW1:{e.sw1} SW2:{e.sw2}"
         return errors

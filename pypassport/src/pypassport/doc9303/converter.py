@@ -1,3 +1,6 @@
+# Conversion table for ICAO Doc 9303 eMRTD file identifiers.
+# Each row represents one logical file/data group, addressed by its column (key).
+# All lists share the same positional index: index 0 = EF.COM, index 1 = EF.DG1, etc.
 _Table = {
     "DISP": [
         "Common",
@@ -345,7 +348,13 @@ def toINT(data):
 
 def to(table, data):
     """
-    Return the element value from the specified list at the found possition
+    Return the value from the specified column of _Table that corresponds to
+    the same row (position) as *data* in any other column.
+
+    :param table: Key of the target column in _Table (e.g. "EF", "FID", "TAG").
+    :param data:  A value present in any column of _Table.
+    :raises KeyError: If *data* is not found in _Table, or *table* is not a
+                      valid column name.
     """
     index = _getIndex(data)
     return _Table[table][index]
@@ -353,8 +362,10 @@ def to(table, data):
 
 def _getIndex(data):
     """
-    Look for the corresponding data value in every list of the _Table dictionary.
-    If the data value is found, its position is returned.
+    Search every column of _Table for *data* (case-insensitive string match).
+    Returns the column-position (row index) of the first match found.
+
+    :raises KeyError: If *data* is not found in any column.
     """
     for line in _Table.values():
         for index, value in enumerate(line):

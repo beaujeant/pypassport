@@ -18,32 +18,31 @@
 
 from hashlib import sha1
 
-from smartcard.util import PACK, toHexString
-
-from pypassport.doc9303 import bac, converter, datagroup, mrz
-from pypassport.doc9303.securemessaging import SecureMessaging
-from pypassport.hexfunctions import binToHexRep, hexRepToBin
-from pypassport.iso7816 import Iso7816
 from pypassport.logger import Logger
-from pypassport.openssl import OpenSSL
-
+from pypassport.iso9797 import mac, pad, unpad
+from pypassport.iso7816 import ISO7816, ISO7816Exception
+from pypassport.reader import ReaderException
+from pypassport.doc9303 import mrz, bac, datagroup
+from pypassport.doc9303.datagroup import readElementaryFile
+from pypassport.doc9303.securemessaging import SecureMessaging
+from pypassport.hexfunctions import hexToHexRep, binToHexRep, hexRepToBin
+from pypassport.openssl import OpenSSL, OpenSSLException
+from pypassport.utils import toHexString
+from smartcard.util import toBytes, toASCIIBytes, PACK
 
 class SignEverythingException(Exception):
-    def __init__(self, *params):
-        Exception.__init__(self, *params)
-
+    pass
 
 class SignEverything(Logger):
     """
     This class allows a user to sign any 64bits message.
     The main method is I{sign}
     """
-
     def __init__(self, iso7816):
         Logger.__init__(self, "SIGN EVERYTHING ATTACK")
         self._iso7816 = iso7816
 
-        if not isinstance(self._iso7816, Iso7816):
+        if not isinstance(self._iso7816, ISO7816):
             raise SignEverythingException("The sublayer iso7816 is not available")
 
         self._iso7816.rstConnection()
@@ -89,11 +88,11 @@ class SignEverything(Logger):
             self.log("\tTrailer: {0}".format(trailer))
 
             # If using SHA-1
-            if header == "6A" and trailer == "BC":
+            if header=='6A' and trailer=='BC':
                 M = hexRepToBin(M1 + message)
                 new_hash = sha1(M).digest()
                 hash_M_bin = hexRepToBin(hash_M)
-                if new_hash == hash_M_bin:
+                if new_hash==hash_M_bin:
                     self.log("hash(M|message to sign) == Hash")
                     validated = True
 
@@ -126,11 +125,9 @@ class SignEverything(Logger):
         sm = SecureMessaging(KSenc, KSmac, ssc)
         self._iso7816.ciphering = sm
 
-        dgReader = datagroup.DataGroupReaderFactory().create(self._iso7816)
-
-        tag = converter.toTAG("DG15")
-        dgFile = dgReader.readDG(tag)
         self.log("Get public key")
-        dg15 = datagroup.DataGroupFactory().create(dgFile)
+        dg15 = readElementaryFile("DG15", self._iso7816)
         self.log("Public key: {0}".format(binToHexRep(dg15.body)))
         return dg15.body
+
+

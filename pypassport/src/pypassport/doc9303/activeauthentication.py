@@ -1,28 +1,23 @@
-import logging
 from hashlib import sha1
-
 from Crypto import Random
 from pyasn1.codec.der import decoder
-from smartcard.util import PACK, toHexString
+import logging
 
-from pypassport import hexfunctions
 from pypassport.asn1 import SubjectPublicKeyInfo
-from pypassport.derobjectidentifier import OID
+from pypassport import hexfunctions
+from pypassport.derobjectidentifier import OID, OIDException
+from pypassport.openssl import OpenSSL, OpenSSLException
 from pypassport.doc9303 import datagroup
-from pypassport.openssl import OpenSSL
-
+from pypassport.utils import toHexString
 
 class ActiveAuthenticationException(Exception):
-    def __init__(self, *params):
-        Exception.__init__(self, *params)
+    pass
 
-
-class ActiveAuthentication:
+class ActiveAuthentication():
     """
     This class implements the Active Authentication protocol.
     The main method is I{executeAA} that returns True if the verification is ok or False.
     """
-
     def __init__(self, iso7816, openssl=None):
         """
         @param iso7816: a valid iso7816 object
@@ -62,11 +57,11 @@ class ActiveAuthentication:
         """
         self._dg15 = dg15
         self.RND_IFD = self._genRandom(8)
-        hex_rnd_ifd = toHexString(list(self.RND_IFD), PACK)
+        hex_rnd_ifd = toHexString(self.RND_IFD)
         self.signature = self._iso7816.internalAuthentication(hex_rnd_ifd)
         self.F = self._decryptSignature(dg15.body, self.signature)
 
-        (hash, hashSize, offset) = self._getHashAlgo(self.F)
+        (hash_fn, hashSize, offset) = self._getHashAlgo(self.F)
         self.D = self._extractDigest(self.F, hashSize, offset)
         self.M1 = self._extractM1(self.F, hashSize, offset)
 
@@ -75,7 +70,7 @@ class ActiveAuthentication:
         logging.debug("Concatenate M1 with known M2")
         logging.debug("\tM*: " + hexfunctions.binToHexRep(self.M_))
 
-        self.D_ = self._hash(hash, self.M_)
+        self.D_ = self._hash(hash_fn, self.M_)
 
         logging.debug("Compare D and D*")
         logging.debug("\t" + str(self.D == self.D_))
@@ -110,8 +105,8 @@ class ActiveAuthentication:
 
         return data
 
-    def _hash(self, hash, data):
-        digest = hash(data).digest()
+    def _hash(self, hash_fn, data):
+        digest = hash_fn(data).digest()
 
         logging.debug("Calculate digest of M*")
         logging.debug("\tD*: " + hexfunctions.binToHexRep(digest))
@@ -119,17 +114,17 @@ class ActiveAuthentication:
         return digest
 
     def _getHashAlgo(self, sig):
-        hash = None
+        hash_fn = None
         offset = None
         hashSize = None
 
         if sig[-1] == hexfunctions.hexRepToBin("BC"):
             self.T = sig[-1]
-            hash = sha1
+            hash_fn = sha1
             offset = -1
         elif sig[-1] == hexfunctions.hexRepToBin("CC"):
             self.T = sig[-2]
-            # hash = The algorithm corresponding to the algo designed by T
+            #hash_fn = The algorithm corresponding to the algo designed by T
             offset = -2
         else:
             raise ActiveAuthenticationException("Unknow hash algorithm")
@@ -137,13 +132,13 @@ class ActiveAuthentication:
         logging.debug("Determine hash algorithm by trailer T*")
         logging.debug("\tT: " + hexfunctions.binToHexRep(self.T))
 
-        # Find out the hash size
-        hashSize = len(hash("test").digest())
+        #Find out the hash size
+        hashSize = len(hash_fn(b"test").digest())
 
-        return (hash, hashSize, offset)
+        return (hash_fn, hashSize, offset)
 
     def _extractDigest(self, sig, hashSize, offset):
-        digest = sig[offset - hashSize : offset]
+        digest = sig[offset - hashSize:offset]
 
         logging.debug("Extract digest:")
         logging.debug("\tD: " + hexfunctions.binToHexRep(digest))
@@ -151,7 +146,7 @@ class ActiveAuthentication:
         return digest
 
     def _extractM1(self, sig, hashSize, offset):
-        M1 = sig[1 : offset - hashSize]
+        M1 = sig[1:offset - hashSize]
 
         logging.debug("Extract M1:")
         logging.debug("\tM1: " + hexfunctions.binToHexRep(M1))
@@ -174,7 +169,7 @@ class ActiveAuthentication:
         algo = ""
         try:
             spec = self._asn1Parse()
-            algo = spec.getComponentByName("algorithm").getComponentByName("algorithm").prettyPrint()
+            algo = spec.getComponentByName('algorithm').getComponentByName('algorithm').prettyPrint()
             return OID[algo]
         except KeyError:
             raise ActiveAuthenticationException("Unsupported algorithm: " + algo)
@@ -184,5 +179,5 @@ class ActiveAuthentication:
     def _asn1Parse(self):
         if self._dg15 is not None:
             certType = SubjectPublicKeyInfo()
-            return decoder.decode(self._dg15.body, asn1Spec=certType)[0]
+            return decoder.decode( self._dg15.body, asn1Spec = certType)[0]
         return ""

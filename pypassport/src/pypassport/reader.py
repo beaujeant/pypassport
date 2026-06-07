@@ -4,8 +4,7 @@ from smartcard.pcsc import PCSCExceptions
 
 
 class ReaderException(Exception):
-    def __init__(self, *params):
-        Exception.__init__(self, *params)
+    pass
 
 
 def listReaders():
@@ -26,15 +25,13 @@ def getReader(index=None):
                 logging.info(f"Reader {str(list_readers[index])} selected")
                 return list_readers[index].createConnection()
             except IndexError:
-                pass
+                logging.error(f"No reader at index {index}")
         elif isinstance(index, str):
             for i in range(len(list_readers)):
                 if str(list_readers[i]) == index:
                     logging.info(f"Reader {str(list_readers[i])} selected")
                     return list_readers[i].createConnection()
-            logging.error("Can't find the initial reader")
-        else:
-            pass
+            logging.error(f"Reader '{index}' not found")
         logging.info(f"Default (first) reader selected: {str(list_readers[0])}")
         return list_readers[0].createConnection()
     logging.error("No reader identified")

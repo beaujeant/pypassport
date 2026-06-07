@@ -1,20 +1,31 @@
-class Logger:
-    def __init__(self, name):
-        self._listeners = []
-        self._name = name
+"""Callback-based logger that dispatches log messages to registered listeners."""
 
-    def register(self, fct):
-        """the listener gives the method it wants as callback"""
+from typing import Callable, Optional
+
+
+class Logger:
+    """Lightweight logger that notifies registered listener callbacks.
+
+    Listeners are callables with the signature ``(name: str, msg: str) -> None``.
+    """
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._listeners: list[Callable[[str, str], None]] = []
+
+    def register(self, fct: Callable[[str, str], None]) -> None:
+        """Register a callback to receive log messages."""
         self._listeners.append(fct)
 
-    def unregister(self, listener):
-        self._listeners.remove(listener)
+    def unregister(self, fct: Callable[[str, str], None]) -> None:
+        """Remove a previously registered callback."""
+        self._listeners.remove(fct)
 
-    def log(self, msg, name=None):
-        if name is not None:
-            n = name
-        else:
-            n = self._name
+    def log(self, msg: str, name: Optional[str] = None) -> None:
+        """Dispatch *msg* to all registered listeners.
 
-        for listenerFct in self._listeners:
-            listenerFct(n, msg)
+        If *name* is given it overrides the instance name for this call.
+        """
+        effective_name = name if name is not None else self._name
+        for listener in self._listeners:
+            listener(effective_name, msg)

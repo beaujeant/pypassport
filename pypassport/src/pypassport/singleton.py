@@ -1,5 +1,12 @@
-class Singleton(object):
-    def __new__(cls):
-        if not hasattr(cls, "instance"):
-            cls.instance = super(Singleton, cls).__new__(cls)
+"""Generic Singleton base class."""
+
+from typing import Any
+
+
+class Singleton:
+    """Base class that ensures only one instance is ever created per subclass."""
+
+    def __new__(cls) -> Any:
+        if not hasattr(cls, 'instance'):
+            cls.instance = super().__new__(cls)
         return cls.instance

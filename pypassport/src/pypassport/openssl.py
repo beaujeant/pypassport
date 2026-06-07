@@ -1,6 +1,8 @@
 import os
+import shutil
+import tempfile
 import subprocess
-from pypassport.logger import Logger
+import logging
 
 
 class OpenSSLException(Exception):
@@ -8,16 +10,18 @@ class OpenSSLException(Exception):
         Exception.__init__(self, *params)
 
 
-class OpenSSL(Logger):
+class OpenSSL:
+
     def __init__(self, config="", opensslLocation="openssl"):
-        Logger.__init__(self, "OPENSSL")
         self._opensslLocation = opensslLocation
         self._config = config
 
-    def _getOpensslLocation(self):
+    @property
+    def location(self):
         return self._opensslLocation
 
-    def _setOpensslLocation(self, value):
+    @location.setter
+    def location(self, value):
         self._opensslLocation = value
 
     def getPkcs7SignatureContent(self, p7b):
@@ -26,11 +30,13 @@ class OpenSSL(Logger):
         @param p7b: A pkcs#7 signature in der format
         @return: The data contained in the signature
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("p7b", p7b)
-            return self._execute("smime -verify -in p7b -inform DER -noverify")
+            p7b_path = os.path.join(tmpdir, "p7b")
+            self._toDisk(p7b_path, p7b)
+            return self._execute("smime -verify -in " + p7b_path + " -inform DER -noverify")
         finally:
-            self._remFromDisk("p7b")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def verifyX509Certificate(self, certif, trustedCertif):
         """
@@ -39,12 +45,17 @@ class OpenSSL(Logger):
         @param trustedCertif: The directory containing the root certificates
         @return: True if correct
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("certif.cer", certif)
-            data = self._execute("verify -CApath " + trustedCertif + " certif.cer")
-            data = data.replace("certif.cer: ", "")
+            certif_path = os.path.join(tmpdir, "certif.cer")
+            self._toDisk(certif_path, certif)
+            # NOTE: shell=True is used in _execute; trustedCertif comes from user config
+            data = self._execute("verify -CApath " + trustedCertif + " " + certif_path)
+            if isinstance(data, bytes):
+                data = data.decode("utf-8", errors="replace")
+            data = data.replace(certif_path + ": ", "").replace("certif.cer: ", "")
         finally:
-            self._remFromDisk("certif.cer")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
         if data[:2] == "OK":
             return True
@@ -57,24 +68,27 @@ class OpenSSL(Logger):
         @param derFile: The certificate in der format
         @return: The certificate in a human readable format
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("data.der", derFile)
-            return self._execute("pkcs7 -in data.der -inform DER -print_certs -text")
+            der_path = os.path.join(tmpdir, "data.der")
+            self._toDisk(der_path, derFile)
+            return self._execute("pkcs7 -in " + der_path + " -inform DER -print_certs -text")
         finally:
-            self._remFromDisk("data.der")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def retrieveRsaPubKey(self, derFile):
         """
         Transform the rsa public key in der format to pem format"
         @param derFile: A rsa public key in der format
-        @return: The rsa public key in pem formar
+        @return: The rsa public key in pem format
         """
-
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("pubK", derFile)
-            return self._execute("rsa -in pubK -inform DER -pubin -text")
+            pubk_path = os.path.join(tmpdir, "pubK")
+            self._toDisk(pubk_path, derFile)
+            return self._execute("rsa -in " + pubk_path + " -inform DER -pubin -text")
         finally:
-            self._remFromDisk("pubK")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def retrieveSignedData(self, pubK, signature):
         """
@@ -83,52 +97,58 @@ class OpenSSL(Logger):
         @param signature: The signature to verify with the pubKey
         @return: The data contained in the signature
         """
-
         # Verify if openSSL is installed
         self._execute("version")
 
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("pubK", pubK)
-            self._toDisk("signature", signature)
-            self._execute("rsautl -inkey pubK -in signature -verify -pubin -raw -out res -keyform DER", True)
-            sig = open("res", "rb")
-            data = sig.read()
-            sig.close()
+            pubk_path = os.path.join(tmpdir, "pubK")
+            sig_path = os.path.join(tmpdir, "signature")
+            res_path = os.path.join(tmpdir, "res")
+            self._toDisk(pubk_path, pubK)
+            self._toDisk(sig_path, signature)
+            self._execute(
+                "rsautl -inkey " + pubk_path + " -in " + sig_path +
+                " -verify -pubin -raw -out " + res_path + " -keyform DER",
+                True
+            )
+            with open(res_path, "rb") as f:
+                data = f.read()
         finally:
-            self._remFromDisk("pubK")
-            self._remFromDisk("challenge")
-            self._remFromDisk("res")
-            self._remFromDisk("signature")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
         return data
 
     def signData(self, sodContent, ds, dsKey):
-        bkup = self._opensslLocation
-
+        tmpdir = tempfile.mkdtemp()
         try:
             p12 = self.toPKCS12(ds, dsKey, "titus")
             dsDer = self.x509ToDER(ds)
 
-            self._toDisk("sodContent", sodContent)
-            self._toDisk("p12", p12)
-            self._toDisk("ds.cer", dsDer)
+            sodcontent_path = os.path.join(tmpdir, "sodContent")
+            p12_path = os.path.join(tmpdir, "p12")
+            dscer_path = os.path.join(tmpdir, "ds.cer")
+            signed_path = os.path.join(tmpdir, "signed")
 
-            self._opensslLocation = "java -jar "
+            self._toDisk(sodcontent_path, sodContent)
+            self._toDisk(p12_path, p12)
+            self._toDisk(dscer_path, dsDer)
+
+            jar_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "createSod.jar")
             cmd = (
-                os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "createSod.jar")
-                + " --certificate ds.cer --content sodContent --keypass titus --privatekey p12 --out signed"
+                "java -jar " + jar_path +
+                " --certificate " + dscer_path +
+                " --content " + sodcontent_path +
+                " --keypass titus --privatekey " + p12_path +
+                " --out " + signed_path
             )
-            res = self._execute(cmd, True)
-            f = open("signed", "rb")
-            res = f.read()
-            f.close()
+            # NOTE: shell=True is used; paths come from caller-controlled data
+            self._execute_raw(cmd, True)
+            with open(signed_path, "rb") as f:
+                res = f.read()
             return res
         finally:
-            self._opensslLocation = bkup
-            self._remFromDisk("sodContent")
-            self._remFromDisk("p12")
-            self._remFromDisk("ds.cer")
-            self._remFromDisk("signed")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def genRSAprKey(self, size):
         """
@@ -140,16 +160,17 @@ class OpenSSL(Logger):
         """
         Generate a x509 self-signed certificate in PEM format
         """
+        tmpdir = tempfile.mkdtemp()
         try:
             if distinguishedName:
                 subj = distinguishedName.getSubject()
             else:
                 from pypassport.pki import DistinguishedName
-
                 subj = DistinguishedName(C="BE", O="Gouv", CN="CSCA-BELGIUM").getSubject()
 
-            self._toDisk("csca.key", cscaKey)
-            cmd = "req -new -x509 -key csca.key -batch -text"
+            csca_key_path = os.path.join(tmpdir, "csca.key")
+            self._toDisk(csca_key_path, cscaKey)
+            cmd = "req -new -x509 -key " + csca_key_path + " -batch -text"
             if self._config:
                 cmd += " -config " + self._config
             if subj:
@@ -158,29 +179,30 @@ class OpenSSL(Logger):
                 cmd += " -days " + str(validity)
             return self._execute(cmd)
         finally:
-            self._remFromDisk("csca.key")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def genX509Req(self, dsKey, distinguishedName=None):
         """
         Generate a x509 request in PEM format
         """
+        tmpdir = tempfile.mkdtemp()
         try:
             if distinguishedName:
                 subj = distinguishedName.getSubject()
             else:
                 from pypassport.pki import DistinguishedName
-
                 subj = DistinguishedName(C="BE", O="Gouv", CN="Document Signer BELGIUM").getSubject()
 
-            self._toDisk("ds.key", dsKey)
-            cmd = "req -new -key ds.key -batch"
+            ds_key_path = os.path.join(tmpdir, "ds.key")
+            self._toDisk(ds_key_path, dsKey)
+            cmd = "req -new -key " + ds_key_path + " -batch"
             if self._config:
                 cmd += " -config " + self._config
             if subj:
                 cmd += " -subj " + str(subj)
             return self._execute(cmd)
         finally:
-            self._remFromDisk("ds.key")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def signX509Req(self, csr, csca, cscaKey, validity=""):
         """
@@ -191,126 +213,138 @@ class OpenSSL(Logger):
         @param cscaKey: The CA private key
         @param validity: The validity of the signed certificate
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("ds.csr", csr)
-            self._toDisk("csca.pem", csca)
-            self._toDisk("csca.key", cscaKey)
-            cmd = "ca -in ds.csr -keyfile csca.key -cert csca.pem  -batch"
+            ds_csr_path = os.path.join(tmpdir, "ds.csr")
+            csca_pem_path = os.path.join(tmpdir, "csca.pem")
+            csca_key_path = os.path.join(tmpdir, "csca.key")
+            self._toDisk(ds_csr_path, csr)
+            self._toDisk(csca_pem_path, csca)
+            self._toDisk(csca_key_path, cscaKey)
+            cmd = "ca -in " + ds_csr_path + " -keyfile " + csca_key_path + " -cert " + csca_pem_path + "  -batch"
             if self._config:
                 cmd += " -config " + self._config
             if validity:
                 cmd += " -days " + str(validity)
             return self._execute(cmd)
-
         finally:
-            self._remFromDisk("ds.csr")
-            self._remFromDisk("csca.pem")
-            self._remFromDisk("csca.key")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def genCRL(self, csca, cscaKey):
         """
         @param csca: The root certificate
         @param cscaKey: The CA private key
         """
-
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("csca.pem", csca)
-            self._toDisk("csca.key", cscaKey)
-            cmd = "ca -gencrl -cert csca.pem -keyfile csca.key"
+            csca_pem_path = os.path.join(tmpdir, "csca.pem")
+            csca_key_path = os.path.join(tmpdir, "csca.key")
+            self._toDisk(csca_pem_path, csca)
+            self._toDisk(csca_key_path, cscaKey)
+            cmd = "ca -gencrl -cert " + csca_pem_path + " -keyfile " + csca_key_path
             if self._config:
                 cmd += " -config " + self._config
             return self._execute(cmd)
         finally:
-            self._remFromDisk("csca.pem")
-            self._remFromDisk("csca.key")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def revokeX509(self, cert, csca, cscaKey):
         """
         @param csca: The root certificate
         @param cscaKey: The CA private key
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("toRevoke", cert)
-            self._toDisk("csca.pem", csca)
-            self._toDisk("csca.key", cscaKey)
-            cmd = "ca -revoke toRevoke -cert csca.pem -keyfile csca.key"
+            torevoke_path = os.path.join(tmpdir, "toRevoke")
+            csca_pem_path = os.path.join(tmpdir, "csca.pem")
+            csca_key_path = os.path.join(tmpdir, "csca.key")
+            self._toDisk(torevoke_path, cert)
+            self._toDisk(csca_pem_path, csca)
+            self._toDisk(csca_key_path, cscaKey)
+            cmd = "ca -revoke " + torevoke_path + " -cert " + csca_pem_path + " -keyfile " + csca_key_path
             if self._config:
                 cmd += " -config " + self._config
             return self._execute(cmd, True)
         finally:
-            self._remFromDisk("toRevoke")
-            self._remFromDisk("csca.pem")
-            self._remFromDisk("csca.key")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def toPKCS12(self, certif, prK, pwd):
         """
         Return a RSA key pair under the PKCS#12 format.
         PKCS#12: used to store private keys with accompanying public key certificates, protected with a password-based symmetric key
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("certif", certif)
-            self._toDisk("prK", prK)
-            return self._execute("pkcs12 -export -in certif -inkey prK -passout pass:" + pwd)
+            certif_path = os.path.join(tmpdir, "certif")
+            prk_path = os.path.join(tmpdir, "prK")
+            self._toDisk(certif_path, certif)
+            self._toDisk(prk_path, prK)
+            return self._execute("pkcs12 -export -in " + certif_path + " -inkey " + prk_path + " -passout pass:" + pwd)
         finally:
-            self._remFromDisk("certif")
-            self._remFromDisk("prK")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def x509ToDER(self, certif):
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("pem", certif)
-            return self._execute("x509 -in pem -outform DER")
+            pem_path = os.path.join(tmpdir, "pem")
+            self._toDisk(pem_path, certif)
+            return self._execute("x509 -in " + pem_path + " -outform DER")
         finally:
-            self._remFromDisk("pem")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def prRSAToDERPb(self, prKey):
         """
-        Retrieve the corresponding DER encoded public key fron the given a RSA private key
+        Retrieve the corresponding DER encoded public key from the given RSA private key
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("dg15", prKey)
-            return self._execute("rsa -pubout -in dg15 -outform der")
+            dg15_path = os.path.join(tmpdir, "dg15")
+            self._toDisk(dg15_path, prKey)
+            return self._execute("rsa -pubout -in " + dg15_path + " -outform der")
         finally:
-            self._remFromDisk("dg15")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def RSAKeyToText(self, key):
         """
-        COnvert a key to its text format
+        Convert a key to its text format
         """
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("key", key)
-            return self._execute("rsa -text -in key")
+            key_path = os.path.join(tmpdir, "key")
+            self._toDisk(key_path, key)
+            return self._execute("rsa -text -in " + key_path)
         finally:
-            self._remFromDisk("key")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def crlToDER(self, crl):
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("crl", crl)
-            return self._execute("crl -inform PEM -in crl -outform DER")
+            crl_path = os.path.join(tmpdir, "crl")
+            self._toDisk(crl_path, crl)
+            return self._execute("crl -inform PEM -in " + crl_path + " -outform DER")
         finally:
-            self._remFromDisk("crl")
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
-    def _toDisk(self, name, data=None):
-        f = open(name, "wb")
-        if data:
-            f.write(data)
-        f.close()
-
-    def _remFromDisk(self, name):
-        try:
-            os.remove(name)
-        except Exception:
-            pass
+    def _toDisk(self, path, data=None):
+        with open(path, "wb") as f:
+            if data is not None:
+                f.write(data)
 
     def _execute(self, toExecute, empty=False):
-
+        # NOTE: shell=True is intentional for compatibility; paths originate from
+        # caller-controlled configuration and are not sanitised against shell injection.
         cmd = self._opensslLocation + " " + toExecute
-        self.log(cmd)
+        logging.debug(cmd)
+        return self._execute_raw(cmd, empty)
 
+    def _execute_raw(self, cmd, empty=False):
+        # NOTE: shell=True is intentional; see _execute comment.
+        logging.debug(cmd)
         res = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out = res.stdout.read()
         err = res.stderr.read()
 
-        if (not out) and err and not empty:
+        if ((not out) and err and not empty):
             raise OpenSSLException(err)
 
         return out
@@ -323,11 +357,11 @@ class OpenSSL(Logger):
             return False
 
     def printCrl(self, crl):
+        tmpdir = tempfile.mkdtemp()
         try:
-            self._toDisk("crl", crl)
-            cmd = "crl -in crl -text -noout -inform DER"
+            crl_path = os.path.join(tmpdir, "crl")
+            self._toDisk(crl_path, crl)
+            cmd = "crl -in " + crl_path + " -text -noout -inform DER"
             return self._execute(cmd)
         finally:
-            self._remFromDisk("crl")
-
-    location = property(_getOpensslLocation, _setOpensslLocation, None, None)
+            shutil.rmtree(tmpdir, ignore_errors=True)
