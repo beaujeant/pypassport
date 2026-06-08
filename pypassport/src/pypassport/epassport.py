@@ -88,7 +88,7 @@ class EPassport(dict):
         :meth:`doBasicAccessControl` path."""
         return self._access_control
 
-    def open(self, mrz=None, access_control=MODE_AUTO):
+    def open(self, mrz=None, access_control=MODE_AUTO, can=None):
         """
         Set up secure messaging via PACE or BAC, then select the eMRTD AID.
 
@@ -101,19 +101,28 @@ class EPassport(dict):
             supplied to ``__init__`` is used.
         @param access_control: One of ``"auto"``, ``"pace"``, ``"bac"``,
             ``"none"``. See :class:`AccessControlNegotiator` for semantics.
+        @param can: Optional Card Access Number printed on the document.
+            When supplied, PACE is attempted with the CAN (password
+            reference 0x02) instead of (or in addition to) the MRZ.
         @return: The :class:`NegotiationResult` describing what ran.
-        @raise EPassportException: If access control fails or no MRZ is
-            available when one is required.
+        @raise EPassportException: If access control fails or required
+            credentials are missing.
         """
         if mrz is not None:
             new_mrz = MRZ(mrz) if not isinstance(mrz, MRZ) else mrz
             if not new_mrz.checkMRZ():
                 raise EPassportException("Invalid MRZ")
             self._mrz = new_mrz
-            self._pace = PACE(self.iso7816, self._mrz)
+
+        if can is not None and isinstance(can, str):
+            can = can.strip() or None
+
+        self._pace = PACE(self.iso7816, mrz=self._mrz, can=can)
 
         try:
-            result = AccessControlNegotiator(self.iso7816).open(self._mrz, mode=access_control)
+            result = AccessControlNegotiator(self.iso7816).open(
+                self._mrz, mode=access_control, can=can,
+            )
         except AccessControlNegotiationError as exc:
             raise EPassportException(str(exc)) from exc
 

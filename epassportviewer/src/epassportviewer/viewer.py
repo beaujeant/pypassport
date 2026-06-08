@@ -5,22 +5,37 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
+from pypassport.iso7816 import APDUCommand
+
+
+# Row 1: file-system / meta EFs in logical access order
+_ROW1 = ["ATR/INFO", "DIR", "CardAccess", "COM", "SOD"]
+# Row 2: DG1–DG8
+_ROW2 = ["DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7", "DG8"]
+# Row 3: DG9–DG16
+_ROW3 = ["DG9", "DG10", "DG11", "DG12", "DG13", "DG14", "DG15", "DG16"]
+_EF_NAMES = _ROW1 + _ROW2 + _ROW3
 
 
 class ViewerPane:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
+
         # Inner menu frame
-        reader_info = tk.Frame(self.root.view_tab)
+        reader_info = ttk.Frame(self.root.view_tab)
         reader_info.pack(fill="x", pady=10, padx=10)
 
         # "Read" button
         self.root.read_button = ttk.Button(reader_info, text="Read", command=self.read_passport)
         self.root.read_button.pack(side="left", padx=5)
 
+        # Top section: photo + passport info side by side
+        top_frame = ttk.Frame(self.root.view_tab)
+        top_frame.pack(fill="x", padx=10, anchor="n")
+
         # Left side for image
-        image_frame = ttk.Frame(self.root.view_tab, width=200, height=300)
+        image_frame = ttk.Frame(top_frame, width=200, height=300)
         image_frame.pack(side="left", padx=10, anchor="n")
 
         # Placeholder for the passport photo
@@ -30,7 +45,7 @@ class ViewerPane:
         self.passport_photo.pack(padx=5, pady=5)
 
         # Right side for textual information
-        info_frame = ttk.Frame(self.root.view_tab)
+        info_frame = ttk.Frame(top_frame)
         info_frame.pack(side="left", pady=5, anchor="n")
 
         # Define labels for each field in 3 columns
@@ -81,14 +96,144 @@ class ViewerPane:
         self.fields["optional"] = ttk.Label(info_frame, text=default_val)
         self.fields["optional"].grid(row=9, column=1, sticky="w", pady=(4, 10), padx=5)
 
+        # EF panel: two-row custom tab bar + shared content area
+        ef_panel = ttk.Frame(self.root.view_tab)
+        ef_panel.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+
+        # Two-row button bar — each row is a separate frame so buttons in
+        # each row are sized equally within that row while both rows share
+        # the same total width.
+        tab_bar = ttk.Frame(ef_panel, relief="groove", borderwidth=1)
+        tab_bar.pack(fill="x")
+
+        self._ef_buttons = {}
+        self._ef_contents = {}   # ef_name -> str content or None
+        self._selected_ef = None
+
+        style = ttk.Style()
+        style.configure("EFTab.TButton", font=("", 8), padding=(4, 2))
+        style.configure("EFTabActive.TButton", font=("", 8, "bold"), padding=(4, 2))
+
+        for row_index, row_efs in enumerate((_ROW1, _ROW2, _ROW3)):
+            row_frame = ttk.Frame(tab_bar)
+            row_frame.pack(fill="x", side="top")
+            for ef in row_efs:
+                btn = ttk.Button(
+                    row_frame, text=ef, style="EFTab.TButton",
+                    state="disabled", command=lambda e=ef: self._select_ef(e),
+                )
+                btn.pack(side="left", padx=1, pady=1)
+                self._ef_buttons[ef] = btn
+
+        # Shared content area
+        content_frame = ttk.Frame(ef_panel, relief="sunken", borderwidth=1)
+        content_frame.pack(fill="both", expand=True)
+
+        self._ef_text = tk.Text(
+            content_frame, wrap="word", state="disabled",
+            font=("Courier", 9), height=8,
+        )
+        self._ef_text_default_fg = self._ef_text.cget("foreground")
+        scroll = ttk.Scrollbar(content_frame, orient="vertical", command=self._ef_text.yview)
+        self._ef_text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self._ef_text.pack(side="left", fill="both", expand=True)
+
+    def _select_ef(self, ef):
+        self._selected_ef = ef
+        content = self._ef_contents.get(ef)
+        self._ef_text.configure(state="normal")
+        self._ef_text.delete("1.0", "end")
+        if content:
+            self._ef_text.insert("end", content)
+        self._ef_text.configure(state="disabled")
+        for name, btn in self._ef_buttons.items():
+            if self._ef_contents.get(name) is not None:
+                btn.configure(style="EFTabActive.TButton" if name == ef else "EFTab.TButton")
+
+    def _reset_ef_tabs(self):
+        self._selected_ef = None
+        self._ef_contents = {ef: None for ef in _EF_NAMES}
+        for btn in self._ef_buttons.values():
+            btn.configure(state="disabled", style="EFTab.TButton")
+        self._ef_text.configure(state="normal")
+        self._ef_text.delete("1.0", "end")
+        self._ef_text.configure(state="disabled")
+
+    def _set_ef_content(self, ef, content):
+        self._ef_contents[ef] = content
+        btn = self._ef_buttons[ef]
+        if content is not None:
+            btn.configure(state="normal", style="EFTab.TButton")
+            if self._selected_ef == ef:
+                self._select_ef(ef)
+        else:
+            btn.configure(state="disabled", style="EFTab.TButton")
+
+    def _ef_to_str(self, ef_name, data):
+        if data is None:
+            return None
+        try:
+            return str(data)
+        except Exception:
+            return repr(data)
+
+    @staticmethod
+    def _read_mf_ef(iso7816, fid):
+        """Read a Master-File-level EF by FID before the eMRTD AID is selected.
+
+        Returns the raw bytes as an upper-case hex string, or None on failure.
+        Tries progressively smaller read sizes to cope with cards that raise
+        6282 (EOF) when Le exceeds the file length.
+        """
+        # Explicitly select the MF so this works even if a previous read left
+        # the card on a different DF (e.g. the eMRTD application DF).
+        try:
+            iso7816.transmit(APDUCommand("00", "A4", "00", "0C", data="3F00"), "Select MF")
+        except Exception:
+            pass
+        try:
+            iso7816.selectElementaryFile(fid)
+        except Exception:
+            return None
+        for size in (0xDF, 0x7F, 0x3F, 0x1F, 0x0F, 0x04):
+            try:
+                data = iso7816.readBinary(0, size)
+                return data.hex().upper()
+            except Exception:
+                continue
+        return None
+
     def read_passport(self):
         doc_number = self.parent.doc_number.get()
         dob = self.parent.dob.get()
         expiry = self.parent.expiry.get()
+        can = self.parent.can.get().strip() or None
+
+        mrz_supplied = bool(doc_number and dob and expiry)
+        if not mrz_supplied and not can:
+            messagebox.showerror(
+                "Passport read failed",
+                "Enter the MRZ (Number + DoB + Expiry) and/or a CAN.",
+            )
+            return
 
         try:
-            logging.info(f"{doc_number} {dob} {expiry}")
-            ep = EPassport(self.parent.reader, (doc_number, dob, expiry))
+            logging.info(f"{doc_number} {dob} {expiry}" + (f" CAN={can}" if can else ""))
+            ep = EPassport(
+                self.parent.reader,
+                (doc_number, dob, expiry) if mrz_supplied else None,
+                select_aid=False,
+            )
+            # Read MF-level files now, before ep.open() selects the eMRTD AID.
+            # Attempting to select these FIDs (2F01, 2F00) after AID selection
+            # can deselect the eMRTD application on many cards.
+            mf_ef_raw = {
+                "ATR/INFO": self._read_mf_ef(ep.iso7816, "2F01"),
+                "DIR":      self._read_mf_ef(ep.iso7816, "2F00"),
+            }
+            result = ep.open(can=can)
+            logging.info(f"Access control: {result.mechanism}")
         except EPassportException as e:
             logging.error(f"Could not initialize ePassport session: {e}")
             messagebox.showerror("Passport read failed", str(e))
@@ -166,6 +311,40 @@ class ViewerPane:
                 "Passport photo unavailable",
                 f"Could not load the passport photo: {e}",
             )
+
+        # Populate EF tabs
+        self._reset_ef_tabs()
+        for ef in _EF_NAMES:
+            # DG1 is guaranteed readable — use the already-parsed local variable
+            # so a failed re-read attempt never clears the tab.
+            if ef == "DG1":
+                self._set_ef_content("DG1", self._ef_to_str("DG1", dg1))
+                continue
+
+            # ATR/INFO and DIR live in the MF, not the eMRTD DF.  They were
+            # read via raw ISO7816 before ep.open() selected the eMRTD AID.
+            if ef in mf_ef_raw:
+                self._set_ef_content(ef, mf_ef_raw[ef])
+                continue
+
+            try:
+                data = ep[ef]
+            except Exception as e:
+                logging.warning(f"Could not read {ef}: {e}")
+                self._set_ef_content(ef, None)
+                continue
+            if data is None:
+                logging.warning(f"{ef} returned None (chip read or parsing failed)")
+                self._set_ef_content(ef, None)
+                continue
+            try:
+                content = self._ef_to_str(ef, data)
+            except Exception as e:
+                logging.warning(f"Could not stringify {ef}: {e}")
+                content = f"(Could not display {ef}: {e})"
+            self._set_ef_content(ef, content)
+
+        self._select_ef("DG1")
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)

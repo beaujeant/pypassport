@@ -60,18 +60,22 @@ class EPassportViewer:
         self.iso7816 = None
 
         ## Create a canvas with vertical scrollbar
-        canvas = tk.Canvas(self.root)
+        style = ttk.Style()
+        theme_bg = style.lookup("TFrame", "background")
+        canvas = tk.Canvas(self.root, bg=theme_bg, highlightthickness=0)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=canvas.yview)
         scrollbar.pack(side="right", fill="y")
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        main_frame = tk.Frame(canvas)
+        main_frame = ttk.Frame(canvas)
+        main_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=main_frame, anchor="nw")
 
         self.doc_number = tk.StringVar()
         self.dob = tk.StringVar()
         self.expiry = tk.StringVar()
+        self.can = tk.StringVar()
 
         ## Create menu bar
         menu_bar = tk.Menu(self.root)
@@ -93,11 +97,16 @@ class EPassportViewer:
         ttk.Label(mrz_frame, text="Expiry Date:").pack(side="left", padx=(10, 3))
         PlaceholderEntry(mrz_frame, "YYMMDD", width=8, textvariable=self.expiry).pack(side="left")
 
+        # CAN (Card Access Number) — only needed for PACE-with-CAN passports
+        # and eIDs. Optional: PACE-with-MRZ uses the fields above.
+        ttk.Label(mrz_frame, text="CAN:").pack(side="left", padx=(10, 3))
+        PlaceholderEntry(mrz_frame, "optional", width=8, textvariable=self.can).pack(side="left")
+
         ### Refresh reader info
         image = Image.open(Path(__file__).parent / "resources" / "img" / "refresh.png")
         image = image.resize((20, 20), resample=Image.LANCZOS)
         photo = ImageTk.PhotoImage(image)
-        image_button = tk.Button(mrz_frame, image=photo, command=self.get_reader)
+        image_button = ttk.Button(mrz_frame, image=photo, command=self.get_reader)
         image_button.image = photo
         image_button.pack(side="right", padx=10)
 

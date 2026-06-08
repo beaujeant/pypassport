@@ -10,6 +10,7 @@ from pyasn1.type.univ import (
     OctetString,
     BitString,
     Null,
+    Any,
 )
 from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
 from pyasn1.type.namedval import NamedValues
@@ -25,7 +26,8 @@ class asn1Exception(Exception):
 
 class LDSSecurityObjectVersion(Integer):
     namedValues = NamedValues(
-        ('V0', 0)
+        ('V0', 0),
+        ('V1', 1),
     )
 
 
@@ -72,11 +74,21 @@ class AlgorithmIdentifier(Sequence):
 DigestAlgorithmIdentifier = AlgorithmIdentifier()
 
 
+class LDSVersionInfo(Sequence):
+    # Spec says VisibleString but chips often send PrintableString; use Any
+    # so the schema accepts either encoding, then decode the value manually.
+    componentType = NamedTypes(
+        NamedType('ldsVersion', Any()),
+        NamedType('unicodeVersion', Any()),
+    )
+
+
 class LDSSecurityObject(Sequence):
     componentType = NamedTypes(
         NamedType('version', LDSSecurityObjectVersion()),
         NamedType('hashAlgorithm', DigestAlgorithmIdentifier),
         NamedType('dataGroupHashValues', DataGroupHashValues()),
+        OptionalNamedType('ldsVersionInfo', LDSVersionInfo()),
     )
 
 

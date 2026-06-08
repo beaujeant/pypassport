@@ -22,131 +22,131 @@ class CustomPane:
         block1 = ttk.LabelFrame(self.root.custom_tab, text=" Analyzing ", padding=10)
         block1.pack(fill="x", pady=8, padx=5)
 
-        tk.Button(block1, text="Dump randomness", command=self.dump_randomness).grid(row=0, column=0, padx=5, pady=5)
-        tk.Label(block1, text="Nb of get challenge").grid(row=0, column=1, padx=5, pady=5)
-        self.nb_challenge = tk.Entry(block1, width=6)
+        ttk.Button(block1, text="Dump randomness", command=self.dump_randomness).grid(row=0, column=0, padx=5, pady=5)
+        ttk.Label(block1, text="Nb of get challenge").grid(row=0, column=1, padx=5, pady=5)
+        self.nb_challenge = ttk.Entry(block1, width=6)
         self.nb_challenge.grid(row=0, column=2, padx=5, pady=5)
 
         # Block 2: Automatic Function
         block2 = ttk.LabelFrame(self.root.custom_tab, text=" Automatic Function ", padding=10)
         block2.pack(fill="x", pady=8, padx=5)
 
-        tk.Button(block2, text="Init (select file)", command=self.init).pack(side="left", padx=5)
-        tk.Button(block2, text="Reset", command=self.reset).pack(side="left", padx=5)
-        tk.Button(block2, text="BAC", command=self.bac).pack(side="left", padx=5)
-        tk.Button(block2, text="Generate BAC Keys", command=self.gen_bac_keys).pack(side="left", padx=5)
-        tk.Button(block2, text="Get ATR", command=self.get_atr).pack(side="left", padx=5)
+        ttk.Button(block2, text="Init (select file)", command=self.init).pack(side="left", padx=5)
+        ttk.Button(block2, text="Reset", command=self.reset).pack(side="left", padx=5)
+        ttk.Button(block2, text="BAC", command=self.bac).pack(side="left", padx=5)
+        ttk.Button(block2, text="Generate BAC Keys", command=self.gen_bac_keys).pack(side="left", padx=5)
+        ttk.Button(block2, text="Get ATR", command=self.get_atr).pack(side="left", padx=5)
 
         # Block 3: Tools
         block3 = ttk.LabelFrame(self.root.custom_tab, text=" Tools ", padding=10)
         block3.pack(fill="x", pady=8, padx=5)
 
         # Row 1
-        tk.Label(block3, text="Crypto:").grid(row=0, column=0, padx=5, pady=5)
-        tk.Button(block3, text="3DES >", width=12, command=self.enc_3des).grid(row=0, column=1, padx=3, pady=5)
-        tk.Button(block3, text="3DES <", width=12, command=self.dec_3des).grid(row=0, column=2, padx=3, pady=5)
-        tk.Button(block3, text="SHA-1", width=12, command=self.sha1_hash).grid(row=0, column=3, padx=3, pady=5)
-        tk.Button(block3, text="Create MAC", width=12, command=self.mac).grid(row=0, column=4, padx=3, pady=5)
+        ttk.Label(block3, text="Crypto:").grid(row=0, column=0, padx=5, pady=5)
+        ttk.Button(block3, text="3DES >", width=12, command=self.enc_3des).grid(row=0, column=1, padx=3, pady=5)
+        ttk.Button(block3, text="3DES <", width=12, command=self.dec_3des).grid(row=0, column=2, padx=3, pady=5)
+        ttk.Button(block3, text="SHA-1", width=12, command=self.sha1_hash).grid(row=0, column=3, padx=3, pady=5)
+        ttk.Button(block3, text="Create MAC", width=12, command=self.mac).grid(row=0, column=4, padx=3, pady=5)
 
         # Row 2
-        tk.Label(block3, text="Functions:").grid(row=1, column=0, padx=5, pady=5)
-        tk.Button(block3, text="XOR", width=12, command=self.xor).grid(row=1, column=1, padx=3, pady=5)
-        tk.Button(block3, text="Key derivation", width=12, command=self.key_derivation).grid(
+        ttk.Label(block3, text="Functions:").grid(row=1, column=0, padx=5, pady=5)
+        ttk.Button(block3, text="XOR", width=12, command=self.xor).grid(row=1, column=1, padx=3, pady=5)
+        ttk.Button(block3, text="Key derivation", width=12, command=self.key_derivation).grid(
             row=1, column=2, padx=3, pady=5
         )
-        tk.Button(block3, text="SSC generator", width=12, command=self.generate_ssc).grid(
+        ttk.Button(block3, text="SSC generator", width=12, command=self.generate_ssc).grid(
             row=1, column=3, padx=3, pady=5
         )
-        tk.Button(block3, text="Read header", width=12, command=self.read_header).grid(row=1, column=4, padx=3, pady=5)
+        ttk.Button(block3, text="Read header", width=12, command=self.read_header).grid(row=1, column=4, padx=3, pady=5)
 
         # Row 3
-        tk.Label(block3, text="Fields:").grid(row=2, column=0, padx=5, pady=5)
-        tk.Label(block3, text="HEX:").grid(row=2, column=1, padx=5, pady=5)
+        ttk.Label(block3, text="Fields:").grid(row=2, column=0, padx=5, pady=5)
+        ttk.Label(block3, text="HEX:").grid(row=2, column=1, padx=5, pady=5)
         self.field_one = tk.StringVar()
-        tk.Entry(block3, textvariable=self.field_one).grid(row=2, column=2, padx=5, pady=5)
-        tk.Label(block3, text="HEX:").grid(row=2, column=3, padx=5, pady=5)
+        ttk.Entry(block3, textvariable=self.field_one).grid(row=2, column=2, padx=5, pady=5)
+        ttk.Label(block3, text="HEX:").grid(row=2, column=3, padx=5, pady=5)
         self.field_two = tk.StringVar()
-        tk.Entry(block3, textvariable=self.field_two).grid(row=2, column=4, padx=5, pady=5)
+        ttk.Entry(block3, textvariable=self.field_two).grid(row=2, column=4, padx=5, pady=5)
 
         # Block 4: Requests
         block4 = ttk.LabelFrame(self.root.custom_tab, text=" Requests ", padding=10)
         block4.pack(fill="x", pady=8, padx=5)
 
-        first_line = tk.Frame(block4)
+        first_line = ttk.Frame(block4)
         first_line.pack(fill="x", pady=5)
 
-        tk.Button(first_line, text="External Auth.", command=self.external_auth).pack(side="left", padx=5)
-        tk.Button(first_line, text="Internal Auth.", command=self.internal_auth).pack(side="left", padx=0)
-        tk.Button(first_line, text="Select file", command=self.select_file).pack(side="left", padx=5)
-        tk.Button(first_line, text="Read binary", command=self.read_binary).pack(side="left", padx=0)
-        tk.Button(first_line, text="Rehabilitate", command=self.rehabilitate).pack(side="left", padx=5)
-        tk.Button(first_line, text="Get UID", command=self.get_uid).pack(side="left", padx=0)
-        tk.Button(first_line, text="Get ATS", command=self.get_ats).pack(side="left", padx=5)
-        tk.Button(first_line, text="Get Challenge", command=self.get_challenge).pack(side="left", padx=0)
+        ttk.Button(first_line, text="External Auth.", command=self.external_auth).pack(side="left", padx=5)
+        ttk.Button(first_line, text="Internal Auth.", command=self.internal_auth).pack(side="left", padx=0)
+        ttk.Button(first_line, text="Select file", command=self.select_file).pack(side="left", padx=5)
+        ttk.Button(first_line, text="Read binary", command=self.read_binary).pack(side="left", padx=0)
+        ttk.Button(first_line, text="Rehabilitate", command=self.rehabilitate).pack(side="left", padx=5)
+        ttk.Button(first_line, text="Get UID", command=self.get_uid).pack(side="left", padx=0)
+        ttk.Button(first_line, text="Get ATS", command=self.get_ats).pack(side="left", padx=5)
+        ttk.Button(first_line, text="Get Challenge", command=self.get_challenge).pack(side="left", padx=0)
 
-        second_line = tk.Frame(block4)
+        second_line = ttk.Frame(block4)
         second_line.pack(fill="x", pady=5)
-        tk.Button(second_line, text="Send custom APDU", command=self.send_apdu).pack(side="left", padx=5)
-        tk.Label(second_line, text="CLA:").pack(side="left", padx=5)
+        ttk.Button(second_line, text="Send custom APDU", command=self.send_apdu).pack(side="left", padx=5)
+        ttk.Label(second_line, text="CLA:").pack(side="left", padx=5)
         self.cla = tk.StringVar()
-        tk.Entry(second_line, width=2, textvariable=self.cla).pack(side="left", padx=5)
-        tk.Label(second_line, text="INS:").pack(side="left", padx=5)
+        ttk.Entry(second_line, width=2, textvariable=self.cla).pack(side="left", padx=5)
+        ttk.Label(second_line, text="INS:").pack(side="left", padx=5)
         self.ins = tk.StringVar()
-        tk.Entry(second_line, width=2, textvariable=self.ins).pack(side="left", padx=5)
-        tk.Label(second_line, text="P1:").pack(side="left", padx=5)
+        ttk.Entry(second_line, width=2, textvariable=self.ins).pack(side="left", padx=5)
+        ttk.Label(second_line, text="P1:").pack(side="left", padx=5)
         self.p1 = tk.StringVar()
-        tk.Entry(second_line, width=2, textvariable=self.p1).pack(side="left", padx=5)
-        tk.Label(second_line, text="P2:").pack(side="left", padx=5)
+        ttk.Entry(second_line, width=2, textvariable=self.p1).pack(side="left", padx=5)
+        ttk.Label(second_line, text="P2:").pack(side="left", padx=5)
         self.p2 = tk.StringVar()
-        tk.Entry(second_line, width=2, textvariable=self.p2).pack(side="left", padx=5)
-        tk.Label(second_line, text="LC:").pack(side="left", padx=5)
+        ttk.Entry(second_line, width=2, textvariable=self.p2).pack(side="left", padx=5)
+        ttk.Label(second_line, text="LC:").pack(side="left", padx=5)
         self.lc = tk.StringVar()
-        tk.Entry(second_line, width=4, textvariable=self.lc).pack(side="left", padx=5)
-        tk.Label(second_line, text="DATA:").pack(side="left", padx=5)
+        ttk.Entry(second_line, width=4, textvariable=self.lc).pack(side="left", padx=5)
+        ttk.Label(second_line, text="DATA:").pack(side="left", padx=5)
         self.data = tk.StringVar()
-        tk.Entry(second_line, textvariable=self.data).pack(side="left", padx=5)
-        tk.Label(second_line, text="LE:").pack(side="left", padx=5)
+        ttk.Entry(second_line, textvariable=self.data).pack(side="left", padx=5)
+        ttk.Label(second_line, text="LE:").pack(side="left", padx=5)
         self.le = tk.StringVar()
-        tk.Entry(second_line, width=4, textvariable=self.le).pack(side="left", padx=5)
+        ttk.Entry(second_line, width=4, textvariable=self.le).pack(side="left", padx=5)
 
-        third_line = tk.Frame(block4)
+        third_line = ttk.Frame(block4)
         third_line.pack(fill="x", pady=5)
-        tk.Button(third_line, text="Set ciphering", command=self.set_ciphering).pack(side="left", padx=5)
+        ttk.Button(third_line, text="Set ciphering", command=self.set_ciphering).pack(side="left", padx=5)
 
-        tk.Label(third_line, text="KSenc:").pack(side="left", padx=5)
+        ttk.Label(third_line, text="KSenc:").pack(side="left", padx=5)
         self.ksenc = tk.StringVar()
-        tk.Entry(third_line, textvariable=self.ksenc).pack(side="left", padx=5)
-        tk.Label(third_line, text="KSmac:").pack(side="left", padx=5)
+        ttk.Entry(third_line, textvariable=self.ksenc).pack(side="left", padx=5)
+        ttk.Label(third_line, text="KSmac:").pack(side="left", padx=5)
         self.ksmac = tk.StringVar()
-        tk.Entry(third_line, textvariable=self.ksmac).pack(side="left", padx=5)
-        tk.Label(third_line, text="SSC:").pack(side="left", padx=5)
+        ttk.Entry(third_line, textvariable=self.ksmac).pack(side="left", padx=5)
+        ttk.Label(third_line, text="SSC:").pack(side="left", padx=5)
         self.ssc = tk.StringVar()
-        tk.Entry(third_line, textvariable=self.ssc).pack(side="left", padx=5)
+        ttk.Entry(third_line, textvariable=self.ssc).pack(side="left", padx=5)
 
         # Block 5: Response
         block5 = ttk.LabelFrame(self.root.custom_tab, text=" Response ", padding=10)
         block5.pack(fill="x", pady=8, padx=5)
 
-        tk.Label(block5, text="APDU:").grid(row=0, column=0, padx=5, pady=5)
+        ttk.Label(block5, text="APDU:").grid(row=0, column=0, padx=5, pady=5)
         self.response_data = tk.StringVar()
-        tk.Entry(block5, width=80, textvariable=self.response_data).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Entry(block5, width=80, textvariable=self.response_data).grid(row=0, column=1, padx=5, pady=5)
 
         # Save data to file
         image = Image.open(Path(__file__).parent / "resources" / "img" / "download.png")
         image = image.resize((20, 20), resample=Image.LANCZOS)
         photo = ImageTk.PhotoImage(image)
-        image_button = tk.Button(block5, image=photo, command=self.download_data)
+        image_button = ttk.Button(block5, image=photo, command=self.download_data)
         image_button.image = photo
         image_button.grid(row=0, column=2, padx=0, pady=5)
 
         self.sw1 = tk.StringVar()
-        tk.Entry(block5, width=4, textvariable=self.sw1).grid(row=0, column=3, padx=5, pady=5)
+        ttk.Entry(block5, width=4, textvariable=self.sw1).grid(row=0, column=3, padx=5, pady=5)
         self.sw2 = tk.StringVar()
-        tk.Entry(block5, width=4, textvariable=self.sw2).grid(row=0, column=4, padx=5, pady=5)
+        ttk.Entry(block5, width=4, textvariable=self.sw2).grid(row=0, column=4, padx=5, pady=5)
 
         response_labels = ["Response data", "", "SW1", "SW2"]
         for i, text in enumerate(response_labels):
-            tk.Label(block5, text=text).grid(row=1, column=i + 1, padx=0, pady=0)
+            ttk.Label(block5, text=text).grid(row=1, column=i + 1, padx=0, pady=0)
 
     def get_ready(self):
         if not self.parent.reader:
