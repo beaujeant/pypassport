@@ -104,7 +104,7 @@ class ViewerPane:
             ef_notebook.add(frame, text=ef)
             self._ef_tabs[ef] = frame
 
-            text = tk.Text(frame, wrap="word", state="disabled", font=("Courier", 9))
+            text = tk.Text(frame, wrap="word", state="disabled", font=("Courier", 9), height=8)
             scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
             text.configure(yscrollcommand=scroll.set)
             scroll.pack(side="right", fill="y")
@@ -113,9 +113,6 @@ class ViewerPane:
 
         # Select DG1 by default
         self._ef_notebook.select(self._ef_tabs["DG1"])
-
-        # Keep style reference for greying out tabs
-        self._style = ttk.Style()
 
     def _reset_ef_tabs(self):
         for ef in _EF_NAMES:
@@ -246,16 +243,28 @@ class ViewerPane:
         # Populate EF tabs
         self._reset_ef_tabs()
         for ef in _EF_NAMES:
+            # DG1 is guaranteed readable — use the already-parsed local variable
+            # so a failed re-read attempt never clears the tab.
+            if ef == "DG1":
+                self._set_ef_content("DG1", self._ef_to_str("DG1", dg1))
+                continue
             try:
                 data = ep[ef]
-                content = self._ef_to_str(ef, data)
-                self._set_ef_content(ef, content)
             except Exception as e:
-                logging.debug(f"Could not read {ef}: {e}")
+                logging.warning(f"Could not read {ef}: {e}")
                 self._set_ef_content(ef, None)
+                continue
+            if data is None:
+                logging.warning(f"{ef} returned None (chip read or parsing failed)")
+                self._set_ef_content(ef, None)
+                continue
+            try:
+                content = self._ef_to_str(ef, data)
+            except Exception as e:
+                logging.warning(f"Could not stringify {ef}: {e}")
+                content = f"(Could not display {ef}: {e})"
+            self._set_ef_content(ef, content)
 
-        # Ensure DG1 tab is visible and selected
-        self._ef_notebook.tab(self._ef_tabs["DG1"], state="normal")
         self._ef_notebook.select(self._ef_tabs["DG1"])
 
     def update_field(self, item, value):
