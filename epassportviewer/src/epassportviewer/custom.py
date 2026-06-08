@@ -239,8 +239,11 @@ class CustomPane:
     def get_atr(self):
         if not self.get_ready():
             return False
-        self.field_one.set(toHexString(self.parent.reader.getATR()))
-        self.field_two.set("")
+        try:
+            self.field_one.set(toHexString(self.parent.reader.getATR()))
+            self.field_two.set("")
+        except Exception as msg:
+            messagebox.showerror("Error: Get ATR", str(msg))
 
     def enc_3des(self):
         try:
