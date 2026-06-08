@@ -7,10 +7,17 @@ from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
 
 
+# All EFs shown as tabs, in display order
+_EF_NAMES = ["COM", "DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7",
+             "DG8", "DG9", "DG10", "DG11", "DG12", "DG13", "DG14",
+             "DG15", "DG16", "SOD"]
+
+
 class ViewerPane:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
+
         # Inner menu frame
         reader_info = ttk.Frame(self.root.view_tab)
         reader_info.pack(fill="x", pady=10, padx=10)
@@ -19,8 +26,12 @@ class ViewerPane:
         self.root.read_button = ttk.Button(reader_info, text="Read", command=self.read_passport)
         self.root.read_button.pack(side="left", padx=5)
 
+        # Top section: photo + passport info side by side
+        top_frame = ttk.Frame(self.root.view_tab)
+        top_frame.pack(fill="x", padx=10, anchor="n")
+
         # Left side for image
-        image_frame = ttk.Frame(self.root.view_tab, width=200, height=300)
+        image_frame = ttk.Frame(top_frame, width=200, height=300)
         image_frame.pack(side="left", padx=10, anchor="n")
 
         # Placeholder for the passport photo
@@ -30,7 +41,7 @@ class ViewerPane:
         self.passport_photo.pack(padx=5, pady=5)
 
         # Right side for textual information
-        info_frame = ttk.Frame(self.root.view_tab)
+        info_frame = ttk.Frame(top_frame)
         info_frame.pack(side="left", pady=5, anchor="n")
 
         # Define labels for each field in 3 columns
@@ -80,6 +91,56 @@ class ViewerPane:
         ttk.Label(info_frame, text="Optional Data", font=("", 10, "bold")).grid(row=8, column=1, sticky="w", padx=5)
         self.fields["optional"] = ttk.Label(info_frame, text=default_val)
         self.fields["optional"].grid(row=9, column=1, sticky="w", pady=(4, 10), padx=5)
+
+        # EF tab panel — fills remaining vertical space
+        ef_notebook = ttk.Notebook(self.root.view_tab)
+        ef_notebook.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+        self._ef_notebook = ef_notebook
+        self._ef_texts = {}   # ef_name -> tk.Text widget
+        self._ef_tabs = {}    # ef_name -> tab frame
+
+        for ef in _EF_NAMES:
+            frame = ttk.Frame(ef_notebook)
+            ef_notebook.add(frame, text=ef)
+            self._ef_tabs[ef] = frame
+
+            text = tk.Text(frame, wrap="word", state="disabled", font=("Courier", 9))
+            scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+            text.configure(yscrollcommand=scroll.set)
+            scroll.pack(side="right", fill="y")
+            text.pack(side="left", fill="both", expand=True)
+            self._ef_texts[ef] = text
+
+        # Select DG1 by default
+        self._ef_notebook.select(self._ef_tabs["DG1"])
+
+        # Keep style reference for greying out tabs
+        self._style = ttk.Style()
+
+    def _reset_ef_tabs(self):
+        for ef in _EF_NAMES:
+            self._set_ef_content(ef, None)
+
+    def _set_ef_content(self, ef, content):
+        """Set tab content. None means unreadable (greyed out, empty)."""
+        text_widget = self._ef_texts[ef]
+        text_widget.configure(state="normal")
+        text_widget.delete("1.0", "end")
+        if content is not None:
+            text_widget.insert("end", content)
+            text_widget.configure(state="disabled", foreground="")
+            self._ef_notebook.tab(self._ef_tabs[ef], state="normal")
+        else:
+            text_widget.configure(state="disabled", foreground="gray")
+            self._ef_notebook.tab(self._ef_tabs[ef], state="disabled")
+
+    def _ef_to_str(self, ef_name, data):
+        if data is None:
+            return None
+        try:
+            return str(data)
+        except Exception:
+            return repr(data)
 
     def read_passport(self):
         doc_number = self.parent.doc_number.get()
@@ -181,6 +242,21 @@ class ViewerPane:
                 "Passport photo unavailable",
                 f"Could not load the passport photo: {e}",
             )
+
+        # Populate EF tabs
+        self._reset_ef_tabs()
+        for ef in _EF_NAMES:
+            try:
+                data = ep[ef]
+                content = self._ef_to_str(ef, data)
+                self._set_ef_content(ef, content)
+            except Exception as e:
+                logging.debug(f"Could not read {ef}: {e}")
+                self._set_ef_content(ef, None)
+
+        # Ensure DG1 tab is visible and selected
+        self._ef_notebook.tab(self._ef_tabs["DG1"], state="normal")
+        self._ef_notebook.select(self._ef_tabs["DG1"])
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)
