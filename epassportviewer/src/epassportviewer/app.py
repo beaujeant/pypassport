@@ -60,13 +60,16 @@ class EPassportViewer:
         self.iso7816 = None
 
         ## Create a canvas with vertical scrollbar
-        canvas = tk.Canvas(self.root)
+        style = ttk.Style()
+        theme_bg = style.lookup("TFrame", "background")
+        canvas = tk.Canvas(self.root, bg=theme_bg, highlightthickness=0)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=canvas.yview)
         scrollbar.pack(side="right", fill="y")
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        main_frame = tk.Frame(canvas)
+        main_frame = ttk.Frame(canvas)
+        main_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=main_frame, anchor="nw")
 
         self.doc_number = tk.StringVar()
@@ -103,7 +106,7 @@ class EPassportViewer:
         image = Image.open(Path(__file__).parent / "resources" / "img" / "refresh.png")
         image = image.resize((20, 20), resample=Image.LANCZOS)
         photo = ImageTk.PhotoImage(image)
-        image_button = tk.Button(mrz_frame, image=photo, command=self.get_reader)
+        image_button = ttk.Button(mrz_frame, image=photo, command=self.get_reader)
         image_button.image = photo
         image_button.pack(side="right", padx=10)
 

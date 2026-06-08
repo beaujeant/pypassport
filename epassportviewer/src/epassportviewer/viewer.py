@@ -12,7 +12,7 @@ class ViewerPane:
         self.parent = main
         self.root = main.root
         # Inner menu frame
-        reader_info = tk.Frame(self.root.view_tab)
+        reader_info = ttk.Frame(self.root.view_tab)
         reader_info.pack(fill="x", pady=10, padx=10)
 
         # "Read" button
