@@ -121,7 +121,7 @@ class ViewerPane:
                     row_frame, text=ef, style="EFTab.TButton",
                     state="disabled", command=lambda e=ef: self._select_ef(e),
                 )
-                btn.pack(side="left", expand=True, fill="x", padx=1, pady=1)
+                btn.pack(side="left", padx=1, pady=1)
                 self._ef_buttons[ef] = btn
 
         # Shared content area
@@ -177,6 +177,26 @@ class ViewerPane:
         except Exception:
             return repr(data)
 
+    @staticmethod
+    def _read_mf_ef(iso7816, fid):
+        """Read a Master-File-level EF by FID before the eMRTD AID is selected.
+
+        Returns the raw bytes as an upper-case hex string, or None on failure.
+        Tries progressively smaller read sizes to cope with cards that raise
+        6282 (EOF) when Le exceeds the file length.
+        """
+        try:
+            iso7816.selectElementaryFile(fid)
+        except Exception:
+            return None
+        for size in (0xDF, 0x7F, 0x3F, 0x1F, 0x0F, 0x04):
+            try:
+                data = iso7816.readBinary(0, size)
+                return data.hex().upper()
+            except Exception:
+                continue
+        return None
+
     def read_passport(self):
         doc_number = self.parent.doc_number.get()
         dob = self.parent.dob.get()
@@ -198,6 +218,13 @@ class ViewerPane:
                 (doc_number, dob, expiry) if mrz_supplied else None,
                 select_aid=False,
             )
+            # Read MF-level files now, before ep.open() selects the eMRTD AID.
+            # Attempting to select these FIDs (2F01, 2F00) after AID selection
+            # can deselect the eMRTD application on many cards.
+            mf_ef_raw = {
+                "ATR/INFO": self._read_mf_ef(ep.iso7816, "2F01"),
+                "DIR":      self._read_mf_ef(ep.iso7816, "2F00"),
+            }
             result = ep.open(can=can)
             logging.info(f"Access control: {result.mechanism}")
         except EPassportException as e:
@@ -287,6 +314,12 @@ class ViewerPane:
             if ef == "DG1":
                 self._set_ef_content("DG1", self._ef_to_str("DG1", dg1))
                 seen_tags[toTAG("DG1")] = "DG1"
+                continue
+
+            # ATR/INFO and DIR live in the MF, not the eMRTD DF.  They were
+            # read via raw ISO7816 before ep.open() selected the eMRTD AID.
+            if ef in mf_ef_raw:
+                self._set_ef_content(ef, mf_ef_raw[ef])
                 continue
 
             # Detect EFs that share the same underlying file (e.g. SOD / CardSecurity).
