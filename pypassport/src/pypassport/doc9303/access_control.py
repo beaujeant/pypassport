@@ -38,9 +38,6 @@ MODE_BAC = "bac"
 MODE_NONE = "none"
 _SUPPORTED_MODES = (MODE_AUTO, MODE_PACE, MODE_BAC, MODE_NONE)
 
-# Password reference for MRZ-derived PACE secrets (BSI TR-03110).
-_PACE_PWD_MRZ = bytes([0x01])
-
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -121,31 +118,38 @@ class BACAuthenticator:
 
 class PACEAuthenticator:
     """
-    Run PACE with the MRZ-derived password and install Secure Messaging.
+    Run PACE with the configured secret (MRZ-derived or CAN) and install
+    Secure Messaging on the iso7816 layer.
 
-    Note: the underlying ``PACE`` implementation is currently partial (see
-    ``pace.py``). Until the GA2/GA3/GA4 exchange and session key derivation
-    are completed, this class will surface a PACEAuthenticationError if it
-    cannot produce a working secure channel.
+    If ``can`` is provided, PACE is run with the Card Access Number
+    (password reference 0x02). Otherwise it falls back to the MRZ
+    (password reference 0x01).
     """
 
-    def __init__(self, iso7816, mrz: MRZ):
+    def __init__(self, iso7816, mrz: Optional[MRZ] = None, can: Optional[str] = None):
+        if can is None and mrz is None:
+            raise AccessControlNegotiationError(
+                "PACE requires either an MRZ or a CAN."
+            )
         self._iso7816 = iso7816
-        self._pace = PACE(iso7816, mrz=mrz)
+        self._pace = PACE(iso7816, mrz=mrz, can=can)
+        self._secret_label = "CAN" if can is not None else "MRZ"
 
     def authenticate(self, info: PACEInfo) -> None:
         logging.info(
-            "Access control: running PACE (%s/%s/%s-%d)",
+            "Access control: running PACE (%s/%s/%s-%d) with %s",
             info.key_agreement or "?", info.mapping or "?",
             info.cipher or "?", info.key_size or 0,
+            self._secret_label,
         )
 
         # Build the algorithm OID and (optionally) the domain parameter id.
         oid_bytes = _oid_to_der_value(info.oid)
         domain = bytes([info.parameter_id]) if info.parameter_id is not None else b""
 
+        pw_ref = self._pace.password_reference or PACE.PWD_MRZ
         try:
-            self._pace.performPACE(oid_bytes, _PACE_PWD_MRZ, domain_params=domain)
+            self._pace.performPACE(oid_bytes, pw_ref, domain_params=domain)
         except NotImplementedError as exc:
             raise PACEAuthenticationError(
                 "PACE selected but the local implementation is incomplete: "
@@ -194,16 +198,18 @@ class AccessControlNegotiator:
         self._card_access_reader = CardAccessReader(iso7816)
         self._parser = SecurityInfoParser()
 
-    def open(self, mrz, mode: str = MODE_AUTO) -> NegotiationResult:
+    def open(self, mrz, mode: str = MODE_AUTO, can: Optional[str] = None) -> NegotiationResult:
         """
         Run the configured access-control flow and select the eMRTD AID.
 
-        :param mrz: An MRZ object (required for ``auto``/``pace``/``bac``;
-            ignored for ``none``).
+        :param mrz: An MRZ object. Required for BAC (and for PACE if no CAN
+            is given). Ignored for ``none``.
         :param mode: One of ``"auto"``, ``"pace"``, ``"bac"``, ``"none"``.
+        :param can: Optional Card Access Number. When provided, PACE will be
+            attempted using the CAN as the password instead of the MRZ.
         :return: A NegotiationResult describing what ran.
-        :raise AccessControlNegotiationError: On unknown mode, missing MRZ,
-            or any access-control failure that cannot be recovered.
+        :raise AccessControlNegotiationError: On unknown mode, missing
+            credentials, or any failure that cannot be recovered.
         """
         mode = (mode or MODE_AUTO).lower()
         if mode not in _SUPPORTED_MODES:
@@ -212,9 +218,17 @@ class AccessControlNegotiator:
                 f"Supported: {', '.join(_SUPPORTED_MODES)}."
             )
 
-        if mode in (MODE_AUTO, MODE_PACE, MODE_BAC) and mrz is None:
+        if mode == MODE_BAC and mrz is None:
             raise AccessControlNegotiationError(
-                f"MRZ is required for access_control='{mode}'."
+                "MRZ is required for access_control='bac'."
+            )
+        if mode == MODE_PACE and mrz is None and can is None:
+            raise AccessControlNegotiationError(
+                "PACE requires either an MRZ or a CAN."
+            )
+        if mode == MODE_AUTO and mrz is None and can is None:
+            raise AccessControlNegotiationError(
+                "access_control='auto' requires an MRZ (and optionally a CAN)."
             )
 
         if mode == MODE_NONE:
@@ -232,11 +246,11 @@ class AccessControlNegotiator:
 
         if pace_info is not None:
             try:
-                PACEAuthenticator(self._iso7816, mrz).authenticate(pace_info)
+                PACEAuthenticator(self._iso7816, mrz=mrz, can=can).authenticate(pace_info)
                 self._select_emrtd_application()
                 return NegotiationResult(mechanism="PACE", pace_info=pace_info)
             except PACEAuthenticationError:
-                if mode == MODE_PACE:
+                if mode == MODE_PACE or mrz is None:
                     raise
                 logging.warning("PACE failed; falling back to BAC.")
 

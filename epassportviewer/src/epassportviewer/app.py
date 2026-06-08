@@ -72,6 +72,7 @@ class EPassportViewer:
         self.doc_number = tk.StringVar()
         self.dob = tk.StringVar()
         self.expiry = tk.StringVar()
+        self.can = tk.StringVar()
 
         ## Create menu bar
         menu_bar = tk.Menu(self.root)
@@ -92,6 +93,11 @@ class EPassportViewer:
 
         ttk.Label(mrz_frame, text="Expiry Date:").pack(side="left", padx=(10, 3))
         PlaceholderEntry(mrz_frame, "YYMMDD", width=8, textvariable=self.expiry).pack(side="left")
+
+        # CAN (Card Access Number) — only needed for PACE-with-CAN passports
+        # and eIDs. Optional: PACE-with-MRZ uses the fields above.
+        ttk.Label(mrz_frame, text="CAN:").pack(side="left", padx=(10, 3))
+        PlaceholderEntry(mrz_frame, "optional", width=8, textvariable=self.can).pack(side="left")
 
         ### Refresh reader info
         image = Image.open(Path(__file__).parent / "resources" / "img" / "refresh.png")

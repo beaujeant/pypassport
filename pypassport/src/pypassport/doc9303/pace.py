@@ -61,18 +61,43 @@ class PACE:
     """
     PACE implementation for ECDH Generic Mapping with AES session keys.
 
-    :param iso7816: Transport layer.  Must expose ``mseSetAt``,
+    Exactly one of ``mrz``, ``can``, or ``password`` should be supplied:
+
+    :param iso7816:  Transport layer.  Must expose ``mseSetAt``,
         ``generalAuthenticate``, and ``transmit``.
-    :param mrz:     Optional MRZ object used to derive the MRZ password.
-    :param password: Raw password bytes (alternative to mrz).
+    :param mrz:      MRZ object/tuple/string. The password π is derived as
+        SHA-1(MRZ_information) per BSI TR-03110.
+    :param can:      Card Access Number — the short numeric code printed on
+        the document (typically 6 digits). The CAN is used directly as π
+        (its ASCII bytes), not hashed.
+    :param password: Raw password bytes (escape hatch for unusual cases).
     """
 
-    def __init__(self, iso7816, mrz=None, password=None):
+    PWD_MRZ = bytes([0x01])
+    PWD_CAN = bytes([0x02])
+    PWD_PIN = bytes([0x03])
+    PWD_PUK = bytes([0x04])
+
+    def __init__(self, iso7816, mrz=None, can=None, password=None):
         self.__load_brainpool()
         self._iso7816 = iso7816
         self._password = password
-        if mrz:
+        self._password_ref = None
+        if can is not None:
+            if isinstance(can, str):
+                can = can.strip().encode("ascii")
+            self._password = bytes(can)
+            self._password_ref = self.PWD_CAN
+        elif mrz:
             self._password = self.genKseed(mrz)
+            self._password_ref = self.PWD_MRZ
+
+    @property
+    def password_reference(self) -> bytes:
+        """Return the ICAO password reference byte (0x01 MRZ, 0x02 CAN, ...).
+        ``None`` if PACE was initialised with a raw password.
+        """
+        return self._password_ref
 
     # ------------------------------------------------------------------
     # Public API

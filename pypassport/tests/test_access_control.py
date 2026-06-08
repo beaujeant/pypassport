@@ -91,9 +91,10 @@ def _stub_pace_authenticator(*, success=True, exc=None):
     class _Stub:
         calls = []
 
-        def __init__(self, iso, mrz):
+        def __init__(self, iso, mrz=None, can=None):
             self._iso = iso
             self._mrz = mrz
+            self._can = can
 
         def authenticate(self, info):
             _Stub.calls.append(info)

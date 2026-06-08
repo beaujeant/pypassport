@@ -85,10 +85,25 @@ class ViewerPane:
         doc_number = self.parent.doc_number.get()
         dob = self.parent.dob.get()
         expiry = self.parent.expiry.get()
+        can = self.parent.can.get().strip() or None
+
+        mrz_supplied = bool(doc_number and dob and expiry)
+        if not mrz_supplied and not can:
+            messagebox.showerror(
+                "Passport read failed",
+                "Enter the MRZ (Number + DoB + Expiry) and/or a CAN.",
+            )
+            return
 
         try:
-            logging.info(f"{doc_number} {dob} {expiry}")
-            ep = EPassport(self.parent.reader, (doc_number, dob, expiry))
+            logging.info(f"{doc_number} {dob} {expiry}" + (f" CAN={can}" if can else ""))
+            ep = EPassport(
+                self.parent.reader,
+                (doc_number, dob, expiry) if mrz_supplied else None,
+                select_aid=False,
+            )
+            result = ep.open(can=can)
+            logging.info(f"Access control: {result.mechanism}")
         except EPassportException as e:
             logging.error(f"Could not initialize ePassport session: {e}")
             messagebox.showerror("Passport read failed", str(e))
