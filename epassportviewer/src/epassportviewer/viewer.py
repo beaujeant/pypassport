@@ -8,9 +8,9 @@ from pypassport.epassport import EPassport, EPassportException
 
 
 # All EFs shown as tabs, in display order
-_EF_NAMES = ["COM", "DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7",
-             "DG8", "DG9", "DG10", "DG11", "DG12", "DG13", "DG14",
-             "DG15", "DG16", "SOD"]
+_EF_NAMES = ["CardAccess", "CardSecurity", "COM", "DG1", "DG2", "DG3",
+             "DG4", "DG5", "DG6", "DG7", "DG8", "DG9", "DG10", "DG11",
+             "DG12", "DG13", "DG14", "DG15", "DG16", "SOD"]
 
 
 class ViewerPane:
@@ -101,7 +101,7 @@ class ViewerPane:
 
         for ef in _EF_NAMES:
             frame = ttk.Frame(ef_notebook)
-            ef_notebook.add(frame, text=ef)
+            ef_notebook.add(frame, text=ef, state="disabled")
             self._ef_tabs[ef] = frame
 
             text = tk.Text(frame, wrap="word", state="disabled", font=("Courier", 9), height=8)
@@ -111,9 +111,6 @@ class ViewerPane:
             scroll.pack(side="right", fill="y")
             text.pack(side="left", fill="both", expand=True)
             self._ef_texts[ef] = text
-
-        # Select DG1 by default
-        self._ef_notebook.select(self._ef_tabs["DG1"])
 
     def _reset_ef_tabs(self):
         for ef in _EF_NAMES:
