@@ -5,7 +5,7 @@ import string
 from pypassport.iso7816 import ISO7816Exception
 from pypassport.utils import toHexString, toBytes, parseTLV
 from pypassport.asn1 import asn1Length
-from pypassport.iso19794 import ISO19794_5
+from pypassport.iso19794 import BIOMETRIC_PARSERS
 from pypassport.doc9303 import converter
 
 # Reference: https://www.icao.int/publications/Documents/9303_p10_cons_en.pdf
@@ -430,10 +430,16 @@ class BiometricTemplates(ElementaryFile):
                     self["7F61"][i]["7F60"][bdb_tag] = bdb
                 else:
                     try:
-                        self["7F61"][i]["7F60"]["meta"], meta_len = ISO19794_5.analyse(bdb)
-                        self["7F61"][i]["7F60"][bdb_tag] = bdb[meta_len:]
+                        magic = bdb[:4]
+                        analyser = BIOMETRIC_PARSERS.get(magic)
+                        if analyser is None:
+                            logging.warning(f"BiometricTemplates: unknown biometric magic {magic!r}, storing raw BDB")
+                            self["7F61"][i]["7F60"][bdb_tag] = bdb
+                        else:
+                            self["7F61"][i]["7F60"]["meta"], meta_len = analyser(bdb)
+                            self["7F61"][i]["7F60"][bdb_tag] = bdb[meta_len:]
                     except Exception as e:
-                        logging.warning(f"BiometricTemplates: ISO 19794-5 parse failed: {e}, storing raw BDB")
+                        logging.warning(f"BiometricTemplates: CBEFF parse failed: {e}, storing raw BDB")
                         self["7F61"][i]["7F60"][bdb_tag] = bdb
 
                 offset += bit_length
@@ -472,6 +478,28 @@ class DisplayedImageTemplates(ElementaryFile):
 class Common(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"EF.COM: parse failed ({e})")
+
+    def parse(self):
+        # 5F01: LDS Version Number (e.g. b"0107" → "1.7")
+        if "5F01" in self:
+            raw = self["5F01"]
+            if isinstance(raw, bytes) and len(raw) >= 4:
+                try:
+                    self["lds_version"] = f"{int(raw[0:2])}.{int(raw[2:4])}"
+                except (ValueError, TypeError):
+                    self["lds_version"] = raw.decode('ascii', errors='replace')
+        # 5F36: Unicode Version Level (e.g. b"040000" → "4.0.0")
+        if "5F36" in self:
+            raw = self["5F36"]
+            if isinstance(raw, bytes) and len(raw) >= 6:
+                try:
+                    self["unicode_version"] = f"{int(raw[0:2])}.{int(raw[2:4])}.{int(raw[4:6])}"
+                except (ValueError, TypeError):
+                    self["unicode_version"] = raw.decode('ascii', errors='replace')
 
 
 class SOD(ElementaryFile):
@@ -678,17 +706,83 @@ class DataGroup13(ElementaryFile):
 class DataGroup14(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
-        # To be implemtend
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"DG14: SecurityInfo parse failed ({e})")
+
+    def parse(self):
+        from pypassport.doc9303.security_info import SecurityInfoParser, SecurityInfoParseError
+        self["security_infos"] = SecurityInfoParser().parse(self.body)
 
 
 class DataGroup15(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"DG15: SubjectPublicKeyInfo parse failed ({e})")
+
+    def parse(self):
+        # Body is raw DER SubjectPublicKeyInfo; parse with pyasn1 to expose
+        # algorithm OID and key size without disturbing the raw body used by
+        # active_authentication.py.
+        from pyasn1.codec.der import decoder as asn1dec
+        from pypassport.asn1 import SubjectPublicKeyInfo
+        spki, _ = asn1dec.decode(self.body, asn1Spec=SubjectPublicKeyInfo())
+        algo_oid = str(spki['algorithm']['algorithm'])
+        self["algorithm_oid"] = algo_oid
+        # Translate OID to a human-readable name when known
+        try:
+            from pypassport.der_object_identifier import OID
+            self["algorithm"] = OID.get(algo_oid, algo_oid)
+        except Exception:
+            self["algorithm"] = algo_oid
+        # Key length in bits (BitString length)
+        key_bits = spki['subjectPublicKey']
+        self["key_length_bits"] = len(key_bits)
 
 
 class DataGroup16(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"DG16: parse failed ({e})")
+
+    def parse(self):
+        # ICAO 9303 Part 10 §4.7.16: DG16 holds a counted list of person-to-
+        # notify records. 5C gives the set of tags present per person; 02 gives
+        # the count. Each person is then len(5C) consecutive TLV entries.
+        if "5C" not in self or "02" not in self:
+            return
+
+        count = int.from_bytes(self["02"], 'big')
+        person_tags = self["5C"]  # ordered list after parse_map
+
+        # Re-walk the raw body to find where person data begins (after 5C and 02)
+        data = self.body
+        offset = 0
+        seen = set()
+        while offset < len(data) and not {"5C", "02"}.issubset(seen):
+            tag, _, length = parseTLV(data[offset:])
+            seen.add(tag)
+            offset += length
+
+        persons = []
+        for _ in range(count):
+            person = {}
+            for expected_tag in person_tags:
+                if offset >= len(data):
+                    break
+                tag, value, length = parseTLV(data[offset:])
+                person[tag] = value
+                offset += length
+            persons.append(person)
+
+        self["persons"] = persons
 
 
 class ATR(ElementaryFile):
@@ -704,11 +798,27 @@ class DIR(ElementaryFile):
 class CardAccess(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"CardAccess: SecurityInfo parse failed ({e})")
+
+    def parse(self):
+        from pypassport.doc9303.security_info import SecurityInfoParser
+        self["security_infos"] = SecurityInfoParser().parse(self.body)
 
 
 class CardSecurity(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"CardSecurity: SecurityInfo parse failed ({e})")
+
+    def parse(self):
+        from pypassport.doc9303.security_info import SecurityInfoParser
+        self["security_infos"] = SecurityInfoParser().parse(self.body)
 
 
 _CLASS_MAP = {
