@@ -320,7 +320,7 @@ class ElementaryFile(dict):
         tag, value, offset = parseTLV(data)
         if tag != "02":
             raise ElementaryFileException(f"parse_array: expected tag 02, got {tag}")
-        output["02"] = int.from_bytes(value)
+        output["02"] = int.from_bytes(value, 'big')
 
         array = []
         for _ in range(output["02"]):
@@ -338,7 +338,7 @@ class ElementaryFile(dict):
             index = 0
             while index < len(map):
                 current = map[index]
-                if (current & 0x5F) == 0x5F:
+                if (current & 0x1F) == 0x1F:  # BER-TLV multi-byte tag indicator
                     reference = [current, map[index+1]]
                     index += 1
                 else:
@@ -395,40 +395,61 @@ class BiometricTemplates(ElementaryFile):
 
     def parse(self):
         if "7F61" not in self:
-            raise ElementaryFileException("BiometricTemplates: missing Biometric Information Group Template tag 7F61")
-        # Biometric Information Template Group Template
+            logging.warning("BiometricTemplates: missing 7F61, storing raw body")
+            self["raw"] = self.body
+            return
+
         bitgt = self["7F61"]
         self["7F61"] = []
 
-        tag, value, offset = parseTLV(bitgt)
-        if tag != "02":
-            raise ElementaryFileException(f"BiometricTemplates: expected tag 02, got {tag}")
-        for i in range(int.from_bytes(value)):
-            # Biometric Group Template
-            tag, bit, bit_length = parseTLV(bitgt[offset:])
-            if tag != "7F60":
-                raise ElementaryFileException(f"BiometricTemplates: expected Biometric Group Template 7F60, got {tag}")
-            self["7F61"].append({"7F60": {}})
+        try:
+            tag, value, offset = parseTLV(bitgt)
+            if tag != "02":
+                raise ElementaryFileException(f"BiometricTemplates: expected tag 02, got {tag}")
+            count = int.from_bytes(value, 'big')
 
-            # Biometric Header Template
-            tag, bht, bht_length = parseTLV(bit)
-            if tag != "A1":
-                raise ElementaryFileException(f"BiometricTemplates: expected Biometric Header Template A1, got {tag}")
-            self["7F61"][i]["7F60"]["A1"] = self.parse_dict(bht)
+            for i in range(count):
+                tag, bit, bit_length = parseTLV(bitgt[offset:])
+                if tag != "7F60":
+                    raise ElementaryFileException(f"BiometricTemplates: expected 7F60, got {tag}")
+                self["7F61"].append({"7F60": {}})
 
-            # Biometric Data Block
-            tag, bdb, _ = parseTLV(bit[bht_length:])
-            if tag not in ("5F2E", "7F2E"):
-                raise ElementaryFileException(f"BiometricTemplates: expected Biometric Data Block 5F2E or 7F2E, got {tag}")
-            self["7F61"][i]["7F60"]["meta"], meta_len = ISO19794_5.analyse(bdb)
-            self["7F61"][i]["7F60"][tag] = bdb[meta_len:]
+                inner_offset = 0
+                # Biometric Header Template (A1) is optional per spec
+                first_tag, first_val, first_len = parseTLV(bit[inner_offset:])
+                if first_tag == "A1":
+                    self["7F61"][i]["7F60"]["A1"] = self.parse_dict(first_val)
+                    inner_offset += first_len
+                    bdb_tag, bdb, _ = parseTLV(bit[inner_offset:])
+                else:
+                    # No BHT — first element is already the BDB
+                    bdb_tag, bdb = first_tag, first_val
 
-            offset += bit_length
-        # If extra data
-        while offset < len(bitgt):
-            tag, extra, extra_length = parseTLV(bitgt[offset:])
-            self["7F61"][tag] = extra
-            offset += extra_length
+                if bdb_tag not in ("5F2E", "7F2E"):
+                    logging.warning(f"BiometricTemplates: unexpected BDB tag {bdb_tag}, storing raw")
+                    self["7F61"][i]["7F60"][bdb_tag] = bdb
+                else:
+                    try:
+                        self["7F61"][i]["7F60"]["meta"], meta_len = ISO19794_5.analyse(bdb)
+                        self["7F61"][i]["7F60"][bdb_tag] = bdb[meta_len:]
+                    except Exception as e:
+                        logging.warning(f"BiometricTemplates: ISO 19794-5 parse failed: {e}, storing raw BDB")
+                        self["7F61"][i]["7F60"][bdb_tag] = bdb
+
+                offset += bit_length
+
+            # Trailing data
+            while offset < len(bitgt):
+                tag, extra, extra_length = parseTLV(bitgt[offset:])
+                self["7F61"][tag] = extra
+                offset += extra_length
+
+        except ElementaryFileException:
+            raise
+        except Exception as e:
+            logging.warning(f"BiometricTemplates: parse error ({e}), storing raw 7F61")
+            if not self["7F61"]:
+                self["7F61"] = bitgt
 
 
 class DisplayedImageTemplates(ElementaryFile):
@@ -461,69 +482,92 @@ class SOD(ElementaryFile):
 class DataGroup1(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
-        self.parse()
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"DG1: parse failed ({e}), keeping raw MRZ bytes")
 
     def parse(self):
         if "5F1F" not in self:
             raise ElementaryFileException("DG1: missing MRZ tag 5F1F")
-        length = len(self["5F1F"])
-        data = self["5F1F"].decode()
-        self["5F1F"] = {}
-        if length == 0x5A:
+        raw = self["5F1F"]
+        length = len(raw)
+        try:
+            data = raw.decode('ascii')
+        except (UnicodeDecodeError, AttributeError):
+            data = raw.decode('latin-1')
+
+        # Always preserve the raw MRZ string as a fallback
+        self["5F1F"] = {"mrz": data}
+
+        if length == 90:    # TD1: 3 lines × 30 chars
             self._parseTD1(data)
-        elif length == 0x48:
+        elif length == 72:  # TD2: 2 lines × 36 chars
             self._parseTD2(data)
-        elif length == 0x58:
+        elif length == 88:  # TD3 (passport): 2 lines × 44 chars
             self._parseTD3(data)
         else:
-            logging.error("Unknown DG1 size")
+            logging.warning(f"DG1: unknown MRZ length {length}, raw MRZ stored under 'mrz'")
 
     def _parseTD1(self, data):
-        self["5F1F"]["5F03"] = data[0:2]
-        self["5F1F"]["5F28"] = data[2:5]
-        self["5F1F"]["5A"]   = data[5:14]
-        self["5F1F"]["5F04"] = data[14:15]
-        self["5F1F"]["53"]   = data[15:30]
-        self["5F1F"]["5F57"] = data[30:36]
-        self["5F1F"]["5F05"] = data[36:37]
-        self["5F1F"]["5F35"] = data[37:38]
-        self["5F1F"]["59"]   = data[38:44]
-        self["5F1F"]["5F06"] = data[44:45]
-        self["5F1F"]["5F2C"] = data[45:48]
-        self["5F1F"]["53"]   = data[48:59]
-        self["5F1F"]["5F07"] = data[59:60]
-        self["5F1F"]["5B"]   = data[60:]
+        # ICAO 9303 Part 3 — TD1 (90 chars, 3 lines of 30)
+        # Line 1
+        self["5F1F"]["5F03"]  = data[0:2]    # Document type
+        self["5F1F"]["5F28"]  = data[2:5]    # Issuing state
+        self["5F1F"]["5A"]    = data[5:14]   # Document number
+        self["5F1F"]["5F04"]  = data[14:15]  # Check digit — doc number
+        self["5F1F"]["53_L1"] = data[15:30]  # Optional data (line 1)
+        # Line 2
+        self["5F1F"]["5F57"]  = data[30:36]  # Date of birth
+        self["5F1F"]["5F05"]  = data[36:37]  # Check digit — DOB
+        self["5F1F"]["5F35"]  = data[37:38]  # Sex
+        self["5F1F"]["59"]    = data[38:44]  # Date of expiry
+        self["5F1F"]["5F06"]  = data[44:45]  # Check digit — expiry
+        self["5F1F"]["5F2C"]  = data[45:48]  # Nationality
+        self["5F1F"]["53"]    = data[48:59]  # Optional data (line 2)
+        self["5F1F"]["5F07"]  = data[59:60]  # Composite check digit
+        # Line 3
+        self["5F1F"]["5B"]    = data[60:90]  # Holder name (primary<<secondary)
+        self["5F1F"]["5F5B"]  = data[60:90]  # Alias for cross-TD compat
 
     def _parseTD2(self, data):
-        self["5F1F"]["5F03"] = data[0:2]
-        self["5F1F"]["5F28"] = data[2:5]
-        self["5F1F"]["5B"]   = data[5:36]
-        self["5F1F"]["5A"]   = data[36:45]
-        self["5F1F"]["5F04"] = data[45]
-        self["5F1F"]["5F2C"] = data[46:49]
-        self["5F1F"]["5F57"] = data[49:55]
-        self["5F1F"]["5F05"] = data[55]
-        self["5F1F"]["5F35"] = data[56]
-        self["5F1F"]["59"]   = data[57:63]
-        self["5F1F"]["5F06"] = data[63]
-        self["5F1F"]["53"]   = data[64:71]
-        self["5F1F"]["5F07"] = data[71]
+        # ICAO 9303 Part 3 — TD2 (72 chars, 2 lines of 36)
+        # Line 1
+        self["5F1F"]["5F03"] = data[0:2]    # Document type
+        self["5F1F"]["5F28"] = data[2:5]    # Issuing state
+        self["5F1F"]["5B"]   = data[5:36]   # Holder name
+        self["5F1F"]["5F5B"] = data[5:36]   # Alias for cross-TD compat
+        # Line 2
+        self["5F1F"]["5A"]   = data[36:45]  # Document number
+        self["5F1F"]["5F04"] = data[45:46]  # Check digit — doc number
+        self["5F1F"]["5F2C"] = data[46:49]  # Nationality
+        self["5F1F"]["5F57"] = data[49:55]  # Date of birth
+        self["5F1F"]["5F05"] = data[55:56]  # Check digit — DOB
+        self["5F1F"]["5F35"] = data[56:57]  # Sex
+        self["5F1F"]["59"]   = data[57:63]  # Date of expiry
+        self["5F1F"]["5F06"] = data[63:64]  # Check digit — expiry
+        self["5F1F"]["53"]   = data[64:71]  # Optional data
+        self["5F1F"]["5F07"] = data[71:72]  # Composite check digit
 
     def _parseTD3(self, data):
-        self["5F1F"]["5F03"] = data[0:2]
-        self["5F1F"]["5F28"] = data[2:5]
-        self["5F1F"]["5F5B"] = data[5:44]
-        self["5F1F"]["5A"]   = data[44:53]
-        self["5F1F"]["5F04"] = data[53]
-        self["5F1F"]["5F2C"] = data[54:57]
-        self["5F1F"]["5F57"] = data[57:63]
-        self["5F1F"]["5F05"] = data[63]
-        self["5F1F"]["5F35"] = data[64]
-        self["5F1F"]["59"]   = data[65:71]
-        self["5F1F"]["5F06"] = data[71]
-        self["5F1F"]["53"]   = data[72:86]
-        self["5F1F"]["5F02"] = data[86]
-        self["5F1F"]["5F07"] = data[87]
+        # ICAO 9303 Part 3 — TD3 / passport (88 chars, 2 lines of 44)
+        # Line 1
+        self["5F1F"]["5F03"] = data[0:2]    # Document type
+        self["5F1F"]["5F28"] = data[2:5]    # Issuing state
+        self["5F1F"]["5F5B"] = data[5:44]   # Holder name (primary<<secondary)
+        self["5F1F"]["5B"]   = data[5:44]   # Alias for cross-TD compat
+        # Line 2
+        self["5F1F"]["5A"]   = data[44:53]  # Document number
+        self["5F1F"]["5F04"] = data[53:54]  # Check digit — doc number
+        self["5F1F"]["5F2C"] = data[54:57]  # Nationality
+        self["5F1F"]["5F57"] = data[57:63]  # Date of birth
+        self["5F1F"]["5F05"] = data[63:64]  # Check digit — DOB
+        self["5F1F"]["5F35"] = data[64:65]  # Sex
+        self["5F1F"]["59"]   = data[65:71]  # Date of expiry
+        self["5F1F"]["5F06"] = data[71:72]  # Check digit — expiry
+        self["5F1F"]["53"]   = data[72:86]  # Personal number / optional data
+        self["5F1F"]["5F02"] = data[86:87]  # Check digit — personal number
+        self["5F1F"]["5F07"] = data[87:88]  # Composite check digit
 
 
 class DataGroup2(BiometricTemplates):
@@ -581,30 +625,48 @@ class DataGroup10(ElementaryFile):
 
 
 class DataGroup11(ElementaryFile):
+    # Tags whose value is a counted array of repeated sub-TLV entries (ICAO 9303 Part 10 §4.7.11)
+    _ARRAY_TAGS = {"5F0F", "5F17"}
+
     def __init__(self, file=None):
         super().__init__(file=file)
-        #self.parse()
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"DG11: parse failed ({e}), keeping raw TLV data")
 
     def parse(self):
-        if "A0" not in self:
-            raise ElementaryFileException("DG11: missing tag A0")
-        tag, value, offset = self.parse_array(self["A0"])
-        if tag != "5F0F":
-            raise ElementaryFileException(f"DG11: expected tag 5F0F, got {tag}")
-        self["A0"].update(value)
+        if "5C" not in self:
+            return
+        for tag in self["5C"]:
+            if tag not in self or tag not in self._ARRAY_TAGS:
+                continue
+            try:
+                _, parsed, _ = self.parse_array(self[tag])
+                # Replace raw bytes with the decoded list; keep count under "02"
+                self[tag] = parsed
+            except Exception as e:
+                logging.warning(f"DG11: array parse failed for tag {tag}: {e}")
 
 
 class DataGroup12(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
-        self.parse()
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"DG12: parse failed ({e}), keeping raw TLV data")
 
     def parse(self):
-        if "A0" in self["5C"]:
-            tag, value, offset = self.parse_array(self["A0"])
-            if tag != "5F0F":
-                raise ElementaryFileException(f"DG12: expected tag 5F0F, got {tag}")
-            self["A0"].update(value)
+        if "5C" not in self:
+            return
+        # A0 wraps a counted array of 5F1A (names of other persons on the document)
+        if "A0" in self["5C"] and "A0" in self:
+            try:
+                tag, parsed, _ = self.parse_array(self["A0"])
+                self["A0"] = parsed  # {"02": count, tag: [bytes, ...]}
+            except Exception as e:
+                logging.warning(f"DG12: A0 array parse failed: {e}")
 
 
 class DataGroup13(ElementaryFile):
