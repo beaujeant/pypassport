@@ -5,15 +5,15 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
-from pypassport.doc9303.converter import toTAG
 
 
 # Row 1: file-system / meta EFs in logical access order
-_ROW1 = ["ATR/INFO", "DIR", "CardAccess", "CardSecurity", "COM", "SOD"]
-# Row 2: data groups
-_ROW2 = ["DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7", "DG8",
-         "DG9", "DG10", "DG11", "DG12", "DG13", "DG14", "DG15", "DG16"]
-_EF_NAMES = _ROW1 + _ROW2
+_ROW1 = ["ATR/INFO", "DIR", "CardAccess", "COM", "SOD"]
+# Row 2: DG1–DG8
+_ROW2 = ["DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7", "DG8"]
+# Row 3: DG9–DG16
+_ROW3 = ["DG9", "DG10", "DG11", "DG12", "DG13", "DG14", "DG15", "DG16"]
+_EF_NAMES = _ROW1 + _ROW2 + _ROW3
 
 
 class ViewerPane:
@@ -113,7 +113,7 @@ class ViewerPane:
         style.configure("EFTab.TButton", font=("", 8), padding=(4, 2))
         style.configure("EFTabActive.TButton", font=("", 8, "bold"), padding=(4, 2))
 
-        for row_index, row_efs in enumerate((_ROW1, _ROW2)):
+        for row_index, row_efs in enumerate((_ROW1, _ROW2, _ROW3)):
             row_frame = ttk.Frame(tab_bar)
             row_frame.pack(fill="x", side="top")
             for ef in row_efs:
@@ -307,28 +307,17 @@ class ViewerPane:
 
         # Populate EF tabs
         self._reset_ef_tabs()
-        seen_tags = {}  # hex_tag -> first ef_name that claimed it
         for ef in _EF_NAMES:
             # DG1 is guaranteed readable — use the already-parsed local variable
             # so a failed re-read attempt never clears the tab.
             if ef == "DG1":
                 self._set_ef_content("DG1", self._ef_to_str("DG1", dg1))
-                seen_tags[toTAG("DG1")] = "DG1"
                 continue
 
             # ATR/INFO and DIR live in the MF, not the eMRTD DF.  They were
             # read via raw ISO7816 before ep.open() selected the eMRTD AID.
             if ef in mf_ef_raw:
                 self._set_ef_content(ef, mf_ef_raw[ef])
-                continue
-
-            # Detect EFs that share the same underlying file (e.g. SOD / CardSecurity).
-            try:
-                hex_tag = toTAG(ef)
-            except Exception:
-                hex_tag = None
-            if hex_tag and hex_tag in seen_tags:
-                self._set_ef_content(ef, f"(Same file as {seen_tags[hex_tag]})")
                 continue
 
             try:
@@ -347,8 +336,6 @@ class ViewerPane:
                 logging.warning(f"Could not stringify {ef}: {e}")
                 content = f"(Could not display {ef}: {e})"
             self._set_ef_content(ef, content)
-            if hex_tag:
-                seen_tags[hex_tag] = ef
 
         self._select_ef("DG1")
 
