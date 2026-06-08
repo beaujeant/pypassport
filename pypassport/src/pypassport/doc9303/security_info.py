@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from pyasn1.codec.der.decoder import decode as asn1decode
+from pypassport.utils import parseTLV
 
 
 # Mapping of known PACE protocol OIDs (BSI TR-03110 part 3, A.1.1.2).
@@ -131,30 +132,74 @@ class SecurityInfoParser:
         if not data:
             raise SecurityInfoParseError("Empty SecurityInfos blob")
 
+        # Strip Application-class wrappers (some chips add one or more layers)
+        while data and (data[0] & 0xC0) == 0x40:
+            try:
+                _, data, _ = parseTLV(data)
+            except Exception:
+                break
+
+        if not data:
+            raise SecurityInfoParseError("Empty after unwrapping")
+
+        # Strip the outer SET (0x31) to get the raw element bytes
+        if data[0] != 0x31:
+            raise SecurityInfoParseError(
+                f"DER decoding failed: <TagSet object, tags {data[0] >> 6}:{(data[0] >> 5) & 1}:{data[0] & 0x1F}> not in asn1Spec: None"
+            )
         try:
-            decoded, _ = asn1decode(data)
+            _, set_val, _ = parseTLV(data)
         except Exception as exc:
             raise SecurityInfoParseError(f"DER decoding failed: {exc}") from exc
 
+        # Walk SET elements one by one so that non-SEQUENCE elements (e.g.
+        # Application-class tags some chips embed) are silently skipped rather
+        # than aborting the entire decode.
         infos: List[PACEInfo] = []
-        for seq in decoded:
+        pos = 0
+        while pos < len(set_val):
             try:
+                tag, elem_val, consumed = parseTLV(set_val[pos:])
+            except Exception:
+                break
+            pos += consumed
+
+            if tag != "30":
+                continue
+
+            # Reconstruct the SEQUENCE TLV and let pyasn1 decode it
+            n = len(elem_val)
+            if n < 0x80:
+                enc_len = bytes([n])
+            elif n < 0x100:
+                enc_len = bytes([0x81, n])
+            else:
+                enc_len = bytes([0x82, n >> 8, n & 0xFF])
+            seq_der = b"\x30" + enc_len + elem_val
+
+            try:
+                seq, _ = asn1decode(seq_der)
                 oid_str = str(seq[0])
             except Exception:
                 continue
+
             if not oid_str.startswith(self._PACE_OID_PREFIX):
                 continue
+
             try:
                 version = int(seq[1])
             except Exception:
                 continue
+
             parameter_id: Optional[int] = None
             if len(seq) > 2:
                 try:
                     parameter_id = int(seq[2])
                 except Exception:
-                    parameter_id = None
+                    pass
+
             infos.append(PACEInfo(oid=oid_str, version=version, parameter_id=parameter_id))
+
         return infos
 
     def select_supported(self, infos: List[PACEInfo]) -> Optional[PACEInfo]:

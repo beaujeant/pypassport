@@ -11,6 +11,7 @@ from pyasn1.type.univ import (
     BitString,
     Null,
 )
+from pyasn1.type.char import VisibleString
 from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
 from pyasn1.type.namedval import NamedValues
 from pyasn1.type.constraint import ValueSizeConstraint
@@ -25,7 +26,8 @@ class asn1Exception(Exception):
 
 class LDSSecurityObjectVersion(Integer):
     namedValues = NamedValues(
-        ('V0', 0)
+        ('V0', 0),
+        ('V1', 1),
     )
 
 
@@ -72,11 +74,19 @@ class AlgorithmIdentifier(Sequence):
 DigestAlgorithmIdentifier = AlgorithmIdentifier()
 
 
+class LDSVersionInfo(Sequence):
+    componentType = NamedTypes(
+        NamedType('ldsVersion', VisibleString()),
+        NamedType('unicodeVersion', VisibleString()),
+    )
+
+
 class LDSSecurityObject(Sequence):
     componentType = NamedTypes(
         NamedType('version', LDSSecurityObjectVersion()),
         NamedType('hashAlgorithm', DigestAlgorithmIdentifier),
         NamedType('dataGroupHashValues', DataGroupHashValues()),
+        OptionalNamedType('ldsVersionInfo', LDSVersionInfo()),
     )
 
 

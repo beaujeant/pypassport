@@ -758,6 +758,12 @@ class SOD(ElementaryFile):
                     dg_num = int(h["dataGroupNumber"])
                     dg_hashes[dg_num] = bytes(h["dataGroupHashValue"]).hex()
                 self["dg_hashes"] = dg_hashes
+                lds_vi = lds_obj.getComponentByName("ldsVersionInfo")
+                if lds_vi is not None and lds_vi.hasValue():
+                    self["lds_version_info"] = {
+                        "lds_version": str(lds_vi["ldsVersion"]),
+                        "unicode_version": str(lds_vi["unicodeVersion"]),
+                    }
             except Exception as e:
                 logging.warning(f"SOD: LDSSecurityObject decode failed: {e}")
 
