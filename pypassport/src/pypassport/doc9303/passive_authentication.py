@@ -1,9 +1,9 @@
 import logging
 import hashlib
 from pyasn1.codec.der import decoder
-from pypassport import hex_functions
+from pypassport import hex_utils
 from pypassport.doc9303 import converter
-from pypassport.doc9303 import datagroup
+from pypassport.doc9303 import data_group
 from pypassport.der_object_identifier import OID, OIDException
 from pypassport.ca_manager import CAManager
 from pypassport.openssl import OpenSSL
@@ -69,7 +69,7 @@ class PassiveAuthentication:
         if CSCADirectory is None:
             raise PassiveAuthenticationException("CSCADirectory is not set")
 
-        if not isinstance(sodObj, datagroup.SOD):
+        if not isinstance(sodObj, data_group.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
         if not isinstance(CSCADirectory, CAManager):
@@ -125,7 +125,7 @@ class PassiveAuthentication:
         """
         logging.debug("Verify SOD by using Document Signer Public Key (KPuDS))")
 
-        if not isinstance(sodObj, datagroup.SOD):
+        if not isinstance(sodObj, data_group.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
         if sodObj.body is None:
@@ -166,7 +166,7 @@ class PassiveAuthentication:
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
         @raise openSSLException: See the openssl documentation
         """
-        if not isinstance(sodObj, datagroup.SOD):
+        if not isinstance(sodObj, data_group.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
         if sodObj.body is None:
@@ -260,6 +260,6 @@ class PassiveAuthentication:
 
         for dghv in self._content["dataGroupHashValues"].keys():
             res += "Data group: " + converter.toEF(dghv) + "\n"
-            res += "Hash value: " + hex_functions.binToHexRep(self._content["dataGroupHashValues"][dghv]) + "\n"
+            res += "Hash value: " + hex_utils.binToHexRep(self._content["dataGroupHashValues"][dghv]) + "\n"
 
         return res

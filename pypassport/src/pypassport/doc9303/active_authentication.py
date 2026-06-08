@@ -4,10 +4,10 @@ from pyasn1.codec.der import decoder
 import logging
 
 from pypassport.asn1 import SubjectPublicKeyInfo
-from pypassport import hex_functions
+from pypassport import hex_utils
 from pypassport.der_object_identifier import OID, OIDException
 from pypassport.openssl import OpenSSL, OpenSSLException
-from pypassport.doc9303 import datagroup
+from pypassport.doc9303 import data_group
 from pypassport.utils import toHexString
 
 class ActiveAuthenticationException(Exception):
@@ -68,7 +68,7 @@ class ActiveAuthentication():
         self.M_ = self.M1 + self.RND_IFD
 
         logging.debug("Concatenate M1 with known M2")
-        logging.debug("\tM*: " + hex_functions.binToHexRep(self.M_))
+        logging.debug("\tM*: " + hex_utils.binToHexRep(self.M_))
 
         self.D_ = self._hash(hash_fn, self.M_)
 
@@ -80,7 +80,7 @@ class ActiveAuthentication():
     def _genRandom(self, size):
         rnd_ifd = Random.get_random_bytes(size)
         logging.debug("Generate an 8 byte random")
-        logging.debug("\tRND.IFD: " + hex_functions.binToHexRep(rnd_ifd))
+        logging.debug("\tRND.IFD: " + hex_utils.binToHexRep(rnd_ifd))
         return rnd_ifd
 
     def getPubKey(self, dg15):
@@ -93,7 +93,7 @@ class ActiveAuthentication():
         @raise ActiveAuthenticationException: I{The public key could not be recovered from the DG15}: Is open SSL installed?
         """
 
-        if not isinstance(dg15, datagroup.DataGroup15):
+        if not isinstance(dg15, data_group.DataGroup15):
             raise ActiveAuthenticationException("The parameter type is not valid, must be a dataGroup15 object")
 
         return self._openssl.retrieveRsaPubKey(dg15.body)
@@ -101,7 +101,7 @@ class ActiveAuthentication():
     def _decryptSignature(self, pubK, signature):
         data = self._openssl.retrieveSignedData(pubK, signature)
         logging.debug("Decrypt the signature with the public key")
-        logging.debug("\tF: " + hex_functions.binToHexRep(data))
+        logging.debug("\tF: " + hex_utils.binToHexRep(data))
 
         return data
 
@@ -109,7 +109,7 @@ class ActiveAuthentication():
         digest = hash_fn(data).digest()
 
         logging.debug("Calculate digest of M*")
-        logging.debug("\tD*: " + hex_functions.binToHexRep(digest))
+        logging.debug("\tD*: " + hex_utils.binToHexRep(digest))
 
         return digest
 
@@ -118,11 +118,11 @@ class ActiveAuthentication():
         offset = None
         hashSize = None
 
-        if sig[-1] == hex_functions.hexRepToBin("BC"):
+        if sig[-1] == hex_utils.hexRepToBin("BC"):
             self.T = sig[-1]
             hash_fn = sha1
             offset = -1
-        elif sig[-1] == hex_functions.hexRepToBin("CC"):
+        elif sig[-1] == hex_utils.hexRepToBin("CC"):
             self.T = sig[-2]
             #hash_fn = The algorithm corresponding to the algo designed by T
             offset = -2
@@ -130,7 +130,7 @@ class ActiveAuthentication():
             raise ActiveAuthenticationException("Unknow hash algorithm")
 
         logging.debug("Determine hash algorithm by trailer T*")
-        logging.debug("\tT: " + hex_functions.binToHexRep(self.T))
+        logging.debug("\tT: " + hex_utils.binToHexRep(self.T))
 
         #Find out the hash size
         hashSize = len(hash_fn(b"test").digest())
@@ -141,7 +141,7 @@ class ActiveAuthentication():
         digest = sig[offset - hashSize:offset]
 
         logging.debug("Extract digest:")
-        logging.debug("\tD: " + hex_functions.binToHexRep(digest))
+        logging.debug("\tD: " + hex_utils.binToHexRep(digest))
 
         return digest
 
@@ -149,7 +149,7 @@ class ActiveAuthentication():
         M1 = sig[1:offset - hashSize]
 
         logging.debug("Extract M1:")
-        logging.debug("\tM1: " + hex_functions.binToHexRep(M1))
+        logging.debug("\tM1: " + hex_utils.binToHexRep(M1))
 
         return M1
 
@@ -164,7 +164,7 @@ class ActiveAuthentication():
         @raise ActiveAuthenticationException: I{Unsupported algorithm}: The algorithm does not exist in the OID enumeration.
         @raise ActiveAuthenticationException: I{The parameter type is not valid, must be a dataGroup15 object}: The parameter dg15 is not set or is invalid.
         """
-        if not isinstance(dg15, datagroup.DataGroup15):
+        if not isinstance(dg15, data_group.DataGroup15):
             raise ActiveAuthenticationException("The parameter type is not valid, must be a dataGroup15 object")
         algo = ""
         try:

@@ -7,7 +7,7 @@ from pypassport.iso7816 import ISO7816, ISO7816Exception, APDUResponse
 from pypassport.doc9303.bac import BAC, BACException
 from pypassport.reader import ReaderException
 from pypassport.doc9303.mrz import MRZ
-from pypassport.hex_functions import hexToHexRep, binToHexRep
+from pypassport.hex_utils import hexToHexRep, binToHexRep
 
 class MacTraceabilityException(Exception):
     pass

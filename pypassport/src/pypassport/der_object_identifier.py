@@ -2,7 +2,7 @@
 
 OID maps an OID dotted-string to a human-readable algorithm name.
 OIDrevert provides the reverse mapping.
-passiveauthentication.py uses a dedicated _HASH_ALGORITHMS dispatch table
+passive_authentication.py uses a dedicated _HASH_ALGORITHMS dispatch table
 (keyed by OID) to obtain hashlib constructors directly.
 """
 

@@ -32,7 +32,7 @@ from pypassport.iso9797 import mac, pad, unpad
 from pypassport.reader import ReaderException
 from pypassport.doc9303.mrz import MRZ
 # TODO: pypassport.apdu does not exist; APDU classes live in pypassport.iso7816
-from pypassport.hex_functions import hexToHexRep, binToHexRep, hexRepToBin
+from pypassport.hex_utils import hexToHexRep, binToHexRep, hexRepToBin
 
 class BruteForceException(Exception):
     pass

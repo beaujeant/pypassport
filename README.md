@@ -151,6 +151,19 @@ python -m epassportviewer  # run as a module
 
 ---
 
+## PACE support
+
+PACE (Password Authenticated Connection Establishment) is now fully implemented for the **ECDH Generic Mapping** variants with AES session keys. These are the variants advertised by modern EU passports.
+
+| OID | Algorithm | Status |
+|-----|-----------|--------|
+| `0.4.0.127.0.7.2.2.4.2.2` | ECDH-GM / Brainpool P-256-r1 / AES-128-CBC-CMAC | **Supported** |
+| `0.4.0.127.0.7.2.2.4.2.3` | ECDH-GM / Brainpool P-256-r1 / AES-192-CBC-CMAC | **Supported** |
+| `0.4.0.127.0.7.2.2.4.2.4` | ECDH-GM / Brainpool P-256-r1 / AES-256-CBC-CMAC | **Supported** |
+
+The access-control negotiator (`AccessControlNegotiator`) selects PACE automatically when the chip advertises a supported OID in EF.CardAccess, and falls back to BAC for older chips. After a successful PACE run, AES-CBC/CMAC Secure Messaging replaces the 3DES/retail-MAC channel used by BAC.
+
+KDF counters and hash algorithms follow BSI TR-03110 §4.3.3: SHA-1 for AES-128 keys, SHA-256 for AES-192 and AES-256 keys.
 ## Troubleshooting
 
 ### ACR122U not detected by PC/SC (`LIBUSB_ERROR_BUSY`)

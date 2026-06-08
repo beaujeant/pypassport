@@ -1,13 +1,18 @@
 import os
 import logging
 from pypassport.doc9303 import converter
-from pypassport.doc9303 import securemessaging
+from pypassport.doc9303 import secure_messaging
 from pypassport.doc9303.mrz import MRZ
-from pypassport.doc9303.bac import BAC
+from pypassport.doc9303.bac import BAC, BACException
 from pypassport.doc9303.pace import PACE
-from pypassport.doc9303.datagroup import readElementaryFile, ElementaryFileException, DataGroupDump
-from pypassport.doc9303.activeauthentication import ActiveAuthentication, ActiveAuthenticationException
-from pypassport.doc9303.passiveauthentication import PassiveAuthentication, PassiveAuthenticationException
+from pypassport.doc9303.data_group import readElementaryFile, ElementaryFileException, DataGroupDump
+from pypassport.doc9303.active_authentication import ActiveAuthentication, ActiveAuthenticationException
+from pypassport.doc9303.passive_authentication import PassiveAuthentication, PassiveAuthenticationException
+from pypassport.doc9303.access_control import (
+    AccessControlNegotiationError,
+    AccessControlNegotiator,
+    MODE_AUTO,
+)
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport import ca_manager
 from pypassport.openssl import OpenSSL, OpenSSLException
@@ -34,12 +39,16 @@ class EPassport(dict):
     @param epMrz: The passport MRZ string or tuple used for BAC key derivation.
     """
 
-    def __init__(self, reader, epMrz=None):
+    def __init__(self, reader, epMrz=None, *, select_aid=True):
         """
         Initialise the ePassport object.
 
         @param reader: A reader object or path to dump files for the simulator.
         @param epMrz: MRZ string/tuple. Required for BAC; optional otherwise.
+        @param select_aid: If True (default), select the eMRTD application
+            immediately after connecting. Set to False when the caller plans
+            to drive access control via :meth:`open`, which will select the
+            AID itself after the chosen mechanism (PACE or BAC) has run.
         @raise EPassportException: If the MRZ is invalid, no passport is
             present, or the chip does not contain an eMRTD applet.
         """
@@ -63,12 +72,53 @@ class EPassport(dict):
         self._aa = ActiveAuthentication(self.iso7816, self._openSSL)
         self._pa = PassiveAuthentication(self._openSSL)
         self._CSCADirectory = None
+        self._access_control = None
 
-        # Select eMRTD Dedicated File (DF) with its DF Name (AIS) = A0000002471001
+        if select_aid:
+            # Select eMRTD Dedicated File (DF) with AID = A0000002471001
+            try:
+                self.iso7816.selectDedicatedFile("A0000002471001")
+            except ISO7816Exception:
+                raise EPassportException("The chip does not contain eMRTD applet")
+
+    @property
+    def accessControl(self):
+        """The NegotiationResult from the last successful :meth:`open` call,
+        or None if access control was driven via the legacy
+        :meth:`doBasicAccessControl` path."""
+        return self._access_control
+
+    def open(self, mrz=None, access_control=MODE_AUTO):
+        """
+        Set up secure messaging via PACE or BAC, then select the eMRTD AID.
+
+        This is the recommended entry point for reading a passport. It
+        inspects ``EF.CardAccess`` (when allowed) to pick the best mechanism,
+        runs it, and leaves the chip selected on the eMRTD application
+        ready for reading EF.COM, EF.SOD, DG1, DG2, etc.
+
+        @param mrz: An MRZ string/tuple/object. If not provided, the MRZ
+            supplied to ``__init__`` is used.
+        @param access_control: One of ``"auto"``, ``"pace"``, ``"bac"``,
+            ``"none"``. See :class:`AccessControlNegotiator` for semantics.
+        @return: The :class:`NegotiationResult` describing what ran.
+        @raise EPassportException: If access control fails or no MRZ is
+            available when one is required.
+        """
+        if mrz is not None:
+            new_mrz = MRZ(mrz) if not isinstance(mrz, MRZ) else mrz
+            if not new_mrz.checkMRZ():
+                raise EPassportException("Invalid MRZ")
+            self._mrz = new_mrz
+            self._pace = PACE(self.iso7816, self._mrz)
+
         try:
-            self.iso7816.selectDedicatedFile("A0000002471001")
-        except ISO7816Exception:
-            raise EPassportException("The chip does not contain eMRTD applet")
+            result = AccessControlNegotiator(self.iso7816).open(self._mrz, mode=access_control)
+        except AccessControlNegotiationError as exc:
+            raise EPassportException(str(exc)) from exc
+
+        self._access_control = result
+        return result
 
     @property
     def openSsl(self):
@@ -103,15 +153,25 @@ class EPassport(dict):
         """
         Execute the Basic Access Control protocol and set up secure messaging.
 
-        @raise EPassportException: If the MRZ is not initialised.
+        @raise EPassportException: If the MRZ is not initialised, the chip
+            rejects the BAC keys (likely incorrect MRZ), or any other low-level
+            communication failure occurs during the BAC protocol.
         """
         logging.info("Basic Access Control: Enabling Secure Messaging")
         if self._mrz is None:
             logging.warning("No MRZ provided")
             raise EPassportException("The object must be initialized with the ePassport MRZ")
 
-        (KSenc, KSmac, ssc) = self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
-        sm = securemessaging.SecureMessaging(KSenc, KSmac, ssc)
+        try:
+            (KSenc, KSmac, ssc) = self._bac.authenticationAndEstablishmentOfSessionKeys(self._mrz)
+        except BACException as e:
+            raise EPassportException(str(e)) from e
+        except ISO7816Exception as e:
+            raise EPassportException(
+                f"BAC failed: chip returned {e.sw1:02X}{e.sw2:02X} ({e.data})."
+            ) from e
+
+        sm = secure_messaging.SecureMessaging(KSenc, KSmac, ssc)
         self.iso7816.ciphering = sm
 
     def doActiveAuthentication(self, dg15=None):
@@ -274,11 +334,20 @@ class EPassport(dict):
                 dg = readElementaryFile(tag, self.iso7816)
             except ISO7816Exception as e:
                 if not self.iso7816.ciphering and e.sw1 == 0x69 and e.sw2 == 0x82:
+                    # BAC failures are converted to EPassportException by
+                    # doBasicAccessControl and intentionally propagate so the
+                    # caller can show a meaningful error.
                     self.doBasicAccessControl()
-                    dg = readElementaryFile(tag, self.iso7816)
+                    try:
+                        dg = readElementaryFile(tag, self.iso7816)
+                    except ISO7816Exception as e2:
+                        logging.error(f"Could not read the DG after BAC ({e2.data})")
+                        dg = None
                 else:
                     logging.error(f"Could not read the DG ({e.data})")
                     dg = None
+            except EPassportException:
+                raise
             except Exception as msg:
                 logging.exception(msg)
             if dg:

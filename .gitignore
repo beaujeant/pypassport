@@ -155,5 +155,8 @@ cython_debug/
 .vscode/
 # .idea/
 
-# Private test data
-pypassport/tests/
+# Private test data — keep the unit tests, exclude everything else.
+pypassport/tests/*
+!pypassport/tests/__init__.py
+!pypassport/tests/conftest.py
+!pypassport/tests/test_*.py
