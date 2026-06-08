@@ -92,42 +92,77 @@ class ViewerPane:
         self.fields["optional"] = ttk.Label(info_frame, text=default_val)
         self.fields["optional"].grid(row=9, column=1, sticky="w", pady=(4, 10), padx=5)
 
-        # EF tab panel — fills remaining vertical space
-        ef_notebook = ttk.Notebook(self.root.view_tab)
-        ef_notebook.pack(fill="both", expand=True, padx=10, pady=(0, 5))
-        self._ef_notebook = ef_notebook
-        self._ef_texts = {}   # ef_name -> tk.Text widget
-        self._ef_tabs = {}    # ef_name -> tab frame
+        # EF panel: two-row custom tab bar + shared content area
+        ef_panel = ttk.Frame(self.root.view_tab)
+        ef_panel.pack(fill="both", expand=True, padx=10, pady=(0, 5))
 
-        for ef in _EF_NAMES:
-            frame = ttk.Frame(ef_notebook)
-            ef_notebook.add(frame, text=ef, state="disabled")
-            self._ef_tabs[ef] = frame
+        # Two-row button bar
+        tab_bar = ttk.Frame(ef_panel, relief="groove", borderwidth=1)
+        tab_bar.pack(fill="x")
 
-            text = tk.Text(frame, wrap="word", state="disabled", font=("Courier", 9), height=8)
-            self._default_fg = text.cget("foreground")
-            scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
-            text.configure(yscrollcommand=scroll.set)
-            scroll.pack(side="right", fill="y")
-            text.pack(side="left", fill="both", expand=True)
-            self._ef_texts[ef] = text
+        _COLS = 10
+        self._ef_buttons = {}
+        self._ef_contents = {}   # ef_name -> str content or None
+        self._selected_ef = None
+
+        style = ttk.Style()
+        style.configure("EFTab.TButton", font=("", 8), padding=(4, 2))
+        style.configure("EFTabActive.TButton", font=("", 8, "bold"), padding=(4, 2))
+
+        for i, ef in enumerate(_EF_NAMES):
+            row, col = divmod(i, _COLS)
+            btn = ttk.Button(
+                tab_bar, text=ef, style="EFTab.TButton",
+                state="disabled", command=lambda e=ef: self._select_ef(e),
+            )
+            btn.grid(row=row, column=col, padx=1, pady=1, sticky="ew")
+            tab_bar.columnconfigure(col, weight=1)
+            self._ef_buttons[ef] = btn
+
+        # Shared content area
+        content_frame = ttk.Frame(ef_panel, relief="sunken", borderwidth=1)
+        content_frame.pack(fill="both", expand=True)
+
+        self._ef_text = tk.Text(
+            content_frame, wrap="word", state="disabled",
+            font=("Courier", 9), height=8,
+        )
+        self._ef_text_default_fg = self._ef_text.cget("foreground")
+        scroll = ttk.Scrollbar(content_frame, orient="vertical", command=self._ef_text.yview)
+        self._ef_text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self._ef_text.pack(side="left", fill="both", expand=True)
+
+    def _select_ef(self, ef):
+        self._selected_ef = ef
+        content = self._ef_contents.get(ef)
+        self._ef_text.configure(state="normal")
+        self._ef_text.delete("1.0", "end")
+        if content:
+            self._ef_text.insert("end", content)
+        self._ef_text.configure(state="disabled")
+        for name, btn in self._ef_buttons.items():
+            if self._ef_contents.get(name) is not None:
+                btn.configure(style="EFTabActive.TButton" if name == ef else "EFTab.TButton")
 
     def _reset_ef_tabs(self):
-        for ef in _EF_NAMES:
-            self._set_ef_content(ef, None)
+        self._selected_ef = None
+        self._ef_contents = {ef: None for ef in _EF_NAMES}
+        for btn in self._ef_buttons.values():
+            btn.configure(state="disabled", style="EFTab.TButton")
+        self._ef_text.configure(state="normal")
+        self._ef_text.delete("1.0", "end")
+        self._ef_text.configure(state="disabled")
 
     def _set_ef_content(self, ef, content):
-        """Set tab content. None means unreadable (greyed out, empty)."""
-        text_widget = self._ef_texts[ef]
-        text_widget.configure(state="normal")
-        text_widget.delete("1.0", "end")
+        self._ef_contents[ef] = content
+        btn = self._ef_buttons[ef]
         if content is not None:
-            text_widget.insert("end", content)
-            text_widget.configure(state="disabled", foreground=self._default_fg)
-            self._ef_notebook.tab(self._ef_tabs[ef], state="normal")
+            btn.configure(state="normal", style="EFTab.TButton")
+            if self._selected_ef == ef:
+                self._select_ef(ef)
         else:
-            text_widget.configure(state="disabled", foreground="gray")
-            self._ef_notebook.tab(self._ef_tabs[ef], state="disabled")
+            btn.configure(state="disabled", style="EFTab.TButton")
 
     def _ef_to_str(self, ef_name, data):
         if data is None:
@@ -263,7 +298,7 @@ class ViewerPane:
                 content = f"(Could not display {ef}: {e})"
             self._set_ef_content(ef, content)
 
-        self._ef_notebook.select(self._ef_tabs["DG1"])
+        self._select_ef("DG1")
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)
