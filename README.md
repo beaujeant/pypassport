@@ -164,3 +164,72 @@ PACE (Password Authenticated Connection Establishment) is now fully implemented 
 The access-control negotiator (`AccessControlNegotiator`) selects PACE automatically when the chip advertises a supported OID in EF.CardAccess, and falls back to BAC for older chips. After a successful PACE run, AES-CBC/CMAC Secure Messaging replaces the 3DES/retail-MAC channel used by BAC.
 
 KDF counters and hash algorithms follow BSI TR-03110 §4.3.3: SHA-1 for AES-128 keys, SHA-256 for AES-192 and AES-256 keys.
+## Troubleshooting
+
+### ACR122U not detected by PC/SC (`LIBUSB_ERROR_BUSY`)
+
+The ACR122U uses an NXP PN532 NFC chip internally. On Linux, the kernel's built-in
+NFC modules (`pn533_usb`, `pn533`, `nfc`) automatically claim the device at the USB
+level before the PC/SC daemon (pcscd) gets a chance to. This causes the reader to fail
+with `Can't claim interface: LIBUSB_ERROR_BUSY`.
+
+**1. Install the driver:**
+
+Arch / Manjaro:
+```bash
+yay -S acsccid
+```
+
+Debian / Ubuntu:
+```bash
+sudo apt install pcscd acsccid pcsc-tools
+```
+
+**2. Blacklist the conflicting kernel modules:**
+
+```bash
+sudo tee /etc/modprobe.d/blacklist-nfc.conf <<EOF
+blacklist pn533_usb
+blacklist pn533
+blacklist nfc
+EOF
+```
+
+**3. Unload them for the current session (no reboot needed):**
+
+```bash
+sudo modprobe -r pn533_usb pn533 nfc
+```
+
+**4. Make sure only one pcscd instance is running:**
+
+```bash
+sudo systemctl stop pcscd pcscd.socket
+sudo killall pcscd 2>/dev/null
+sudo systemctl start pcscd
+```
+
+**5. Verify the reader is detected:**
+
+```bash
+pcsc_scan
+```
+
+---
+
+### Reader detected but card not found
+
+- Make sure the passport (or card) is placed **flat and centred** on the reader.
+- The ACR122U has a short read range — keep the card still and within a few mm of the surface.
+- Try a different USB port (preferably USB 2.0; some USB 3.0 ports cause instability).
+
+### Stale pcscd process holding the device
+
+If the reader was working and suddenly stops after a suspend/resume or replug, a stale
+pcscd process may still be holding the USB interface:
+
+```bash
+sudo fuser /dev/bus/usb/$(lsusb -d 072f:2200 | awk '{print $2"/"$4}' | tr -d :)
+```
+
+Kill any stale PID shown, then restart pcscd normally.
