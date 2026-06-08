@@ -10,6 +10,25 @@ from pypassport.doc9303 import converter
 
 # Reference: https://www.icao.int/publications/Documents/9303_p10_cons_en.pdf
 
+
+def _unwrap_security_infos(data: bytes) -> bytes:
+    """Return the raw DER SecurityInfos SET from *data*.
+
+    Some chips (and some card-emulation test tools) nest the SecurityInfos
+    SET inside an extra Application-class TLV (e.g. tag 0x42) on top of the
+    outer LDS wrapper that is already stripped by readElementaryFile.  When
+    that happens the first byte of *data* has class bits 0x40 (Application)
+    rather than 0x20 (Constructed Universal, i.e. SET = 0x31).  Strip one
+    level of Application-class wrapping so the inner SET reaches pyasn1.
+    """
+    if data and (data[0] & 0xC0) == 0x40:  # Application-class tag
+        try:
+            _, inner, _ = parseTLV(data)
+            return inner
+        except Exception:
+            pass
+    return data
+
 # DOC9303-2 pg III-38
 
 
@@ -712,8 +731,8 @@ class DataGroup14(ElementaryFile):
             logging.warning(f"DG14: SecurityInfo parse failed ({e})")
 
     def parse(self):
-        from pypassport.doc9303.security_info import SecurityInfoParser, SecurityInfoParseError
-        self["security_infos"] = SecurityInfoParser().parse(self.body)
+        from pypassport.doc9303.security_info import SecurityInfoParser
+        self["security_infos"] = SecurityInfoParser().parse(_unwrap_security_infos(self.body))
 
 
 class DataGroup15(ElementaryFile):
@@ -805,7 +824,7 @@ class CardAccess(ElementaryFile):
 
     def parse(self):
         from pypassport.doc9303.security_info import SecurityInfoParser
-        self["security_infos"] = SecurityInfoParser().parse(self.body)
+        self["security_infos"] = SecurityInfoParser().parse(_unwrap_security_infos(self.body))
 
 
 class CardSecurity(ElementaryFile):
@@ -818,7 +837,7 @@ class CardSecurity(ElementaryFile):
 
     def parse(self):
         from pypassport.doc9303.security_info import SecurityInfoParser
-        self["security_infos"] = SecurityInfoParser().parse(self.body)
+        self["security_infos"] = SecurityInfoParser().parse(_unwrap_security_infos(self.body))
 
 
 _CLASS_MAP = {
