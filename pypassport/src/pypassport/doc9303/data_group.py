@@ -718,6 +718,7 @@ class SOD(ElementaryFile):
         from pypassport.der_object_identifier import OID
         from pyasn1.codec.der import decoder as der_dec
 
+        _partial = False
         body = self.body
 
         # ContentInfo: SEQUENCE { OID, [0] EXPLICIT SignedData }
@@ -784,6 +785,7 @@ class SOD(ElementaryFile):
                     }
             except Exception as e:
                 logging.warning(f"SOD: LDSSecurityObject decode failed: {e}")
+                _partial = True
 
         # certificates [0] IMPLICIT, crls [1] IMPLICIT, signerInfos SET (31)
         while pos < len(sd_body):
@@ -800,12 +802,17 @@ class SOD(ElementaryFile):
                     except Exception as e:
                         logging.warning(f"SOD: certificate parse failed: {e}")
                         certs.append({"raw": cert_val.hex()})
+                        _partial = True
                 self["certificates"] = certs
             elif tag == "31":
                 try:
                     self["signer_infos"] = _sod_parse_signer_infos(val)
                 except Exception as e:
                     logging.warning(f"SOD: signer_infos parse failed: {e}")
+                    _partial = True
+
+        if _partial:
+            self["raw"] = body
 
 
 class DataGroup1(ElementaryFile):
