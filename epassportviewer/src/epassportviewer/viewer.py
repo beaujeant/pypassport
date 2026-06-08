@@ -105,6 +105,7 @@ class ViewerPane:
             self._ef_tabs[ef] = frame
 
             text = tk.Text(frame, wrap="word", state="disabled", font=("Courier", 9), height=8)
+            self._default_fg = text.cget("foreground")
             scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
             text.configure(yscrollcommand=scroll.set)
             scroll.pack(side="right", fill="y")
@@ -125,7 +126,7 @@ class ViewerPane:
         text_widget.delete("1.0", "end")
         if content is not None:
             text_widget.insert("end", content)
-            text_widget.configure(state="disabled", foreground="")
+            text_widget.configure(state="disabled", foreground=self._default_fg)
             self._ef_notebook.tab(self._ef_tabs[ef], state="normal")
         else:
             text_widget.configure(state="disabled", foreground="gray")
