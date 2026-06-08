@@ -5,6 +5,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
+from pypassport.iso7816 import APDUCommand
 
 
 # Row 1: file-system / meta EFs in logical access order
@@ -185,6 +186,12 @@ class ViewerPane:
         Tries progressively smaller read sizes to cope with cards that raise
         6282 (EOF) when Le exceeds the file length.
         """
+        # Explicitly select the MF so this works even if a previous read left
+        # the card on a different DF (e.g. the eMRTD application DF).
+        try:
+            iso7816.transmit(APDUCommand("00", "A4", "00", "0C", data="3F00"), "Select MF")
+        except Exception:
+            pass
         try:
             iso7816.selectElementaryFile(fid)
         except Exception:

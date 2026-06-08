@@ -369,7 +369,7 @@ class ElementaryFile(dict):
         nl = "\n"
         if isinstance(node, dict):
             for key, value in node.items():
-                tab = "\t"*level
+                tab = "    "*level
                 try:
                     extra = f" ({tagToName[key]})"
                 except KeyError:
@@ -379,7 +379,7 @@ class ElementaryFile(dict):
         if isinstance(node, list):
             index = 0
             for value in node:
-                tab = "\t"*level
+                tab = "    "*level
                 output += f"{nl}{tab}[{index}]: "
                 output = self.print_any(value, output, level+1)
                 index += 1
@@ -1114,6 +1114,7 @@ class CardAccess(ElementaryFile):
     def parse(self):
         from pypassport.doc9303.security_info import SecurityInfoParser
         self["security_infos"] = SecurityInfoParser().parse(_unwrap_security_infos(self.body))
+        self["raw"] = self.body
 
 
 class CardSecurity(ElementaryFile):
