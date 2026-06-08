@@ -521,9 +521,264 @@ class Common(ElementaryFile):
                     self["unicode_version"] = raw.decode('ascii', errors='replace')
 
 
+def _sod_decode_oid(value_bytes):
+    """Decode raw OID value bytes (no tag/length) to a dotted-string."""
+    if not value_bytes:
+        return ""
+    result = []
+    first = value_bytes[0]
+    result.append(str(first // 40))
+    result.append(str(first % 40))
+    idx = 1
+    acc = 0
+    while idx < len(value_bytes):
+        b = value_bytes[idx]
+        acc = (acc << 7) | (b & 0x7F)
+        if not (b & 0x80):
+            result.append(str(acc))
+            acc = 0
+        idx += 1
+    return ".".join(result)
+
+
+_DN_OID_NAMES = {
+    "2.5.4.3":  "CN",
+    "2.5.4.6":  "C",
+    "2.5.4.7":  "L",
+    "2.5.4.8":  "ST",
+    "2.5.4.10": "O",
+    "2.5.4.11": "OU",
+}
+
+
+def _sod_parse_name(name_val):
+    """Parse raw X.509 Name value bytes → dict of short-name → value."""
+    attrs = {}
+    pos = 0
+    while pos < len(name_val):
+        tag, rdn_val, consumed = parseTLV(name_val[pos:])
+        pos += consumed
+        rdn_pos = 0
+        while rdn_pos < len(rdn_val):
+            tag2, atv_val, atv_consumed = parseTLV(rdn_val[rdn_pos:])
+            rdn_pos += atv_consumed
+            tag3, oid_val, oid_consumed = parseTLV(atv_val)
+            oid_str = _sod_decode_oid(oid_val)
+            _, str_val, _ = parseTLV(atv_val[oid_consumed:])
+            try:
+                decoded = str_val.decode("utf-8")
+            except Exception:
+                decoded = str_val.decode("latin-1", errors="replace")
+            short = _DN_OID_NAMES.get(oid_str, oid_str)
+            attrs[short] = decoded
+    return attrs
+
+
+def _sod_parse_time(tag, value):
+    """Parse UTCTime (17) or GeneralizedTime (18) value bytes → ISO-like string."""
+    try:
+        s = value.decode("ascii")
+        if tag == "17":  # YYMMDDHHMMSSZ
+            yy = int(s[0:2])
+            year = 2000 + yy if yy < 50 else 1900 + yy
+            return f"{year}-{s[2:4]}-{s[4:6]} {s[6:8]}:{s[8:10]}:{s[10:12]}"
+        if tag == "18":  # YYYYMMDDHHMMSSZ
+            return f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}:{s[12:14]}"
+    except Exception:
+        pass
+    return value.decode("ascii", errors="replace")
+
+
+def _sod_parse_certificate(cert_val):
+    """Parse key fields from the value bytes of a Certificate SEQUENCE."""
+    from pypassport.der_object_identifier import OID
+    info = {}
+    pos = 0
+
+    # TBSCertificate SEQUENCE
+    tag, tbs_val, consumed = parseTLV(cert_val[pos:])
+    pos += consumed
+
+    tbs_pos = 0
+
+    # version [0] EXPLICIT OPTIONAL
+    tag2, field_val, field_consumed = parseTLV(tbs_val[tbs_pos:])
+    if tag2 == "A0":
+        tbs_pos += field_consumed
+        tag2, field_val, field_consumed = parseTLV(tbs_val[tbs_pos:])
+
+    # serialNumber INTEGER
+    if tag2 == "02":
+        info["serial"] = field_val.hex()
+        tbs_pos += field_consumed
+
+    # signature AlgorithmIdentifier
+    tag2, alg_val, alg_consumed = parseTLV(tbs_val[tbs_pos:])
+    tbs_pos += alg_consumed
+    tag3, oid_val, _ = parseTLV(alg_val)
+    oid_str = _sod_decode_oid(oid_val)
+    info["signature_algorithm"] = OID.get(oid_str, oid_str)
+
+    # issuer Name
+    tag2, issuer_val, issuer_consumed = parseTLV(tbs_val[tbs_pos:])
+    tbs_pos += issuer_consumed
+    info["issuer"] = _sod_parse_name(issuer_val)
+
+    # validity SEQUENCE
+    tag2, validity_val, validity_consumed = parseTLV(tbs_val[tbs_pos:])
+    tbs_pos += validity_consumed
+    v_pos = 0
+    tag3, t1_val, t1_consumed = parseTLV(validity_val[v_pos:])
+    v_pos += t1_consumed
+    info["not_before"] = _sod_parse_time(tag3, t1_val)
+    tag3, t2_val, _ = parseTLV(validity_val[v_pos:])
+    info["not_after"] = _sod_parse_time(tag3, t2_val)
+
+    # subject Name
+    tag2, subject_val, _ = parseTLV(tbs_val[tbs_pos:])
+    info["subject"] = _sod_parse_name(subject_val)
+
+    return info
+
+
+def _sod_parse_signer_infos(si_set_val):
+    """Parse SET OF SignerInfo value bytes → list of dicts."""
+    from pypassport.der_object_identifier import OID
+    infos = []
+    pos = 0
+    while pos < len(si_set_val):
+        tag, si_val, consumed = parseTLV(si_set_val[pos:])
+        pos += consumed
+        si_info = {}
+        si_pos = 0
+
+        # version INTEGER
+        tag2, v_val, v_consumed = parseTLV(si_val[si_pos:])
+        si_pos += v_consumed
+        si_info["version"] = int.from_bytes(v_val, "big")
+
+        # sid: IssuerAndSerialNumber (30) or SubjectKeyIdentifier [0] (80)
+        tag2, sid_val, sid_consumed = parseTLV(si_val[si_pos:])
+        si_pos += sid_consumed
+        if tag2 == "30":
+            sid_pos = 0
+            tag3, issuer_val, issuer_consumed = parseTLV(sid_val[sid_pos:])
+            sid_pos += issuer_consumed
+            si_info["signer_issuer"] = _sod_parse_name(issuer_val)
+            tag3, serial_val, _ = parseTLV(sid_val[sid_pos:])
+            si_info["signer_serial"] = serial_val.hex()
+
+        # digestAlgorithm AlgorithmIdentifier
+        tag2, da_val, da_consumed = parseTLV(si_val[si_pos:])
+        si_pos += da_consumed
+        tag3, da_oid_val, _ = parseTLV(da_val)
+        da_oid = _sod_decode_oid(da_oid_val)
+        si_info["digest_algorithm"] = OID.get(da_oid, da_oid)
+
+        # skip optional signedAttrs [0]
+        tag2, next_val, next_consumed = parseTLV(si_val[si_pos:])
+        if tag2 == "A0":
+            si_pos += next_consumed
+            tag2, next_val, next_consumed = parseTLV(si_val[si_pos:])
+
+        # signatureAlgorithm AlgorithmIdentifier
+        if tag2 == "30":
+            tag3, sa_oid_val, _ = parseTLV(next_val)
+            sa_oid = _sod_decode_oid(sa_oid_val)
+            si_info["signature_algorithm"] = OID.get(sa_oid, sa_oid)
+
+        infos.append(si_info)
+    return infos
+
+
 class SOD(ElementaryFile):
     def __init__(self, file=None):
         super().__init__(file=file)
+        try:
+            self.parse()
+        except Exception as e:
+            logging.warning(f"SOD: parse failed ({e}), keeping raw body")
+
+    def parse(self):
+        from pypassport.asn1 import LDSSecurityObject
+        from pypassport.der_object_identifier import OID
+        from pyasn1.codec.der import decoder as der_dec
+
+        body = self.body
+
+        # ContentInfo: SEQUENCE { OID, [0] EXPLICIT SignedData }
+        _, ci_val, _ = parseTLV(body)
+
+        # contentType OID
+        _, oid_val, offset = parseTLV(ci_val)
+        self["content_type_oid"] = _sod_decode_oid(oid_val)
+
+        # [0] EXPLICIT wrapper → SignedData SEQUENCE
+        _, a0_inner, _ = parseTLV(ci_val[offset:])
+        _, sd_body, _ = parseTLV(a0_inner)
+
+        pos = 0
+
+        # version INTEGER
+        _, v_val, consumed = parseTLV(sd_body[pos:])
+        pos += consumed
+        self["version"] = int.from_bytes(v_val, "big")
+
+        # digestAlgorithms SET OF AlgorithmIdentifier
+        _, da_val, consumed = parseTLV(sd_body[pos:])
+        pos += consumed
+        algs = []
+        da_pos = 0
+        while da_pos < len(da_val):
+            _, alg_seq_val, alg_consumed = parseTLV(da_val[da_pos:])
+            da_pos += alg_consumed
+            _, alg_oid_val, _ = parseTLV(alg_seq_val)
+            oid_str = _sod_decode_oid(alg_oid_val)
+            algs.append(OID.get(oid_str, oid_str))
+        self["digest_algorithms"] = algs
+
+        # encapContentInfo SEQUENCE
+        _, eci_val, consumed = parseTLV(sd_body[pos:])
+        pos += consumed
+        _, eci_oid_val, eci_offset = parseTLV(eci_val)
+        self["eci_content_type_oid"] = _sod_decode_oid(eci_oid_val)
+
+        # eContent [0] EXPLICIT OCTET STRING → DER-encoded LDSSecurityObject
+        if eci_offset < len(eci_val):
+            _, a0_eci, _ = parseTLV(eci_val[eci_offset:])
+            _, lds_der, _ = parseTLV(a0_eci)
+            try:
+                lds_obj, _ = der_dec.decode(lds_der, asn1Spec=LDSSecurityObject())
+                hash_alg_oid = str(lds_obj["hashAlgorithm"]["algorithm"])
+                self["hash_algorithm_oid"] = hash_alg_oid
+                self["hash_algorithm"] = OID.get(hash_alg_oid, hash_alg_oid)
+                self["lds_version"] = int(lds_obj["version"])
+                dg_hashes = {}
+                for h in lds_obj["dataGroupHashValues"]:
+                    dg_num = int(h["dataGroupNumber"])
+                    dg_hashes[dg_num] = bytes(h["dataGroupHashValue"]).hex()
+                self["dg_hashes"] = dg_hashes
+            except Exception as e:
+                logging.warning(f"SOD: LDSSecurityObject decode failed: {e}")
+
+        # certificates [0] IMPLICIT, crls [1] IMPLICIT, signerInfos SET (31)
+        while pos < len(sd_body):
+            tag, val, consumed = parseTLV(sd_body[pos:])
+            pos += consumed
+            if tag == "A0":
+                certs = []
+                c_pos = 0
+                while c_pos < len(val):
+                    _, cert_val, cert_consumed = parseTLV(val[c_pos:])
+                    c_pos += cert_consumed
+                    try:
+                        certs.append(_sod_parse_certificate(cert_val))
+                    except Exception as e:
+                        logging.warning(f"SOD: certificate parse failed: {e}")
+                        certs.append({"raw": cert_val.hex()})
+                self["certificates"] = certs
+            elif tag == "31":
+                self["signer_infos"] = _sod_parse_signer_infos(val)
 
 
 class DataGroup1(ElementaryFile):
