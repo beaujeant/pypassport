@@ -3,6 +3,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
+from smartcard.Exceptions import CardConnectionException, NoCardException
 from pypassport import reader
 from .menu import MenuBar
 from .viewer import ViewerPane
@@ -136,13 +137,27 @@ class EPassportViewer:
 
     def get_reader(self):
         self.reader = reader.getReader()
-        if self.reader:
-            self.reader.connect()
-            self.root.reader_info_label["text"] = f"Reader found: {self.reader.getReader()}"
-            self.root.read_button["state"] = "normal"
-        else:
+        if not self.reader:
             self.root.reader_info_label["text"] = "No reader found..."
             self.root.read_button["state"] = "disabled"
+            return
+
+        reader_name = self.reader.getReader()
+        try:
+            self.reader.connect()
+        except NoCardException:
+            logging.warning(f"Reader '{reader_name}' found, but no card is inserted.")
+            self.root.reader_info_label["text"] = f"Reader: {reader_name} (no card)"
+            self.root.read_button["state"] = "normal"
+            return
+        except CardConnectionException as e:
+            logging.error(f"Could not connect to card on reader '{reader_name}': {e}")
+            self.root.reader_info_label["text"] = f"Reader: {reader_name} (connection error)"
+            self.root.read_button["state"] = "normal"
+            return
+
+        self.root.reader_info_label["text"] = f"Reader found: {reader_name}"
+        self.root.read_button["state"] = "normal"
 
 
 if __name__ == "__main__":
