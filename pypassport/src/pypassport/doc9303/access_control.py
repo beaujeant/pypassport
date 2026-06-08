@@ -253,6 +253,13 @@ class AccessControlNegotiator:
                 if mode == MODE_PACE or mrz is None:
                     raise
                 logging.warning("PACE failed; falling back to BAC.")
+                # A failed PACE leaves the chip in a sticky auth-pending
+                # state where BAC returns 6A88. Reset the card so BAC can
+                # start from a clean slate.
+                try:
+                    self._iso7816.rstConnectionRaw()
+                except Exception as exc:
+                    logging.warning("Could not reset card before BAC fallback: %s", exc)
 
         # auto mode — fall back to BAC.
         BACAuthenticator(self._iso7816).authenticate(mrz)
