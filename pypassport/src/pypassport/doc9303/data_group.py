@@ -649,55 +649,69 @@ def _sod_parse_signer_infos(si_set_val):
     while pos < len(si_set_val):
         tag, si_val, consumed = parseTLV(si_set_val[pos:])
         pos += consumed
-        si_info = {}
-        si_pos = 0
-
-        # version INTEGER
-        tag2, v_val, v_consumed = parseTLV(si_val[si_pos:])
-        si_pos += v_consumed
-        si_info["version"] = int.from_bytes(v_val, "big")
-
-        # sid: IssuerAndSerialNumber (30) or SubjectKeyIdentifier [0] (80)
-        tag2, sid_val, sid_consumed = parseTLV(si_val[si_pos:])
-        si_pos += sid_consumed
-        if tag2 == "30":
-            sid_pos = 0
-            tag3, issuer_val, issuer_consumed = parseTLV(sid_val[sid_pos:])
-            sid_pos += issuer_consumed
-            si_info["signer_issuer"] = _sod_parse_name(issuer_val)
-            tag3, serial_val, _ = parseTLV(sid_val[sid_pos:])
-            si_info["signer_serial"] = serial_val.hex()
-
-        # digestAlgorithm AlgorithmIdentifier
-        tag2, da_val, da_consumed = parseTLV(si_val[si_pos:])
-        si_pos += da_consumed
-        tag3, da_oid_val, _ = parseTLV(da_val)
-        da_oid = _sod_decode_oid(da_oid_val)
-        si_info["digest_algorithm"] = OID.get(da_oid, da_oid)
-
-        # skip optional signedAttrs [0]
-        tag2, next_val, next_consumed = parseTLV(si_val[si_pos:])
-        if tag2 == "A0":
-            si_pos += next_consumed
-            tag2, next_val, next_consumed = parseTLV(si_val[si_pos:])
-
-        # signatureAlgorithm AlgorithmIdentifier
-        if tag2 == "30":
-            tag3, sa_oid_val, _ = parseTLV(next_val)
-            sa_oid = _sod_decode_oid(sa_oid_val)
-            si_info["signature_algorithm"] = OID.get(sa_oid, sa_oid)
-
+        try:
+            si_info = _sod_parse_one_signer_info(si_val, OID)
+        except Exception as e:
+            logging.warning(f"SOD: SignerInfo parse failed: {e}")
+            si_info = {}
         infos.append(si_info)
     return infos
 
 
+def _sod_parse_one_signer_info(si_val, OID):
+    si_info = {}
+    si_pos = 0
+
+    # version INTEGER
+    tag2, v_val, v_consumed = parseTLV(si_val[si_pos:])
+    si_pos += v_consumed
+    si_info["version"] = int.from_bytes(v_val, "big")
+
+    # sid: IssuerAndSerialNumber (30) or SubjectKeyIdentifier [0] (80)
+    tag2, sid_val, sid_consumed = parseTLV(si_val[si_pos:])
+    si_pos += sid_consumed
+    if tag2 == "30":
+        sid_pos = 0
+        tag3, issuer_val, issuer_consumed = parseTLV(sid_val[sid_pos:])
+        sid_pos += issuer_consumed
+        si_info["signer_issuer"] = _sod_parse_name(issuer_val)
+        tag3, serial_val, _ = parseTLV(sid_val[sid_pos:])
+        si_info["signer_serial"] = serial_val.hex()
+
+    # digestAlgorithm AlgorithmIdentifier
+    tag2, da_val, da_consumed = parseTLV(si_val[si_pos:])
+    si_pos += da_consumed
+    tag3, da_oid_val, _ = parseTLV(da_val)
+    da_oid = _sod_decode_oid(da_oid_val)
+    si_info["digest_algorithm"] = OID.get(da_oid, da_oid)
+
+    # skip optional signedAttrs [0]
+    tag2, next_val, next_consumed = parseTLV(si_val[si_pos:])
+    if tag2 == "A0":
+        si_pos += next_consumed
+        tag2, next_val, next_consumed = parseTLV(si_val[si_pos:])
+
+    # signatureAlgorithm AlgorithmIdentifier
+    if tag2 == "30":
+        tag3, sa_oid_val, _ = parseTLV(next_val)
+        sa_oid = _sod_decode_oid(sa_oid_val)
+        si_info["signature_algorithm"] = OID.get(sa_oid, sa_oid)
+
+    return si_info
+
+
 class SOD(ElementaryFile):
+    def init_parse(self):
+        # Defer all parsing to parse(); do not pre-populate "raw"
+        pass
+
     def __init__(self, file=None):
         super().__init__(file=file)
         try:
             self.parse()
         except Exception as e:
             logging.warning(f"SOD: parse failed ({e}), keeping raw body")
+            self["raw"] = self.body
 
     def parse(self):
         from pypassport.asn1 import LDSSecurityObject
@@ -760,9 +774,13 @@ class SOD(ElementaryFile):
                 self["dg_hashes"] = dg_hashes
                 lds_vi = lds_obj.getComponentByName("ldsVersionInfo")
                 if lds_vi is not None and lds_vi.hasValue():
+                    def _any_to_str(any_val):
+                        raw = bytes(any_val)
+                        _, val, _ = parseTLV(raw)
+                        return val.decode("ascii", errors="replace")
                     self["lds_version_info"] = {
-                        "lds_version": str(lds_vi["ldsVersion"]),
-                        "unicode_version": str(lds_vi["unicodeVersion"]),
+                        "lds_version": _any_to_str(lds_vi["ldsVersion"]),
+                        "unicode_version": _any_to_str(lds_vi["unicodeVersion"]),
                     }
             except Exception as e:
                 logging.warning(f"SOD: LDSSecurityObject decode failed: {e}")
@@ -784,7 +802,10 @@ class SOD(ElementaryFile):
                         certs.append({"raw": cert_val.hex()})
                 self["certificates"] = certs
             elif tag == "31":
-                self["signer_infos"] = _sod_parse_signer_infos(val)
+                try:
+                    self["signer_infos"] = _sod_parse_signer_infos(val)
+                except Exception as e:
+                    logging.warning(f"SOD: signer_infos parse failed: {e}")
 
 
 class DataGroup1(ElementaryFile):

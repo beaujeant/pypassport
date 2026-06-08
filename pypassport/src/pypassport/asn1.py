@@ -10,8 +10,8 @@ from pyasn1.type.univ import (
     OctetString,
     BitString,
     Null,
+    Any,
 )
-from pyasn1.type.char import VisibleString
 from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
 from pyasn1.type.namedval import NamedValues
 from pyasn1.type.constraint import ValueSizeConstraint
@@ -75,9 +75,11 @@ DigestAlgorithmIdentifier = AlgorithmIdentifier()
 
 
 class LDSVersionInfo(Sequence):
+    # Spec says VisibleString but chips often send PrintableString; use Any
+    # so the schema accepts either encoding, then decode the value manually.
     componentType = NamedTypes(
-        NamedType('ldsVersion', VisibleString()),
-        NamedType('unicodeVersion', VisibleString()),
+        NamedType('ldsVersion', Any()),
+        NamedType('unicodeVersion', Any()),
     )
 
 

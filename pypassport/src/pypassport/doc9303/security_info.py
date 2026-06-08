@@ -142,10 +142,11 @@ class SecurityInfoParser:
         if not data:
             raise SecurityInfoParseError("Empty after unwrapping")
 
-        # Strip the outer SET (0x31) to get the raw element bytes
-        if data[0] != 0x31:
+        # Strip the outer SET (0x31) or SEQUENCE (0x30) wrapper to get elements.
+        # Some chips encode SecurityInfos as SEQUENCE instead of SET.
+        if data[0] not in (0x30, 0x31):
             raise SecurityInfoParseError(
-                f"DER decoding failed: <TagSet object, tags {data[0] >> 6}:{(data[0] >> 5) & 1}:{data[0] & 0x1F}> not in asn1Spec: None"
+                f"DER decoding failed: expected SET or SEQUENCE, got tag 0x{data[0]:02X}"
             )
         try:
             _, set_val, _ = parseTLV(data)
