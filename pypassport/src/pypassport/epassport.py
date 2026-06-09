@@ -309,7 +309,12 @@ class EPassport(dict):
 
     def readPassport(self):
         """
-        Read every file in the passport (COM, DG1..DG15, SOD).
+        Read every file in the passport (COM, DG1..DG16, SOD).
+
+        Reads EFs in two passes:
+        1. All data groups declared in EF.COM (the authoritative list).
+        2. Any DG1–DG16 not listed in COM, probed individually — some chips
+           omit entries from COM for optional or access-controlled groups.
 
         @return: This EPassport instance (dict populated with all DGs).
         """
@@ -317,6 +322,17 @@ class EPassport(dict):
         self.readCom()
         self.readDataGroups()
         self.readSod()
+
+        com_tags = {tag.upper() for tag in self["Common"]["5C"]}
+        for i in range(1, 17):
+            dg_name = f"DG{i}"
+            tag = converter.toTAG(dg_name)
+            if tag.upper() not in com_tags:
+                try:
+                    self[dg_name]
+                except Exception:
+                    self.iso7816.rstConnection()
+
         return self
 
     # Dict overwriting
@@ -324,13 +340,10 @@ class EPassport(dict):
         """
         Return the data group object for the given tag, reading it if necessary.
 
-        If a 'Security Status Not Satisfied' error is returned and secure
-        messaging is not yet active, BAC is performed automatically and the
-        read is retried.
-
-        If a 'Secure Messaging Not Supported' error (SW 6882) is returned while
-        SM is active, the read is retried without SM. Some chips expose certain
-        files (notably DG15) as publicly readable and reject SM-wrapped access.
+        If a 'Security Status Not Satisfied' error (SW 6982) is returned and
+        secure messaging is not yet active, BAC is performed automatically and
+        the read is retried.  Once SM is established it is never bypassed —
+        per ICAO 9303, all post-BAC/PACE communication must remain under SM.
 
         @param tag: A tag string such as "DG1", "Common", "SecurityData", etc.
         @return: The parsed data group object, or None if it could not be read.
@@ -358,33 +371,6 @@ class EPassport(dict):
                         sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
                         logging.error(f"Could not read the DG after BAC: chip returned {sw2_str} ({e2.data})")
                         dg = None
-                elif self.iso7816.ciphering and e.sw1 == 0x68 and e.sw2 == 0x82:
-                    # Some chips expose certain files (notably DG15) as publicly
-                    # readable and reject SM-wrapped SELECT/READ with SW 6882.
-                    # Retry without SM so the file can still be accessed.
-                    logging.warning(
-                        f"Chip returned SW=6882 (Secure messaging not supported) for tag {tag} "
-                        "while SM is active — retrying without Secure Messaging."
-                    )
-                    saved_ciphering = self.iso7816.ciphering
-                    # protect() already incremented the SSC once for the rejected
-                    # command.  The chip rejected at the SM layer without processing
-                    # the command, so its SSC was NOT incremented.  Roll back the
-                    # local SSC by one so both sides stay in sync when SM resumes.
-                    ssc_raw = saved_ciphering.ssc
-                    ssc_rolled_back = (int.from_bytes(ssc_raw, "big") - 1).to_bytes(
-                        len(ssc_raw), "big"
-                    )
-                    self.iso7816.ciphering = False
-                    try:
-                        dg = readElementaryFile(tag, self.iso7816)
-                    except ISO7816Exception as e2:
-                        sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
-                        logging.error(f"Could not read the DG without SM either: chip returned {sw2_str} ({e2.data})")
-                        dg = None
-                    finally:
-                        saved_ciphering.ssc = ssc_rolled_back
-                        self.iso7816.ciphering = saved_ciphering
                 else:
                     logging.error(f"Could not read the DG: chip returned {sw_str} ({e.data})")
                     dg = None
