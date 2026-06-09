@@ -235,7 +235,9 @@ def readElementaryFile(tag, iso7816, maxSize=0xDF):
             raise ElementaryFileException(f"Unknown class for tag {tag}: {class_name}")
         return _CLASS_MAP[class_name](file=file)
     except ISO7816Exception as e:
-        raise e
+        sw_str = f"SW={e.sw1:02X}{e.sw2:02X}" if e.sw1 is not None else ""
+        logging.debug(f"ISO7816 error reading tag {tag} (FID {fid}): {sw_str} — {e.data}")
+        raise
 
 
 class ElementaryFileException(Exception):

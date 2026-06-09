@@ -328,6 +328,10 @@ class EPassport(dict):
         messaging is not yet active, BAC is performed automatically and the
         read is retried.
 
+        If a 'Secure Messaging Not Supported' error (SW 6882) is returned while
+        SM is active, the read is retried without SM. Some chips expose certain
+        files (notably DG15) as publicly readable and reject SM-wrapped access.
+
         @param tag: A tag string such as "DG1", "Common", "SecurityData", etc.
         @return: The parsed data group object, or None if it could not be read.
         @raise ElementaryFileException: If the tag is unknown.
@@ -354,6 +358,24 @@ class EPassport(dict):
                         sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
                         logging.error(f"Could not read the DG after BAC: chip returned {sw2_str} ({e2.data})")
                         dg = None
+                elif self.iso7816.ciphering and e.sw1 == 0x68 and e.sw2 == 0x82:
+                    # Some chips expose certain files (notably DG15) as publicly
+                    # readable and reject SM-wrapped SELECT/READ with SW 6882.
+                    # Retry without SM so the file can still be accessed.
+                    logging.warning(
+                        f"Chip returned SW=6882 (Secure messaging not supported) for tag {tag} "
+                        "while SM is active — retrying without Secure Messaging."
+                    )
+                    saved_ciphering = self.iso7816.ciphering
+                    self.iso7816.ciphering = False
+                    try:
+                        dg = readElementaryFile(tag, self.iso7816)
+                    except ISO7816Exception as e2:
+                        sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
+                        logging.error(f"Could not read the DG without SM either: chip returned {sw2_str} ({e2.data})")
+                        dg = None
+                    finally:
+                        self.iso7816.ciphering = saved_ciphering
                 else:
                     logging.error(f"Could not read the DG: chip returned {sw_str} ({e.data})")
                     dg = None
