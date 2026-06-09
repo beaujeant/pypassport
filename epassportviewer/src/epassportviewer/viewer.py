@@ -109,12 +109,15 @@ class ViewerPane:
 
         self._ef_buttons = {}
         self._ef_contents = {}   # ef_name -> str content or None
+        self._ef_inaccessible = set()  # EFs advertised in EF.COM but unreadable
         self._selected_ef = None
         self._photo_bytes = None  # raw image bytes from DG2, kept for Save
 
         style = ttk.Style()
         style.configure("EFTab.TButton", font=("", 8), padding=(4, 2))
         style.configure("EFTabActive.TButton", font=("", 8, "bold"), padding=(4, 2))
+        style.configure("EFTabInaccessible.TButton", font=("", 8, "italic"), padding=(4, 2))
+        style.configure("EFTabInaccessibleActive.TButton", font=("", 8, "bold italic"), padding=(4, 2))
 
         for row_index, row_efs in enumerate((_ROW1, _ROW2, _ROW3)):
             row_frame = ttk.Frame(tab_bar)
@@ -151,11 +154,16 @@ class ViewerPane:
         self._ef_text.configure(state="disabled")
         for name, btn in self._ef_buttons.items():
             if self._ef_contents.get(name) is not None:
-                btn.configure(style="EFTabActive.TButton" if name == ef else "EFTab.TButton")
+                inaccessible = name in self._ef_inaccessible
+                if name == ef:
+                    btn.configure(style="EFTabInaccessibleActive.TButton" if inaccessible else "EFTabActive.TButton")
+                else:
+                    btn.configure(style="EFTabInaccessible.TButton" if inaccessible else "EFTab.TButton")
 
     def _reset_ef_tabs(self):
         self._selected_ef = None
         self._ef_contents = {ef: None for ef in _EF_NAMES}
+        self._ef_inaccessible = set()
         self._photo_bytes = None
         for btn in self._ef_buttons.values():
             btn.configure(state="disabled", style="EFTab.TButton")
@@ -163,11 +171,16 @@ class ViewerPane:
         self._ef_text.delete("1.0", "end")
         self._ef_text.configure(state="disabled")
 
-    def _set_ef_content(self, ef, content):
+    def _set_ef_content(self, ef, content, inaccessible=False):
         self._ef_contents[ef] = content
+        if inaccessible:
+            self._ef_inaccessible.add(ef)
+        else:
+            self._ef_inaccessible.discard(ef)
         btn = self._ef_buttons[ef]
         if content is not None:
-            btn.configure(state="normal", style="EFTab.TButton")
+            style = "EFTabInaccessible.TButton" if inaccessible else "EFTab.TButton"
+            btn.configure(state="normal", style=style)
             if self._selected_ef == ef:
                 self._select_ef(ef)
         else:
@@ -358,9 +371,10 @@ class ViewerPane:
             if ef_name in self._ef_buttons and self._ef_contents.get(ef_name) is None:
                 self._set_ef_content(
                     ef_name,
-                    f"({ef_name} is listed in EF.COM but could not be read — "
+                    f"{ef_name} is listed in EF.COM but could not be read — "
                     f"the chip may require Active Authentication or another "
-                    f"access condition before granting access.)",
+                    f"access condition before granting access.",
+                    inaccessible=True,
                 )
 
         self._select_ef("DG1")
@@ -396,6 +410,7 @@ class ViewerPane:
             },
             "fields": fields,
             "ef_contents": {k: v for k, v in self._ef_contents.items()},
+            "ef_inaccessible": list(self._ef_inaccessible),
             "photo_b64": photo_b64,
         }
 
@@ -414,9 +429,10 @@ class ViewerPane:
             label.configure(text=str(val) if val is not None else "None")
 
         self._reset_ef_tabs()
+        inaccessible_set = set(data.get("ef_inaccessible") or [])
         for ef, content in data["ef_contents"].items():
             if ef in self._ef_buttons and content is not None:
-                self._set_ef_content(ef, str(content))
+                self._set_ef_content(ef, str(content), inaccessible=ef in inaccessible_set)
 
         photo_b64 = data.get("photo_b64")
         if photo_b64:
