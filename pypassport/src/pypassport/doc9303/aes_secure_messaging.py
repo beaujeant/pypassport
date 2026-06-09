@@ -90,11 +90,6 @@ class AesSecureMessaging:
         if rapdu.sw1 != 0x90 or rapdu.sw2 != 0x00:
             return rapdu
 
-        # Chip sent an SM-wrapped response — it incremented its SSC for both
-        # receipt and transmission.  Increment ours here so that any parsing
-        # exception below does not leave us one SSC behind the chip.
-        self._ssc = self._inc_ssc()
-
         raw = rapdu.raw()
         offset = 0
 
@@ -131,6 +126,7 @@ class AesSecureMessaging:
         cc_len = raw[offset + 1]
         CC_received = raw[offset + 2: offset + 2 + cc_len]
 
+        self._ssc = self._inc_ssc()
         K = _iso_pad(self._ssc + do87 + do99)
         CC_computed = self._cmac(K)[:_MAC_LEN]
 

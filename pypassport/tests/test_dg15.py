@@ -292,17 +292,17 @@ def test_ssc_unchanged_after_plain_error_response():
     )
 
 
-def test_ssc_incremented_early_when_sm_response_parsing_fails():
+def test_ssc_not_incremented_when_sm_response_parsing_fails():
     """
-    If the chip sends an SM-wrapped response (outer 9000) but the inner
-    DO'8E' is missing, unprotect raises AesSecureMessagingException.
-    The client SSC must have been incremented BEFORE the exception so that
-    the chip and client remain in sync for the next command.
+    If the chip sends an SM-wrapped response (outer 9000) but DO'8E' is
+    missing, unprotect raises AesSecureMessagingException.  The SSC stays
+    at the post-protect value (N+1) — the increment to N+2 only happens
+    inside the DO'8E' verification block.
     """
     sm = _make_sm()
     cmd = APDUCommand("00", "B0", "00", "00", le="04")
     sm.protect(cmd)
-    ssc_before = sm._ssc  # SSC after protect
+    ssc_after_protect = sm._ssc  # N+1
 
     # Build a response with outer 9000 but without DO'8E' (malformed).
     do99 = b"\x99\x02\x90\x00"
@@ -311,9 +311,7 @@ def test_ssc_incremented_early_when_sm_response_parsing_fails():
     with pytest.raises(AesSecureMessagingException, match="DO8E missing"):
         sm.unprotect(rapdu)
 
-    # SSC should have been incremented before the exception.
-    expected_ssc = (int.from_bytes(ssc_before, "big") + 1).to_bytes(16, "big")
-    assert sm._ssc == expected_ssc, (
-        "SSC must be incremented before parsing exceptions to stay in sync with "
-        f"the chip. Got {sm._ssc.hex()!r}, expected {expected_ssc.hex()!r}."
+    assert sm._ssc == ssc_after_protect, (
+        f"SSC must remain at post-protect value after a parsing exception. "
+        f"Got {sm._ssc.hex()!r}, expected {ssc_after_protect.hex()!r}."
     )

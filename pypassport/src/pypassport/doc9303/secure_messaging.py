@@ -96,11 +96,6 @@ class SecureMessaging():
         if (rapdu.sw1 != 0x90 or rapdu.sw2 != 0x00):
             return rapdu
 
-        # Chip sent an SM-wrapped response — it incremented its SSC for both
-        # receipt and transmission.  Increment ours here so that any parsing
-        # exception below does not leave us one SSC behind the chip.
-        self._ssc = self._incSSC()
-
         rapdu = rapdu.raw()
 
         # DO'87'
@@ -145,11 +140,13 @@ class SecureMessaging():
                 debug_msg += " DO'99"
             if _DEBUG_CRYPTO: logging.debug("Verify RAPDU CC by computing MAC of" + debug_msg)
 
-            if _DEBUG_CRYPTO:
-                logging.debug("\tSSC: " + toHexString(self._ssc))
+            self._ssc = self._incSSC()
+            if _DEBUG_CRYPTO: 
+                logging.debug("\tIncrement SSC with 1")
+                logging.debug("\t\tSSC: " + toHexString(self._ssc))
 
             K = pad(self._ssc + do87 + do99)
-            if _DEBUG_CRYPTO:
+            if _DEBUG_CRYPTO: 
                 logging.debug("\tConcatenate SSC and" + debug_msg + " and add padding")
                 logging.debug("\t\tK: " + toHexString(K))
 
@@ -158,7 +155,7 @@ class SecureMessaging():
             if _DEBUG_CRYPTO: logging.debug("\t\tCC: " + toHexString(CCb))
 
             res = (CC == CCb)
-            if _DEBUG_CRYPTO:
+            if _DEBUG_CRYPTO: 
                 logging.debug("\tCompare CC with data of DO'8E of RAPDU")
                 logging.debug("\t\t" + toHexString(CC) + " == " + toHexString(CCb) + " ? " + str(res))
 
@@ -210,6 +207,7 @@ class SecureMessaging():
     def _incSSC(self):
         out = int.from_bytes(self._ssc, byteorder='big') + 1
         return out.to_bytes(8, byteorder='big')
+
 
     def _buildD08E(self, mac):
         res = bytes([0x8E, len(mac)]) + mac
