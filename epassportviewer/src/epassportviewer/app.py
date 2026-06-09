@@ -1,4 +1,6 @@
 import logging
+import os
+import sys
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
@@ -11,6 +13,16 @@ from .attacks import AttacksPane
 from .custom import CustomPane
 from .log import LogPane
 from .resources.gadgets.placeholder import PlaceholderEntry
+
+
+def _app_data_dir() -> Path:
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home()))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return base / "epassportviewer"
 
 
 class LoggingHandler(logging.Handler):
@@ -43,17 +55,17 @@ class EPassportViewer:
         self.root.log_handler = log_handler
 
         ## History
-        HISTORY_FILE_NAME = "history"
-        APP_FOLDER = Path(__file__).parent
-        HISTORY_FILE_PATH = APP_FOLDER / HISTORY_FILE_NAME
+        app_dir = _app_data_dir()
+        app_dir.mkdir(parents=True, exist_ok=True)
+        self.history_file_path = app_dir / "history"
 
-        if not HISTORY_FILE_PATH.exists():
+        if not self.history_file_path.exists():
             logging.info("History file not found. Creating a new one...")
-            HISTORY_FILE_PATH.touch()
+            self.history_file_path.touch()
 
         self.history = []
-        with HISTORY_FILE_PATH.open("r") as file:
-            self.history = file.readlines()
+        with self.history_file_path.open("r") as file:
+            self.history = [line.strip() for line in file if line.strip()]
 
         ## Set environment variables
         self.reader = None
@@ -143,6 +155,17 @@ class EPassportViewer:
 
         # RUN THE APPLICATION
         self.root.mainloop()
+
+    def add_to_history(self, doc: str, dob: str, expiry: str):
+        entry = f"{doc} {dob} {expiry}"
+        if entry in self.history:
+            return
+        self.history.append(entry)
+        if len(self.history) > 20:
+            self.history = self.history[-20:]
+        with self.history_file_path.open("w") as f:
+            f.write("\n".join(self.history) + "\n")
+        self.root.menu_bar_instance.rebuild_history_menu()
 
     def get_reader(self):
         self.reader = reader.getReader()

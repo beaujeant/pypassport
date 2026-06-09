@@ -6,31 +6,38 @@ class MenuBar:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
+        self.root.menu_bar_instance = self
+
         file_menu = tk.Menu(self.root.menu_bar, tearoff=0)
         file_menu.add_command(label="Open", command=self.open_file)
         file_menu.add_command(label="Save", command=self.save_file)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
-        configure_menu = tk.Menu(self.root.menu_bar, tearoff=0)
-        history_menu = tk.Menu(configure_menu, tearoff=0)
-
-        for line in main.history:
-            line = line.strip()
-            history_menu.add_command(label=line, command=lambda mrz=line: self.setMRZ(mrz))
+        self.configure_menu = tk.Menu(self.root.menu_bar, tearoff=0)
+        self.history_menu = tk.Menu(self.configure_menu, tearoff=0)
+        self._populate_history_menu()
 
         if main.history:
             self.setMRZ(main.history[-1])
 
-        configure_menu.add_cascade(label="History", menu=history_menu)
-        configure_menu.add_command(label="Settings", command=self.open_settings)
+        self.configure_menu.add_cascade(label="History", menu=self.history_menu)
+        self.configure_menu.add_command(label="Settings", command=self.open_settings)
 
         help_menu = tk.Menu(self.root.menu_bar, tearoff=0)
         help_menu.add_command(label="About", command=self.show_about)
 
         self.root.menu_bar.add_cascade(label="File", menu=file_menu)
-        self.root.menu_bar.add_cascade(label="Configure", menu=configure_menu)
+        self.root.menu_bar.add_cascade(label="Configure", menu=self.configure_menu)
         self.root.menu_bar.add_cascade(label="Help", menu=help_menu)
+
+    def _populate_history_menu(self):
+        self.history_menu.delete(0, "end")
+        for entry in self.parent.history:
+            self.history_menu.add_command(label=entry, command=lambda mrz=entry: self.setMRZ(mrz))
+
+    def rebuild_history_menu(self):
+        self._populate_history_menu()
 
     def open_file(self):
         file_path = filedialog.askopenfilename(

@@ -287,6 +287,9 @@ class ViewerPane:
             )
             return
 
+        if doc_number and dob and expiry:
+            self.parent.add_to_history(doc_number, dob, expiry)
+
         try:
             dg2 = ep["DG2"]
             if dg2 is None:
