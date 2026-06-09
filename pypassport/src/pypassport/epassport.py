@@ -342,6 +342,7 @@ class EPassport(dict):
             try:
                 dg = readElementaryFile(tag, self.iso7816)
             except ISO7816Exception as e:
+                sw_str = f"SW={e.sw1:02X}{e.sw2:02X}" if e.sw1 is not None else ""
                 if not self.iso7816.ciphering and e.sw1 == 0x69 and e.sw2 == 0x82:
                     # BAC failures are converted to EPassportException by
                     # doBasicAccessControl and intentionally propagate so the
@@ -350,10 +351,11 @@ class EPassport(dict):
                     try:
                         dg = readElementaryFile(tag, self.iso7816)
                     except ISO7816Exception as e2:
-                        logging.error(f"Could not read the DG after BAC ({e2.data})")
+                        sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
+                        logging.error(f"Could not read the DG after BAC: chip returned {sw2_str} ({e2.data})")
                         dg = None
                 else:
-                    logging.error(f"Could not read the DG ({e.data})")
+                    logging.error(f"Could not read the DG: chip returned {sw_str} ({e.data})")
                     dg = None
             except EPassportException:
                 raise

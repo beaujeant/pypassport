@@ -201,10 +201,11 @@ tagToName = {
 def readElementaryFile(tag, iso7816, maxSize=0xDF):
     try:
         tag = converter.toTAG(tag)
-        logging.info(f"Reading {tag}...")
+        fid = converter.toFID(tag)
+        logging.info(f"Reading {tag} (FID {fid})...")
         offset = 0
 
-        iso7816.selectElementaryFile(converter.toFID(tag))
+        iso7816.selectElementaryFile(fid)
 
         # Read DG header (to know the body size)
         headerRaw = iso7816.readBinary(offset, 4)
