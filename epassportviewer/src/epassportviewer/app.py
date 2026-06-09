@@ -11,6 +11,8 @@ from .menu import MenuBar
 from .viewer import ViewerPane
 from .attacks import AttacksPane
 from .custom import CustomPane
+from .traffic import TrafficPane
+from .forge import ForgePane
 from .log import LogPane
 from .resources.gadgets.placeholder import PlaceholderEntry
 
@@ -131,24 +133,33 @@ class EPassportViewer:
         self.root.reader_combo.pack(side="right", padx=(10, 0))
         self.root.reader_combo.bind("<<ComboboxSelected>>", self._on_reader_selected)
 
-        ## Create the notebook (tabbed pane) for View, Attacks, Custom
+        ## Create the notebook (tabbed pane) for View, Attacks, Custom, Traffic, Forge
         notebook = ttk.Notebook(main_frame)
+        self.root.main_notebook = notebook
         view_tab = ttk.Frame(notebook)
         self.root.view_tab = view_tab
         attacks_tab = ttk.Frame(notebook)
         self.root.attacks_tab = attacks_tab
         custom_tab = ttk.Frame(notebook)
         self.root.custom_tab = custom_tab
+        traffic_tab = ttk.Frame(notebook)
+        self.root.traffic_tab = traffic_tab
+        forge_tab = ttk.Frame(notebook)
+        self.root.forge_tab = forge_tab
 
         notebook.add(view_tab, text="View")
         notebook.add(attacks_tab, text="Attacks")
         notebook.add(custom_tab, text="Custom")
+        notebook.add(traffic_tab, text="Traffic")
+        notebook.add(forge_tab, text="Forge")
         notebook.pack(fill=tk.BOTH, expand=True, pady=5)
 
         ### Setting up the View tab content for the passport display
         self.viewer_pane = ViewerPane(self)
         AttacksPane(self)
         CustomPane(self)
+        TrafficPane(self)
+        ForgePane(self)
 
         ## Footer pane with "Verbose" dropdown, "Logs" button, and version info
         footer_frame = ttk.Frame(main_frame)

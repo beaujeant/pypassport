@@ -1,6 +1,7 @@
 import logging
 from pypassport import reader
-from pypassport.utils import toHexString, toBytes, toList
+from pypassport.utils import toHexString, toList
+from pypassport.apdu_history import APDUHistory, APDUTransaction
 
 
 class APDUCommand():
@@ -213,12 +214,13 @@ class ISO7816():
         self._reader = reader
         self.ciphering = False
 
-    def transmit(self, toSend, logMsg=None, full=False):
+    def transmit(self, toSend, logMsg=None, full=False, source="tool"):
         """
         @param toSend: The command to transmit.
         @type toSend: An APDUCommand object.
         @param logMsg: A log message associated to the transmit.
         @type logMsg: A string.
+        @param source: Origin label recorded in APDU history ("tool" or "imported").
         @return: The result field of the responseAPDU object
 
         The P1 and P2 fields are checked after each transmit.
@@ -227,11 +229,18 @@ class ISO7816():
         The ISO7816Exception is composed of three fields: ('error message', p1, p2)
         """
 
+        # Capture cleartext command before any SM wrapping
+        cleartext_cmd = toSend
+
         log_enc = ""
         if logMsg:
             logging.debug(f"Transmit APDU: {logMsg}")
 
-        if self.ciphering:
+        sm_active = bool(self.ciphering)
+        sm_type = ""
+        if sm_active:
+            cls_name = type(self.ciphering).__name__
+            sm_type = "AES" if "Aes" in cls_name else "3DES"
             log_enc = "Encrypted "
             toSend = self.ciphering.protect(toSend)
 
@@ -244,6 +253,22 @@ class ISO7816():
             response = self.ciphering.unprotect(response)
 
         logging.debug(f"< {log_enc}{repr(response)})")
+
+        APDUHistory.get().record(APDUTransaction(
+            request_cla=cleartext_cmd.cla,
+            request_ins=cleartext_cmd.ins,
+            request_p1=cleartext_cmd.p1,
+            request_p2=cleartext_cmd.p2,
+            request_lc=cleartext_cmd.lc,
+            request_data=cleartext_cmd.data,
+            request_le=cleartext_cmd.le,
+            response_data=toHexString(response.data) if response.data else "",
+            response_sw1=response.sw1,
+            response_sw2=response.sw2,
+            sm_active=sm_active,
+            sm_type=sm_type,
+            source=source,
+        ))
 
         if full:
             return response
