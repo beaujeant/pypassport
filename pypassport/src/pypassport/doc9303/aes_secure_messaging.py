@@ -50,6 +50,14 @@ class AesSecureMessaging:
         self._ksmac = bytes(ksmac)
         self._ssc = bytes(ssc)
 
+    @property
+    def ssc(self) -> bytes:
+        return self._ssc
+
+    @ssc.setter
+    def ssc(self, value: bytes) -> None:
+        self._ssc = bytes(value)
+
     # ------------------------------------------------------------------
     # Public interface (mirrors SecureMessaging)
     # ------------------------------------------------------------------

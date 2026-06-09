@@ -367,6 +367,14 @@ class EPassport(dict):
                         "while SM is active — retrying without Secure Messaging."
                     )
                     saved_ciphering = self.iso7816.ciphering
+                    # protect() already incremented the SSC once for the rejected
+                    # command.  The chip rejected at the SM layer without processing
+                    # the command, so its SSC was NOT incremented.  Roll back the
+                    # local SSC by one so both sides stay in sync when SM resumes.
+                    ssc_raw = saved_ciphering.ssc
+                    ssc_rolled_back = (int.from_bytes(ssc_raw, "big") - 1).to_bytes(
+                        len(ssc_raw), "big"
+                    )
                     self.iso7816.ciphering = False
                     try:
                         dg = readElementaryFile(tag, self.iso7816)
@@ -375,6 +383,7 @@ class EPassport(dict):
                         logging.error(f"Could not read the DG without SM either: chip returned {sw2_str} ({e2.data})")
                         dg = None
                     finally:
+                        saved_ciphering.ssc = ssc_rolled_back
                         self.iso7816.ciphering = saved_ciphering
                 else:
                     logging.error(f"Could not read the DG: chip returned {sw_str} ({e.data})")
@@ -383,7 +392,7 @@ class EPassport(dict):
                 raise
             except Exception as msg:
                 logging.exception(msg)
-            if dg:
+            if dg is not None:
                 self.__setitem__(dg.tag, dg)
                 return dg
             else:
