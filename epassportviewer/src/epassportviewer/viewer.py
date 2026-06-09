@@ -1,4 +1,3 @@
-import base64
 import logging
 import io
 import tkinter as tk
@@ -7,6 +6,8 @@ from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
 from pypassport.iso7816 import APDUCommand
+from pypassport.doc9303.data_group import _CLASS_MAP
+from pypassport.doc9303 import converter as dg_converter
 
 
 # Row 1: file-system / meta EFs in logical access order
@@ -165,6 +166,8 @@ class ViewerPane:
         self._ef_contents = {ef: None for ef in _EF_NAMES}
         self._ef_inaccessible = set()
         self._photo_bytes = None
+        self._ef_raw = {}
+        self._mf_ef_raw = {}
         for btn in self._ef_buttons.values():
             btn.configure(state="disabled", style="EFTab.TButton")
         self._ef_text.configure(state="normal")
@@ -308,6 +311,8 @@ class ViewerPane:
 
         # Populate EF tabs
         self._reset_ef_tabs()
+        self._mf_ef_raw = {k: v for k, v in mf_ef_raw.items() if v is not None}
+        self._ef_raw["DG1"] = dg1.file.hex()
 
         try:
             dg2 = ep["DG2"]
@@ -347,6 +352,8 @@ class ViewerPane:
                 logging.warning(f"{ef} returned None (chip read or parsing failed)")
                 self._set_ef_content(ef, None)
                 continue
+            if hasattr(data, "file"):
+                self._ef_raw[ef] = data.file.hex()
             try:
                 content = self._ef_to_str(ef, data)
             except Exception as e:
@@ -386,36 +393,22 @@ class ViewerPane:
     # Snapshot: save / restore all read data without touching the chip     #
     # ------------------------------------------------------------------ #
 
-    _SNAPSHOT_VERSION = 1
-    _KNOWN_FIELDS = frozenset(
-        ["type", "surname", "name", "nationality", "dob", "signature",
-         "number", "country", "sex", "expiry", "optional"]
-    )
-
     def get_snapshot(self) -> dict:
-        """Return a JSON-serialisable dict capturing the current viewer state."""
-        fields = {k: self.fields[k].cget("text") for k in self._KNOWN_FIELDS}
-        photo_b64 = (
-            base64.b64encode(self._photo_bytes).decode("ascii")
-            if self._photo_bytes
-            else None
-        )
+        """Return a JSON-serialisable dict of raw EF bytes for save/load."""
         return {
-            "version": self._SNAPSHOT_VERSION,
+            "version": 2,
             "mrz": {
                 "doc_number": self.parent.doc_number.get(),
                 "dob": self.parent.dob.get(),
                 "expiry": self.parent.expiry.get(),
                 "can": self.parent.can.get(),
             },
-            "fields": fields,
-            "ef_contents": {k: v for k, v in self._ef_contents.items()},
-            "ef_inaccessible": list(self._ef_inaccessible),
-            "photo_b64": photo_b64,
+            "ef_raw": dict(self._ef_raw),
+            "mf_ef_raw": dict(self._mf_ef_raw),
         }
 
     def load_snapshot(self, data: dict) -> None:
-        """Restore viewer state from a snapshot dict produced by get_snapshot()."""
+        """Restore viewer state by re-parsing saved raw EF bytes."""
         self._validate_snapshot(data)
 
         mrz = data["mrz"]
@@ -424,29 +417,81 @@ class ViewerPane:
         self.parent.expiry.set(str(mrz.get("expiry", "")))
         self.parent.can.set(str(mrz.get("can", "")))
 
-        for key, label in self.fields.items():
-            val = data["fields"].get(key, "None")
-            label.configure(text=str(val) if val is not None else "None")
+        ef_dict = {}
+        for ef_name, hex_str in data.get("ef_raw", {}).items():
+            if not hex_str:
+                continue
+            try:
+                raw = bytes.fromhex(hex_str)
+                tag = dg_converter.toTAG(ef_name)
+                cls_name = dg_converter.toClass(tag)
+                ef_dict[ef_name] = _CLASS_MAP[cls_name](file=raw)
+            except Exception as e:
+                logging.warning(f"Could not parse {ef_name} from saved bytes: {e}")
+
+        mf_ef_raw = {k: v for k, v in data.get("mf_ef_raw", {}).items() if v}
+
+        dg1 = ef_dict.get("DG1")
+        if dg1 is None:
+            raise ValueError("Saved file does not contain DG1 data.")
+
+        for key in self.fields:
+            self.fields[key].configure(text="None")
+
+        try:
+            self.fields["type"].configure(text=dg1["5F1F"]["5F03"].replace("<", " ").strip())
+            self.fields["country"].configure(text=dg1["5F1F"]["5F28"].replace("<", " ").strip())
+            name = dg1["5F1F"]["5F5B"].split("<<")
+            self.fields["surname"].configure(text=name[0].replace("<", " ").strip())
+            self.fields["name"].configure(text=name[1].replace("<", " ").strip() if len(name) > 1 else "")
+            self.fields["number"].configure(text=dg1["5F1F"]["5A"].replace("<", " ").strip())
+            self.fields["nationality"].configure(text=dg1["5F1F"]["5F2C"].replace("<", " ").strip())
+            self.fields["dob"].configure(text=dg1["5F1F"]["5F57"].replace("<", " ").strip())
+            self.fields["sex"].configure(text=dg1["5F1F"]["5F35"].replace("<", " ").strip())
+            self.fields["expiry"].configure(text=dg1["5F1F"]["59"].replace("<", " ").strip())
+            self.fields["optional"].configure(text=dg1["5F1F"]["53"].replace("<", " ").strip())
+        except (KeyError, AttributeError) as e:
+            raise ValueError(f"Could not parse DG1 fields from saved data: {e}")
 
         self._reset_ef_tabs()
-        inaccessible_set = set(data.get("ef_inaccessible") or [])
-        for ef, content in data["ef_contents"].items():
-            if ef in self._ef_buttons and content is not None:
-                self._set_ef_content(ef, str(content), inaccessible=ef in inaccessible_set)
+        self._ef_raw = {k: v for k, v in data.get("ef_raw", {}).items() if v}
+        self._mf_ef_raw = dict(mf_ef_raw)
 
-        photo_b64 = data.get("photo_b64")
-        if photo_b64:
+        dg2 = ef_dict.get("DG2")
+        if dg2 is not None:
             try:
-                img_bytes = base64.b64decode(photo_b64)
-                self._display_photo(img_bytes)
-                self._photo_bytes = img_bytes
+                self._photo_bytes = bytes(dg2["7F61"][0]["7F60"]["5F2E"])
+                self._display_photo(self._photo_bytes)
             except Exception as e:
                 logging.warning(f"Could not restore passport photo: {e}")
-        else:
-            self.passport_photo.configure(
-                image="", text="Passport Photo\n(200px x 300px)", width=25, height=15
-            )
-            self.passport_photo.image = None
+
+        for ef in _EF_NAMES:
+            if ef in mf_ef_raw:
+                self._set_ef_content(ef, mf_ef_raw[ef])
+                continue
+            ef_obj = ef_dict.get(ef)
+            if ef_obj is not None:
+                self._set_ef_content(ef, self._ef_to_str(ef, ef_obj))
+
+        try:
+            com = ef_dict.get("COM")
+            advertised_tags = com.get("5C", []) if com else []
+        except Exception:
+            advertised_tags = []
+        for tag_hex in advertised_tags:
+            try:
+                from pypassport.doc9303.converter import toDG
+                ef_name = toDG(tag_hex)
+            except Exception:
+                continue
+            if ef_name in self._ef_buttons and self._ef_contents.get(ef_name) is None:
+                self._set_ef_content(
+                    ef_name,
+                    f"{ef_name} is listed in EF.COM but could not be read — "
+                    f"the chip may require Active Authentication or another "
+                    f"access condition before granting access.",
+                    inaccessible=True,
+                )
 
         if "DG1" in self._ef_contents and self._ef_contents["DG1"] is not None:
             self._select_ef("DG1")
@@ -463,30 +508,11 @@ class ViewerPane:
 
     @classmethod
     def _validate_snapshot(cls, data: dict) -> None:
-        """Raise ValueError if the snapshot structure is not what we expect."""
         if not isinstance(data, dict):
             raise ValueError("Snapshot must be a JSON object.")
-        if data.get("version") != cls._SNAPSHOT_VERSION:
+        if data.get("version") != 2:
             raise ValueError(f"Unsupported snapshot version: {data.get('version')!r}")
-
-        for section in ("mrz", "fields", "ef_contents"):
-            if not isinstance(data.get(section), dict):
-                raise ValueError(f"Snapshot missing or invalid section: '{section}'")
-
-        for key, val in data["mrz"].items():
-            if not isinstance(key, str) or (val is not None and not isinstance(val, str)):
-                raise ValueError(f"Invalid MRZ entry: {key!r}")
-
-        for key, val in data["fields"].items():
-            if key not in cls._KNOWN_FIELDS:
-                raise ValueError(f"Unknown field in snapshot: {key!r}")
-            if val is not None and not isinstance(val, str):
-                raise ValueError(f"Field value must be a string: {key!r}")
-
-        for key, val in data["ef_contents"].items():
-            if not isinstance(key, str) or (val is not None and not isinstance(val, str)):
-                raise ValueError(f"Invalid ef_contents entry: {key!r}")
-
-        photo_b64 = data.get("photo_b64")
-        if photo_b64 is not None and not isinstance(photo_b64, str):
-            raise ValueError("photo_b64 must be a string or null.")
+        if not isinstance(data.get("mrz"), dict):
+            raise ValueError("Snapshot missing or invalid 'mrz' section.")
+        if not isinstance(data.get("ef_raw"), dict):
+            raise ValueError("Snapshot missing or invalid 'ef_raw' section.")

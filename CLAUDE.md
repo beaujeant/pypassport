@@ -25,7 +25,7 @@ git checkout -b dev origin/main   # or: git checkout dev if it exists remotely
 
 ## Code style
 
-- **No backward compatibility.** Breaking changes are fine — do not add shims, deprecation wrappers, or compatibility layers to preserve old APIs or behaviour.
+- **No backward compatibility.** Breaking changes are fine — do not add shims, deprecation wrappers, or compatibility layers to preserve old APIs or behaviour. This applies to file formats too: when the save/load format changes, old files simply become invalid and that is acceptable.
 - **Minimise dependencies.** Prefer stdlib or already-present dependencies over adding new ones. When a dependency can be removed by writing a small amount of straightforward code, do so.
 
 ---

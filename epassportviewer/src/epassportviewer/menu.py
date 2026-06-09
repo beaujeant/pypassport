@@ -61,8 +61,7 @@ class MenuBar:
     def save_file(self):
         viewer = self.parent.viewer_pane
         snapshot = viewer.get_snapshot()
-        mrz = snapshot.get("mrz", {})
-        if not (mrz.get("doc_number") and mrz.get("dob") and mrz.get("expiry")):
+        if not snapshot.get("ef_raw", {}).get("DG1"):
             messagebox.showwarning("Nothing to save", "Read a passport first before saving.")
             return
         file_path = filedialog.asksaveasfilename(
