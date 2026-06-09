@@ -122,9 +122,14 @@ class EPassportViewer:
         image_button.image = photo
         image_button.pack(side="right", padx=10)
 
-        ### Reader info
-        self.root.reader_info_label = ttk.Label(mrz_frame, text="No reader found...")
-        self.root.reader_info_label.pack(side="right")
+        ### Reader dropdown
+        self._reader_var = tk.StringVar()
+        self.root.reader_combo = ttk.Combobox(
+            mrz_frame, textvariable=self._reader_var,
+            state="readonly", width=30,
+        )
+        self.root.reader_combo.pack(side="right")
+        self.root.reader_combo.bind("<<ComboboxSelected>>", self._on_reader_selected)
 
         ## Create the notebook (tabbed pane) for View, Attacks, Custom
         notebook = ttk.Notebook(main_frame)
@@ -168,9 +173,32 @@ class EPassportViewer:
         self.root.menu_bar_instance.rebuild_history_menu()
 
     def get_reader(self):
-        self.reader = reader.getReader()
+        list_readers = reader.listReaders()
+        combo = self.root.reader_combo
+        if not list_readers:
+            combo.configure(values=[], state="disabled")
+            self._reader_var.set("No reader found...")
+            self.reader = None
+            self.root.read_button["state"] = "disabled"
+            return
+
+        names = [str(r) for r in list_readers]
+        combo.configure(values=names, state="readonly")
+
+        # Keep current selection if still valid, otherwise default to first.
+        current = self._reader_var.get()
+        if current not in names:
+            self._reader_var.set(names[0])
+
+        self._connect_selected_reader()
+
+    def _on_reader_selected(self, _event=None):
+        self._connect_selected_reader()
+
+    def _connect_selected_reader(self):
+        name = self._reader_var.get()
+        self.reader = reader.getReader(name)
         if not self.reader:
-            self.root.reader_info_label["text"] = "No reader found..."
             self.root.read_button["state"] = "disabled"
             return
 
@@ -179,16 +207,13 @@ class EPassportViewer:
             self.reader.connect()
         except NoCardException:
             logging.warning(f"Reader '{reader_name}' found, but no card is inserted.")
-            self.root.reader_info_label["text"] = f"Reader: {reader_name} (no card)"
             self.root.read_button["state"] = "normal"
             return
         except CardConnectionException as e:
             logging.error(f"Could not connect to card on reader '{reader_name}': {e}")
-            self.root.reader_info_label["text"] = f"Reader: {reader_name} (connection error)"
             self.root.read_button["state"] = "normal"
             return
 
-        self.root.reader_info_label["text"] = f"Reader found: {reader_name}"
         self.root.read_button["state"] = "normal"
 
 
