@@ -88,7 +88,16 @@ class AesSecureMessaging:
     def unprotect(self, rapdu: APDUResponse) -> APDUResponse:
         """Verify MAC and decrypt a response APDU."""
         if rapdu.sw1 != 0x90 or rapdu.sw2 != 0x00:
+            # Plain (non-SM-wrapped) response: chip rejected the command before
+            # processing the SM layer and did not increment its own SSC.
+            # Roll back the increment made by protect() to stay in sync.
+            self._ssc = self._dec_ssc()
             return rapdu
+
+        # Chip sent an SM-wrapped response — it incremented its SSC for both
+        # receipt and transmission.  Increment ours here so that any parsing
+        # exception below does not leave us one SSC behind the chip.
+        self._ssc = self._inc_ssc()
 
         raw = rapdu.raw()
         offset = 0
@@ -126,7 +135,6 @@ class AesSecureMessaging:
         cc_len = raw[offset + 1]
         CC_received = raw[offset + 2: offset + 2 + cc_len]
 
-        self._ssc = self._inc_ssc()
         K = _iso_pad(self._ssc + do87 + do99)
         CC_computed = self._cmac(K)[:_MAC_LEN]
 
@@ -151,6 +159,10 @@ class AesSecureMessaging:
 
     def _inc_ssc(self) -> bytes:
         val = int.from_bytes(self._ssc, "big") + 1
+        return val.to_bytes(16, "big")
+
+    def _dec_ssc(self) -> bytes:
+        val = int.from_bytes(self._ssc, "big") - 1
         return val.to_bytes(16, "big")
 
     def _encrypt(self, data: bytes) -> bytes:

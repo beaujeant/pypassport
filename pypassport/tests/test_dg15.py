@@ -215,3 +215,136 @@ def test_dg15_chip_error_message_includes_sw(caplog):
         "Error log must include SW=6882 so the developer knows this is a chip error, "
         "not a missing SM session. Got: " + str([r.message for r in caplog.records])
     )
+
+
+# ---------------------------------------------------------------------------
+# AES SM SSC synchronisation
+# ---------------------------------------------------------------------------
+# These tests cover the cascading-6882 failure: after a DG read fails, the
+# Send Sequence Counter (SSC) must remain synchronised with the chip so that
+# subsequent DG reads are not rejected.
+
+
+from pypassport.doc9303.aes_secure_messaging import AesSecureMessaging, AesSecureMessagingException
+from pypassport.iso7816 import APDUCommand, APDUResponse
+from Crypto.Cipher import AES as _AES
+from Crypto.Hash import CMAC as _CMAC
+
+
+_K_ENC = bytes.fromhex("AB94FDECF2674FDFB9B391F85D7F76F2")
+_K_MAC = bytes.fromhex("7962D9ECE03D1ACD4C76089DCE131543")
+_SSC0  = b"\x00" * 16
+
+
+def _make_sm():
+    return AesSecureMessaging(_K_ENC, _K_MAC, _SSC0)
+
+
+def _build_valid_sm_response(command_ssc: bytes, plain_data: bytes,
+                              inner_sw: bytes = b"\x90\x00") -> "APDUResponse":
+    """
+    Build a well-formed AES SM response for a chip that received a command at
+    *command_ssc*.  The chip increments SSC once more for the response send,
+    so the response MAC is computed at command_ssc + 1.
+    Returns a raw APDUResponse with outer SW=9000.
+    """
+    from pypassport.doc9303.aes_secure_messaging import _iso_pad
+    # Chip increments SSC for the response (one more than the command SSC).
+    ssc = (int.from_bytes(command_ssc, "big") + 1).to_bytes(16, "big")
+
+    if plain_data:
+        iv = _AES.new(_K_ENC, _AES.MODE_ECB).encrypt(ssc)
+        cipher = _AES.new(_K_ENC, _AES.MODE_CBC, iv).encrypt(_iso_pad(plain_data))
+        do87 = b"\x87" + bytes([len(cipher) + 1]) + b"\x01" + cipher
+    else:
+        do87 = b""
+
+    do99 = b"\x99\x02" + inner_sw
+
+    K = _iso_pad(ssc + do87 + do99)
+    c = _CMAC.new(_K_MAC, ciphermod=_AES)
+    c.update(K)
+    do8e = b"\x8E\x08" + c.digest()[:8]
+
+    body = do87 + do99 + do8e
+    return APDUResponse(body, 0x90, 0x00)
+
+
+def test_ssc_decremented_after_plain_error_response():
+    """
+    When the chip returns a plain (non-SM-wrapped) error, both sides should
+    stay in sync.  protect() incremented client SSC; unprotect() must roll
+    it back so the next command is accepted by the chip.
+    """
+    sm = _make_sm()
+    cmd = APDUCommand("00", "B0", "00", "00", le="04")
+
+    sm.protect(cmd)
+    ssc_after_protect = sm._ssc
+
+    # Chip returns a plain error (e.g. 6882 — rejected at SM layer, no SSC
+    # increment on chip side).
+    plain_err = APDUResponse(b"", 0x68, 0x82)
+    sm.unprotect(plain_err)
+
+    ssc_after_unprotect = sm._ssc
+    expected = (int.from_bytes(_SSC0, "big")).to_bytes(16, "big")  # rolled back to original
+    assert ssc_after_unprotect == expected, (
+        "SSC should be rolled back to pre-protect value after plain error response. "
+        f"Got {ssc_after_unprotect.hex()!r}, expected {expected.hex()!r}."
+    )
+
+
+def test_ssc_stays_synced_after_plain_error_then_success():
+    """
+    After a plain-error response (SSC rolled back), the subsequent protect+
+    unprotect cycle must still produce correct MACs — i.e., both sides agree
+    on the next SSC value.
+    """
+    sm_client = _make_sm()
+
+    cmd = APDUCommand("00", "A4", "02", "0C", data="010D")  # SELECT DG13
+
+    # --- Round 1: DG13 SELECT fails (chip returns plain 6882) ---
+    sm_client.protect(cmd)
+    # chip did NOT increment SSC (plain reject)
+    plain_err = APDUResponse(b"", 0x68, 0x82)
+    sm_client.unprotect(plain_err)
+    # chip state unchanged (chip SSC still 0)
+
+    # --- Round 2: DG14 SELECT succeeds ---
+    sm_client.protect(cmd)
+    # After round-2 protect, client SSC = 1 (chip SSC also = 1 for command receive).
+    # Chip increments once more for response send → response MAC is at SSC=2.
+    response = _build_valid_sm_response(sm_client._ssc, b"")
+
+    # Client must be able to verify this response without MAC mismatch.
+    result = sm_client.unprotect(response)
+    assert result.sw1 == 0x90 and result.sw2 == 0x00
+
+
+def test_ssc_incremented_early_when_sm_response_parsing_fails():
+    """
+    If the chip sends an SM-wrapped response (outer 9000) but the inner
+    DO'8E' is missing, unprotect raises AesSecureMessagingException.
+    The client SSC must have been incremented BEFORE the exception so that
+    the chip and client remain in sync for the next command.
+    """
+    sm = _make_sm()
+    cmd = APDUCommand("00", "B0", "00", "00", le="04")
+    sm.protect(cmd)
+    ssc_before = sm._ssc  # SSC after protect
+
+    # Build a response with outer 9000 but without DO'8E' (malformed).
+    do99 = b"\x99\x02\x90\x00"
+    rapdu = APDUResponse(do99, 0x90, 0x00)  # no DO'8E'
+
+    with pytest.raises(AesSecureMessagingException, match="DO8E missing"):
+        sm.unprotect(rapdu)
+
+    # SSC should have been incremented before the exception.
+    expected_ssc = (int.from_bytes(ssc_before, "big") + 1).to_bytes(16, "big")
+    assert sm._ssc == expected_ssc, (
+        "SSC must be incremented before parsing exceptions to stay in sync with "
+        f"the chip. Got {sm._ssc.hex()!r}, expected {expected_ssc.hex()!r}."
+    )
