@@ -380,7 +380,13 @@ class ElementaryFile(dict):
             index = 0
             for value in node:
                 tab = "    "*level
-                output += f"{nl}{tab}[{index}]: "
+                name_hint = ""
+                if isinstance(value, str):
+                    try:
+                        name_hint = f" ({tagToName[value.upper()]})"
+                    except KeyError:
+                        pass
+                output += f"{nl}{tab}[{index}]{name_hint}: "
                 output = self.print_any(value, output, level+1)
                 index += 1
         if isinstance(node, int):

@@ -344,6 +344,28 @@ class ViewerPane:
                 content = f"(Could not display {ef}: {e})"
             self._set_ef_content(ef, content)
 
+        # Cross-reference EF.COM tag list: enable tabs for DGs the chip
+        # advertises (5C list) but that couldn't be read, so the user can
+        # see they are present rather than silently disabled.
+        try:
+            com = ep["COM"]
+            advertised_tags = com.get("5C", []) if com else []
+        except Exception:
+            advertised_tags = []
+        for tag_hex in advertised_tags:
+            try:
+                from pypassport.doc9303.converter import toDG
+                ef_name = toDG(tag_hex)
+            except Exception:
+                continue
+            if ef_name in self._ef_buttons and self._ef_contents.get(ef_name) is None:
+                self._set_ef_content(
+                    ef_name,
+                    f"({ef_name} is listed in EF.COM but could not be read — "
+                    f"the chip may require Active Authentication or another "
+                    f"access condition before granting access.)",
+                )
+
         self._select_ef("DG1")
 
     def update_field(self, item, value):
