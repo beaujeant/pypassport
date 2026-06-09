@@ -1,3 +1,4 @@
+import base64
 import logging
 import io
 import tkinter as tk
@@ -109,6 +110,7 @@ class ViewerPane:
         self._ef_buttons = {}
         self._ef_contents = {}   # ef_name -> str content or None
         self._selected_ef = None
+        self._photo_bytes = None  # raw image bytes from DG2, kept for Save
 
         style = ttk.Style()
         style.configure("EFTab.TButton", font=("", 8), padding=(4, 2))
@@ -154,6 +156,7 @@ class ViewerPane:
     def _reset_ef_tabs(self):
         self._selected_ef = None
         self._ef_contents = {ef: None for ef in _EF_NAMES}
+        self._photo_bytes = None
         for btn in self._ef_buttons.values():
             btn.configure(state="disabled", style="EFTab.TButton")
         self._ef_text.configure(state="normal")
@@ -294,7 +297,8 @@ class ViewerPane:
             dg2 = ep["DG2"]
             if dg2 is None:
                 raise EPassportException("DG2 could not be read from the chip.")
-            image_stream = io.BytesIO(dg2["7F61"][0]["7F60"]["5F2E"])
+            self._photo_bytes = bytes(dg2["7F61"][0]["7F60"]["5F2E"])
+            image_stream = io.BytesIO(self._photo_bytes)
             image = Image.open(image_stream)
 
             max_width = 200
@@ -373,3 +377,110 @@ class ViewerPane:
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)
+
+    # ------------------------------------------------------------------ #
+    # Snapshot: save / restore all read data without touching the chip     #
+    # ------------------------------------------------------------------ #
+
+    _SNAPSHOT_VERSION = 1
+    _KNOWN_FIELDS = frozenset(
+        ["type", "surname", "name", "nationality", "dob", "signature",
+         "number", "country", "sex", "expiry", "optional"]
+    )
+
+    def get_snapshot(self) -> dict:
+        """Return a JSON-serialisable dict capturing the current viewer state."""
+        fields = {k: self.fields[k].cget("text") for k in self._KNOWN_FIELDS}
+        photo_b64 = (
+            base64.b64encode(self._photo_bytes).decode("ascii")
+            if self._photo_bytes
+            else None
+        )
+        return {
+            "version": self._SNAPSHOT_VERSION,
+            "mrz": {
+                "doc_number": self.parent.doc_number.get(),
+                "dob": self.parent.dob.get(),
+                "expiry": self.parent.expiry.get(),
+                "can": self.parent.can.get(),
+            },
+            "fields": fields,
+            "ef_contents": {k: v for k, v in self._ef_contents.items()},
+            "photo_b64": photo_b64,
+        }
+
+    def load_snapshot(self, data: dict) -> None:
+        """Restore viewer state from a snapshot dict produced by get_snapshot()."""
+        self._validate_snapshot(data)
+
+        mrz = data["mrz"]
+        self.parent.doc_number.set(str(mrz.get("doc_number", "")))
+        self.parent.dob.set(str(mrz.get("dob", "")))
+        self.parent.expiry.set(str(mrz.get("expiry", "")))
+        self.parent.can.set(str(mrz.get("can", "")))
+
+        for key, label in self.fields.items():
+            val = data["fields"].get(key, "None")
+            label.configure(text=str(val) if val is not None else "None")
+
+        self._reset_ef_tabs()
+        for ef, content in data["ef_contents"].items():
+            if ef in self._ef_buttons and content is not None:
+                self._set_ef_content(ef, str(content))
+
+        photo_b64 = data.get("photo_b64")
+        if photo_b64:
+            try:
+                img_bytes = base64.b64decode(photo_b64)
+                self._display_photo(img_bytes)
+                self._photo_bytes = img_bytes
+            except Exception as e:
+                logging.warning(f"Could not restore passport photo: {e}")
+        else:
+            self.passport_photo.configure(
+                image="", text="Passport Photo\n(200px x 300px)", width=25, height=15
+            )
+            self.passport_photo.image = None
+
+        if "DG1" in self._ef_contents and self._ef_contents["DG1"] is not None:
+            self._select_ef("DG1")
+
+    def _display_photo(self, img_bytes: bytes) -> None:
+        image = Image.open(io.BytesIO(img_bytes))
+        max_width = 200
+        width, height = image.size
+        new_height = int(max_width * height / width)
+        image = image.resize((max_width, new_height), Image.LANCZOS)
+        tk_image = ImageTk.PhotoImage(image)
+        self.passport_photo.configure(image=tk_image, width=max_width, height=new_height, text="")
+        self.passport_photo.image = tk_image
+
+    @classmethod
+    def _validate_snapshot(cls, data: dict) -> None:
+        """Raise ValueError if the snapshot structure is not what we expect."""
+        if not isinstance(data, dict):
+            raise ValueError("Snapshot must be a JSON object.")
+        if data.get("version") != cls._SNAPSHOT_VERSION:
+            raise ValueError(f"Unsupported snapshot version: {data.get('version')!r}")
+
+        for section in ("mrz", "fields", "ef_contents"):
+            if not isinstance(data.get(section), dict):
+                raise ValueError(f"Snapshot missing or invalid section: '{section}'")
+
+        for key, val in data["mrz"].items():
+            if not isinstance(key, str) or (val is not None and not isinstance(val, str)):
+                raise ValueError(f"Invalid MRZ entry: {key!r}")
+
+        for key, val in data["fields"].items():
+            if key not in cls._KNOWN_FIELDS:
+                raise ValueError(f"Unknown field in snapshot: {key!r}")
+            if val is not None and not isinstance(val, str):
+                raise ValueError(f"Field value must be a string: {key!r}")
+
+        for key, val in data["ef_contents"].items():
+            if not isinstance(key, str) or (val is not None and not isinstance(val, str)):
+                raise ValueError(f"Invalid ef_contents entry: {key!r}")
+
+        photo_b64 = data.get("photo_b64")
+        if photo_b64 is not None and not isinstance(photo_b64, str):
+            raise ValueError("photo_b64 must be a string or null.")

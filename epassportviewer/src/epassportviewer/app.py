@@ -141,7 +141,7 @@ class EPassportViewer:
         notebook.pack(fill=tk.BOTH, expand=True, pady=5)
 
         ### Setting up the View tab content for the passport display
-        ViewerPane(self)
+        self.viewer_pane = ViewerPane(self)
         AttacksPane(self)
         CustomPane(self)
 

@@ -1,3 +1,4 @@
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -41,35 +42,44 @@ class MenuBar:
 
     def open_file(self):
         file_path = filedialog.askopenfilename(
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            title="Open MRZ file",
+            filetypes=[("ePassport data", "*.epd"), ("All files", "*.*")],
+            title="Open passport data",
         )
-        if file_path:
-            try:
-                with open(file_path, "r") as f:
-                    content = f.read().strip()
-                self.setMRZ(content)
-            except Exception as e:
-                messagebox.showerror("Open failed", str(e))
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showerror("Open failed", f"Could not read file:\n{e}")
+            return
+        try:
+            self.parent.viewer_pane.load_snapshot(data)
+        except ValueError as e:
+            messagebox.showerror("Open failed", f"Invalid passport data file:\n{e}")
+        except Exception as e:
+            messagebox.showerror("Open failed", f"Could not restore passport data:\n{e}")
 
     def save_file(self):
-        doc = self.parent.doc_number.get()
-        dob = self.parent.dob.get()
-        expiry = self.parent.expiry.get()
-        if not (doc and dob and expiry):
-            messagebox.showwarning("Nothing to save", "Fill in the MRZ fields before saving.")
+        viewer = self.parent.viewer_pane
+        snapshot = viewer.get_snapshot()
+        mrz = snapshot.get("mrz", {})
+        if not (mrz.get("doc_number") and mrz.get("dob") and mrz.get("expiry")):
+            messagebox.showwarning("Nothing to save", "Read a passport first before saving.")
             return
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            title="Save MRZ",
+            defaultextension=".epd",
+            filetypes=[("ePassport data", "*.epd"), ("All files", "*.*")],
+            title="Save passport data",
         )
-        if file_path:
-            try:
-                with open(file_path, "w") as f:
-                    f.write(f"{doc} {dob} {expiry}\n")
-            except Exception as e:
-                messagebox.showerror("Save failed", str(e))
+        if not file_path:
+            return
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+        except OSError as e:
+            messagebox.showerror("Save failed", str(e))
 
     def open_settings(self):
         messagebox.showinfo("Settings", "No configurable settings at this time.")
