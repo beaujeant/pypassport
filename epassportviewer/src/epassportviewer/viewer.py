@@ -293,22 +293,15 @@ class ViewerPane:
         if doc_number and dob and expiry:
             self.parent.add_to_history(doc_number, dob, expiry)
 
+        # Populate EF tabs
+        self._reset_ef_tabs()
+
         try:
             dg2 = ep["DG2"]
             if dg2 is None:
                 raise EPassportException("DG2 could not be read from the chip.")
             self._photo_bytes = bytes(dg2["7F61"][0]["7F60"]["5F2E"])
-            image_stream = io.BytesIO(self._photo_bytes)
-            image = Image.open(image_stream)
-
-            max_width = 200
-            width, height = image.size
-            new_height = int(max_width * height / width)
-            image = image.resize((max_width, new_height), Image.LANCZOS)
-
-            tk_image = ImageTk.PhotoImage(image)
-            self.passport_photo.configure(image=tk_image, width=max_width, height=new_height)
-            self.passport_photo.image = tk_image
+            self._display_photo(self._photo_bytes)
         except EPassportException as e:
             logging.error(f"Could not read DG2: {e}")
             messagebox.showerror("Passport photo unavailable", str(e))
@@ -318,9 +311,6 @@ class ViewerPane:
                 "Passport photo unavailable",
                 f"Could not load the passport photo: {e}",
             )
-
-        # Populate EF tabs
-        self._reset_ef_tabs()
         for ef in _EF_NAMES:
             # DG1 is guaranteed readable — use the already-parsed local variable
             # so a failed re-read attempt never clears the tab.

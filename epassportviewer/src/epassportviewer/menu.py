@@ -19,9 +19,6 @@ class MenuBar:
         self.history_menu = tk.Menu(self.configure_menu, tearoff=0)
         self._populate_history_menu()
 
-        if main.history:
-            self.setMRZ(main.history[-1])
-
         self.configure_menu.add_cascade(label="History", menu=self.history_menu)
         self.configure_menu.add_command(label="Settings", command=self.open_settings)
 
