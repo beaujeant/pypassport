@@ -374,7 +374,7 @@ class ElementaryFile(dict):
                     extra = f" ({tagToName[key]})"
                 except KeyError:
                     extra = ""
-                output += f"{nl}{tab}[{key}]{extra}: "
+                output += f"{nl if output else ''}{tab}[{key}]{extra}: "
                 output = self.print_any(value, output, level+1)
         if isinstance(node, list):
             index = 0
@@ -386,7 +386,7 @@ class ElementaryFile(dict):
                         name_hint = f" ({tagToName[value.upper()]})"
                     except KeyError:
                         pass
-                output += f"{nl}{tab}[{index}]{name_hint}: "
+                output += f"{nl if output else ''}{tab}[{index}]{name_hint}: "
                 output = self.print_any(value, output, level+1)
                 index += 1
         if isinstance(node, int):
