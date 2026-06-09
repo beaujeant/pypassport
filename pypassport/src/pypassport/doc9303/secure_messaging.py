@@ -92,11 +92,8 @@ class SecureMessaging():
         do8e = b""
         offset = 0
 
-        # Check for a plain (non-SM-wrapped) error.  The chip rejected the
-        # command before processing the SM layer so its SSC did not change.
-        # Roll back the SSC increment from protect() to stay in sync.
+        # Check for a SM error
         if (rapdu.sw1 != 0x90 or rapdu.sw2 != 0x00):
-            self._ssc = self._decSSC()
             return rapdu
 
         # Chip sent an SM-wrapped response — it incremented its SSC for both
@@ -213,11 +210,6 @@ class SecureMessaging():
     def _incSSC(self):
         out = int.from_bytes(self._ssc, byteorder='big') + 1
         return out.to_bytes(8, byteorder='big')
-
-    def _decSSC(self):
-        out = int.from_bytes(self._ssc, byteorder='big') - 1
-        return out.to_bytes(8, byteorder='big')
-
 
     def _buildD08E(self, mac):
         res = bytes([0x8E, len(mac)]) + mac

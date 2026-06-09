@@ -270,11 +270,12 @@ def _build_valid_sm_response(command_ssc: bytes, plain_data: bytes,
     return APDUResponse(body, 0x90, 0x00)
 
 
-def test_ssc_decremented_after_plain_error_response():
+def test_ssc_unchanged_after_plain_error_response():
     """
-    When the chip returns a plain (non-SM-wrapped) error, both sides should
-    stay in sync.  protect() incremented client SSC; unprotect() must roll
-    it back so the next command is accepted by the chip.
+    When the chip returns a plain (non-SM-wrapped) error, the client SSC must
+    remain at the post-protect value.  Many chips verify the SM MAC (advancing
+    their SSC for receive) before returning a plain application error, so both
+    sides end up at the same SSC value if the client does not decrement.
     """
     sm = _make_sm()
     cmd = APDUCommand("00", "B0", "00", "00", le="04")
@@ -282,45 +283,13 @@ def test_ssc_decremented_after_plain_error_response():
     sm.protect(cmd)
     ssc_after_protect = sm._ssc
 
-    # Chip returns a plain error (e.g. 6882 — rejected at SM layer, no SSC
-    # increment on chip side).
     plain_err = APDUResponse(b"", 0x68, 0x82)
     sm.unprotect(plain_err)
 
-    ssc_after_unprotect = sm._ssc
-    expected = (int.from_bytes(_SSC0, "big")).to_bytes(16, "big")  # rolled back to original
-    assert ssc_after_unprotect == expected, (
-        "SSC should be rolled back to pre-protect value after plain error response. "
-        f"Got {ssc_after_unprotect.hex()!r}, expected {expected.hex()!r}."
+    assert sm._ssc == ssc_after_protect, (
+        "SSC must not change after a plain error response. "
+        f"Got {sm._ssc.hex()!r}, expected {ssc_after_protect.hex()!r}."
     )
-
-
-def test_ssc_stays_synced_after_plain_error_then_success():
-    """
-    After a plain-error response (SSC rolled back), the subsequent protect+
-    unprotect cycle must still produce correct MACs — i.e., both sides agree
-    on the next SSC value.
-    """
-    sm_client = _make_sm()
-
-    cmd = APDUCommand("00", "A4", "02", "0C", data="010D")  # SELECT DG13
-
-    # --- Round 1: DG13 SELECT fails (chip returns plain 6882) ---
-    sm_client.protect(cmd)
-    # chip did NOT increment SSC (plain reject)
-    plain_err = APDUResponse(b"", 0x68, 0x82)
-    sm_client.unprotect(plain_err)
-    # chip state unchanged (chip SSC still 0)
-
-    # --- Round 2: DG14 SELECT succeeds ---
-    sm_client.protect(cmd)
-    # After round-2 protect, client SSC = 1 (chip SSC also = 1 for command receive).
-    # Chip increments once more for response send → response MAC is at SSC=2.
-    response = _build_valid_sm_response(sm_client._ssc, b"")
-
-    # Client must be able to verify this response without MAC mismatch.
-    result = sm_client.unprotect(response)
-    assert result.sw1 == 0x90 and result.sw2 == 0x00
 
 
 def test_ssc_incremented_early_when_sm_response_parsing_fails():
