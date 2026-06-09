@@ -128,7 +128,7 @@ class EPassportViewer:
             mrz_frame, textvariable=self._reader_var,
             state="readonly", width=30,
         )
-        self.root.reader_combo.pack(side="right")
+        self.root.reader_combo.pack(side="right", padx=(10, 0))
         self.root.reader_combo.bind("<<ComboboxSelected>>", self._on_reader_selected)
 
         ## Create the notebook (tabbed pane) for View, Attacks, Custom
