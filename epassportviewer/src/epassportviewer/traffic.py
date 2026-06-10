@@ -1,23 +1,112 @@
+import tkinter as tk
 from tkinter import ttk
+
 from pypassport.apdu_history import APDUHistory
+from pypassport.iso7816 import APDUCommand, APDUResponse
+from pypassport.doc9303 import converter
 
 
+# ── Column layout for the transaction list ───────────────────────────────────
 _COLUMNS = (
-    ("#",      "#",      40),
-    ("time",   "Time",   70),
-    ("cla",    "CLA",    36),
-    ("ins",    "INS",    36),
-    ("p1",     "P1",     36),
-    ("p2",     "P2",     36),
-    ("lc",     "LC",     36),
-    ("data",   "Req Data", 130),
-    ("le",     "LE",     36),
-    ("sm",     "SM",     60),
-    ("rdata",  "Resp Data", 130),
-    ("sw1",    "SW1",    40),
-    ("sw2",    "SW2",    40),
-    ("source", "Source", 60),
+    ("id",     "ID",        45,  False),
+    ("time",   "Time",      80,  False),
+    ("dir",    "Direction", 110, False),
+    ("info",   "Info",      320, True),
+    ("sm",     "SM",        55,  False),
+    ("source", "Source",    70,  False),
 )
+
+
+# ── Human-readable INS names ─────────────────────────────────────────────────
+# Start from the dictionary already maintained on APDUCommand, then add the few
+# extra instructions pypassport issues that aren't in that BAC-centric table.
+_INS_NAMES = {code: name for name, code in APDUCommand.Instructions.items()}
+_INS_NAMES.update({
+    0x22: "MANAGE SECURITY ENVIRONMENT",
+    0x86: "GENERAL AUTHENTICATE",
+    0xC0: "GET RESPONSE",
+    0xCA: "GET DATA",
+})
+
+
+# ── Per-field colours used by both the hex dump and its legend ───────────────
+_FIELD_COLORS = {
+    "CLA":  "#cfe8ff",
+    "INS":  "#c8f7c5",
+    "P1":   "#fff3bf",
+    "P2":   "#ffe0b3",
+    "LC":   "#ffd6e7",
+    "DATA": "#e9ecef",
+    "LE":   "#d0f0f0",
+    "SW1":  "#ffc9c9",
+    "SW2":  "#ff8787",
+}
+_LEGEND_ORDER = ("CLA", "INS", "P1", "P2", "LC", "DATA", "LE", "SW1", "SW2")
+
+
+def _select_detail(p1, p2, data):
+    """Best-effort description of a SELECT FILE target."""
+    d = (data or "").upper()
+    if not d:
+        return None
+    if d == "3F00":
+        return "MF"
+    if d.startswith("A0000002471001"):
+        return "eMRTD AID"
+    try:
+        return converter.toEF(d)
+    except KeyError:
+        return d
+
+
+def _request_info(tx):
+    """Translate a command APDU header into a readable description."""
+    try:
+        ins = int(tx.request_ins, 16)
+    except ValueError:
+        ins = -1
+
+    name = _INS_NAMES.get(ins)
+
+    if name == "SELECT FILE":
+        detail = _select_detail(tx.request_p1, tx.request_p2, tx.request_data)
+        return f"SELECT FILE ({detail})" if detail else "SELECT FILE"
+
+    if name == "READ BINARY":
+        p1 = int(tx.request_p1, 16)
+        if p1 & 0x80:  # short-EF identifier in P1
+            return f"READ BINARY (SFID {p1 & 0x1F:02X}, offset {int(tx.request_p2, 16)})"
+        return f"READ BINARY (offset {int(tx.request_p1 + tx.request_p2, 16)})"
+
+    if name:
+        return name
+
+    # Unknown instruction — fall back to the raw header bytes.
+    header = " ".join(
+        v.upper() for v in (tx.request_cla, tx.request_ins, tx.request_p1, tx.request_p2)
+    )
+    return f"Unknown [{header}]"
+
+
+def _status_text(sw1, sw2):
+    entry = APDUResponse.Status.get(sw1)
+    if isinstance(entry, dict):
+        text = entry.get(sw2, "Unknown")
+    elif isinstance(entry, str):
+        text = entry
+    else:
+        text = "Unknown"
+    return f"{text} ({sw1:02X}{sw2:02X})"
+
+
+def _response_info(tx):
+    """Translate a response APDU: status word plus a short data preview."""
+    status = _status_text(tx.response_sw1, tx.response_sw2)
+    if tx.response_data:
+        preview = tx.response_data[:16].upper()
+        ellipsis = "…" if len(tx.response_data) > 16 else ""
+        return f"{status} — {preview}{ellipsis}"
+    return status
 
 
 class TrafficPane:
@@ -29,23 +118,55 @@ class TrafficPane:
 
         frame = self.root.traffic_tab
 
-        # Toolbar
+        # ── Toolbar ──────────────────────────────────────────────────────────
+        # Keep the safe action (Send to Forge) far from the destructive ones
+        # (Delete / Clear) so they can't be hit by accident.
         toolbar = ttk.Frame(frame)
         toolbar.pack(fill="x", padx=5, pady=5)
-        ttk.Button(toolbar, text="Delete selected", command=self._delete_selected).pack(side="left", padx=3)
-        ttk.Button(toolbar, text="Clear all", command=self._clear_all).pack(side="left", padx=3)
         ttk.Button(toolbar, text="Send to Forge", command=self._send_to_forge).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="Clear all", command=self._clear_all).pack(side="right", padx=3)
+        ttk.Separator(toolbar, orient="vertical").pack(side="right", fill="y", padx=12, pady=2)
+        ttk.Button(toolbar, text="Delete selected", command=self._delete_selected).pack(side="right", padx=3)
 
-        # Treeview
+        # ── Detail (hex dump) box, pinned to the bottom ──────────────────────
+        detail_frame = ttk.LabelFrame(frame, text=" Selected transaction ", padding=6)
+        detail_frame.pack(side="bottom", fill="x", padx=5, pady=(0, 5))
+
+        legend = ttk.Frame(detail_frame)
+        legend.pack(fill="x", pady=(0, 4))
+        ttk.Label(legend, text="Fields:").pack(side="left", padx=(0, 4))
+        for field in _LEGEND_ORDER:
+            tk.Label(
+                legend, text=field, background=_FIELD_COLORS[field],
+                padx=5, pady=1, relief="solid", borderwidth=1,
+            ).pack(side="left", padx=2)
+
+        dump_wrap = ttk.Frame(detail_frame)
+        dump_wrap.pack(fill="x")
+        self._dump = tk.Text(dump_wrap, height=11, font=("Courier", 10), wrap="none",
+                             state="disabled", background="#fbfbfb", borderwidth=0)
+        dump_vsb = ttk.Scrollbar(dump_wrap, orient="vertical", command=self._dump.yview)
+        self._dump.configure(yscrollcommand=dump_vsb.set)
+        self._dump.pack(side="left", fill="both", expand=True)
+        dump_vsb.pack(side="right", fill="y")
+
+        self._dump.tag_configure("header", font=("Courier", 10, "bold"))
+        self._dump.tag_configure("offset", foreground="#999999")
+        for field, color in _FIELD_COLORS.items():
+            self._dump.tag_configure(field, background=color)
+
+        # ── Transaction list ─────────────────────────────────────────────────
         tree_frame = ttk.Frame(frame)
         tree_frame.pack(fill="both", expand=True, padx=5, pady=(0, 5))
 
         cols = [c[0] for c in _COLUMNS]
         self._tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="extended")
-
-        for col_id, heading, width in _COLUMNS:
+        for col_id, heading, width, stretch in _COLUMNS:
             self._tree.heading(col_id, text=heading)
-            self._tree.column(col_id, width=width, minwidth=width, stretch=(col_id in ("data", "rdata")))
+            self._tree.column(col_id, width=width, minwidth=width, stretch=stretch)
+
+        self._tree.tag_configure("resp_ok", background="#f4fbf4")
+        self._tree.tag_configure("resp_err", background="#fdeded")
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self._tree.xview)
@@ -57,46 +178,122 @@ class TrafficPane:
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
 
-        # Populate with any already-recorded transactions (e.g. replayed on re-open)
-        for tx in self._history:
-            self._append_row(tx)
+        self._tree.bind("<<TreeviewSelect>>", self._on_select)
 
-    def _append_row(self, tx):
-        idx = len(self._tree.get_children())
+        # Populate with any already-recorded transactions.
+        self._rebuild_tree()
+
+    # ── Row rendering ─────────────────────────────────────────────────────────
+    def _append_transaction(self, idx, tx):
         sm_label = tx.sm_type if tx.sm_active else "—"
         time_str = tx.timestamp.strftime("%H:%M:%S")
-        req_data = tx.request_data[:40] + ("…" if len(tx.request_data) > 40 else "")
-        resp_data = tx.response_data[:40] + ("…" if len(tx.response_data) > 40 else "")
-        sw1 = "%02X" % tx.response_sw1
-        sw2 = "%02X" % tx.response_sw2
-        self._tree.insert("", "end", iid=str(idx), values=(
-            idx + 1,
-            time_str,
-            tx.request_cla.upper(),
-            tx.request_ins.upper(),
-            tx.request_p1.upper(),
-            tx.request_p2.upper(),
-            tx.request_lc.upper() if tx.request_lc else "—",
-            req_data.upper() if req_data else "—",
-            tx.request_le.upper() if tx.request_le else "—",
-            sm_label,
-            resp_data.upper() if resp_data else "—",
-            sw1,
-            sw2,
-            tx.source,
+        is_error = (tx.response_sw1, tx.response_sw2) != (0x90, 0x00)
+
+        self._tree.insert("", "end", iid=f"{idx}-req", tags=("req",), values=(
+            idx + 1, time_str, "→ Request", _request_info(tx), sm_label, tx.source,
+        ))
+        self._tree.insert("", "end", iid=f"{idx}-resp",
+                          tags=("resp_err" if is_error else "resp_ok",), values=(
+            idx + 1, "", "← Response", _response_info(tx), sm_label, tx.source,
         ))
 
-    def _on_new_transaction(self, tx):
-        # Called from pypassport thread — schedule on the Tk main thread
-        self.root.after(0, lambda: self._append_row(tx))
+    def _rebuild_tree(self):
+        self._tree.delete(*self._tree.get_children())
+        for idx, tx in enumerate(self._history):
+            self._append_transaction(idx, tx)
+        self._clear_dump()
 
-    def _delete_selected(self):
+    def _on_new_transaction(self, tx):
+        # Called from the pypassport thread — schedule on the Tk main thread.
+        # Capture the history index now so it stays correct if records pile up.
+        idx = len(self._history) - 1
+        self.root.after(0, lambda: self._append_transaction(idx, tx))
+
+    # ── Hex dump ──────────────────────────────────────────────────────────────
+    def _segments(self, tx, direction):
+        """Return [(field, hexstring), …] for the chosen direction."""
+        if direction == "req":
+            segs = [
+                ("CLA", tx.request_cla), ("INS", tx.request_ins),
+                ("P1", tx.request_p1), ("P2", tx.request_p2),
+            ]
+            if tx.request_lc:
+                segs.append(("LC", tx.request_lc))
+            if tx.request_data:
+                segs.append(("DATA", tx.request_data))
+            if tx.request_le:
+                segs.append(("LE", tx.request_le))
+            return segs
+
+        segs = []
+        if tx.response_data:
+            segs.append(("DATA", tx.response_data))
+        segs.append(("SW1", "%02X" % tx.response_sw1))
+        segs.append(("SW2", "%02X" % tx.response_sw2))
+        return segs
+
+    def _render_dump(self, idx, tx, direction):
+        # Flatten every field into a (byte, field) list so each byte keeps its tag.
+        flat = []
+        for field, hexstr in self._segments(tx, direction):
+            try:
+                data = bytes.fromhex(hexstr)
+            except ValueError:
+                continue
+            flat.extend((b, field) for b in data)
+
+        sm = f"{tx.sm_type} (active)" if tx.sm_active else "none"
+        kind = "Request (C-APDU)" if direction == "req" else "Response (R-APDU)"
+        header = f"Transaction #{idx + 1}  —  {kind}  —  SM: {sm}  —  Source: {tx.source}"
+
+        self._dump.config(state="normal")
+        self._dump.delete("1.0", "end")
+        self._dump.insert("end", header + "\n\n", ("header",))
+
+        for off in range(0, len(flat), 16):
+            chunk = flat[off:off + 16]
+            self._dump.insert("end", "%08X  " % off, ("offset",))
+            for i in range(16):
+                if i == 8:
+                    self._dump.insert("end", " ")
+                if i < len(chunk):
+                    b, field = chunk[i]
+                    self._dump.insert("end", "%02X " % b, (field,))
+                else:
+                    self._dump.insert("end", "   ")
+            self._dump.insert("end", " |")
+            for b, field in chunk:
+                ch = chr(b) if 32 <= b < 127 else "."
+                self._dump.insert("end", ch, (field,))
+            self._dump.insert("end", "|\n")
+
+        self._dump.config(state="disabled")
+
+    def _clear_dump(self):
+        self._dump.config(state="normal")
+        self._dump.delete("1.0", "end")
+        self._dump.insert("end", "Select a request or response above to inspect its bytes.",
+                         ("offset",))
+        self._dump.config(state="disabled")
+
+    def _on_select(self, _event=None):
         selected = self._tree.selection()
         if not selected:
+            self._clear_dump()
             return
-        # Convert iid→list index, delete from highest to lowest so indices stay valid
-        indices = sorted([int(iid) for iid in selected], reverse=True)
-        for idx in indices:
+        idx_str, direction = selected[-1].rsplit("-", 1)
+        idx = int(idx_str)
+        self._render_dump(idx, self._history[idx], direction)
+
+    # ── Toolbar actions ───────────────────────────────────────────────────────
+    def _selected_indices(self):
+        return sorted({int(iid.rsplit("-", 1)[0]) for iid in self._tree.selection()})
+
+    def _delete_selected(self):
+        indices = self._selected_indices()
+        if not indices:
+            return
+        for idx in reversed(indices):  # high → low so indices stay valid
             self._history.delete(idx)
         self._rebuild_tree()
 
@@ -104,21 +301,12 @@ class TrafficPane:
         self._history.clear()
         self._rebuild_tree()
 
-    def _rebuild_tree(self):
-        self._tree.delete(*self._tree.get_children())
-        for tx in self._history:
-            self._append_row(tx)
-
     def _send_to_forge(self):
-        selected = self._tree.selection()
-        if not selected:
+        indices = self._selected_indices()
+        if not indices:
             return
-        # Use the first selected item
-        idx = int(selected[0])
-        tx = self._history[idx]
+        tx = self._history[indices[0]]
         if hasattr(self.root, "forge_pane"):
             self.root.forge_pane.load_transaction(tx)
-            # Switch to the Forge tab
             notebook = self.root.main_notebook
-            forge_tab_idx = notebook.index(self.root.forge_tab)
-            notebook.select(forge_tab_idx)
+            notebook.select(notebook.index(self.root.forge_tab))
