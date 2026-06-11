@@ -10,7 +10,7 @@ from pypassport.doc9303 import converter
 _COLUMNS = (
     ("id",     "ID",        45,  False),
     ("time",   "Time",      80,  False),
-    ("dir",    "Direction", 110, False),
+    ("dir",    "Direction", 60,  False),
     ("info",   "Info",      320, True),
     ("sm",     "SM",        55,  False),
     ("source", "Source",    70,  False),
@@ -143,15 +143,17 @@ class TrafficPane:
 
         dump_wrap = ttk.Frame(detail_frame)
         dump_wrap.pack(fill="x")
-        self._dump = tk.Text(dump_wrap, height=11, font=("Courier", 10), wrap="none",
-                             state="disabled", background="#fbfbfb", borderwidth=0)
+        # disabledforeground keeps the read-only dump in solid black instead of
+        # tk's default greyed-out colour, which is hard to read.
+        self._dump = tk.Text(dump_wrap, height=10, font=("Courier", 10), wrap="none",
+                             state="disabled", background="#fbfbfb", borderwidth=0,
+                             foreground="#000000", disabledforeground="#000000")
         dump_vsb = ttk.Scrollbar(dump_wrap, orient="vertical", command=self._dump.yview)
         self._dump.configure(yscrollcommand=dump_vsb.set)
         self._dump.pack(side="left", fill="both", expand=True)
         dump_vsb.pack(side="right", fill="y")
 
-        self._dump.tag_configure("header", font=("Courier", 10, "bold"))
-        self._dump.tag_configure("offset", foreground="#999999")
+        self._dump.tag_configure("offset", foreground="#666666")
         for field, color in _FIELD_COLORS.items():
             self._dump.tag_configure(field, background=color)
 
@@ -190,11 +192,13 @@ class TrafficPane:
         is_error = (tx.response_sw1, tx.response_sw2) != (0x90, 0x00)
 
         self._tree.insert("", "end", iid=f"{idx}-req", tags=("req",), values=(
-            idx + 1, time_str, "→ Request", _request_info(tx), sm_label, tx.source,
+            idx + 1, time_str, "→ Req", _request_info(tx), sm_label, tx.source,
         ))
+        # Each request has exactly one response, so the response row repeats no
+        # metadata: ID, time, SM and source are left to the request row above.
         self._tree.insert("", "end", iid=f"{idx}-resp",
                           tags=("resp_err" if is_error else "resp_ok",), values=(
-            idx + 1, "", "← Response", _response_info(tx), sm_label, tx.source,
+            "", "", "← Res", _response_info(tx), "", "",
         ))
 
     def _rebuild_tree(self):
@@ -232,7 +236,7 @@ class TrafficPane:
         segs.append(("SW2", "%02X" % tx.response_sw2))
         return segs
 
-    def _render_dump(self, idx, tx, direction):
+    def _render_dump(self, tx, direction):
         # Flatten every field into a (byte, field) list so each byte keeps its tag.
         flat = []
         for field, hexstr in self._segments(tx, direction):
@@ -242,13 +246,8 @@ class TrafficPane:
                 continue
             flat.extend((b, field) for b in data)
 
-        sm = f"{tx.sm_type} (active)" if tx.sm_active else "none"
-        kind = "Request (C-APDU)" if direction == "req" else "Response (R-APDU)"
-        header = f"Transaction #{idx + 1}  —  {kind}  —  SM: {sm}  —  Source: {tx.source}"
-
         self._dump.config(state="normal")
         self._dump.delete("1.0", "end")
-        self._dump.insert("end", header + "\n\n", ("header",))
 
         for off in range(0, len(flat), 16):
             chunk = flat[off:off + 16]
@@ -283,7 +282,7 @@ class TrafficPane:
             return
         idx_str, direction = selected[-1].rsplit("-", 1)
         idx = int(idx_str)
-        self._render_dump(idx, self._history[idx], direction)
+        self._render_dump(self._history[idx], direction)
 
     # ── Toolbar actions ───────────────────────────────────────────────────────
     def _selected_indices(self):
