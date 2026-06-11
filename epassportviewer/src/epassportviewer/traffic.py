@@ -89,14 +89,7 @@ def _request_info(tx):
 
 
 def _status_text(sw1, sw2):
-    entry = APDUResponse.Status.get(sw1)
-    if isinstance(entry, dict):
-        text = entry.get(sw2, "Unknown")
-    elif isinstance(entry, str):
-        text = entry
-    else:
-        text = "Unknown"
-    return f"{text} ({sw1:02X}{sw2:02X})"
+    return f"{APDUResponse.describe(sw1, sw2)} ({sw1:02X}{sw2:02X})"
 
 
 def _response_info(tx):
@@ -136,8 +129,11 @@ class TrafficPane:
         legend.pack(fill="x", pady=(0, 4))
         ttk.Label(legend, text="Fields:").pack(side="left", padx=(0, 4))
         for field in _LEGEND_ORDER:
+            # Force solid black text: the default label foreground is a low
+            # contrast grey that is hard to read on these pale swatch colours.
             tk.Label(
                 legend, text=field, background=_FIELD_COLORS[field],
+                foreground="#000000",
                 padx=5, pady=1, relief="solid", borderwidth=1,
             ).pack(side="left", padx=2)
 

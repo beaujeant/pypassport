@@ -1,8 +1,33 @@
 import logging
 import tkinter as tk
 from tkinter import ttk, messagebox
-from pypassport.iso7816 import ISO7816, APDUCommand
+from pypassport.iso7816 import ISO7816, APDUCommand, APDUResponse
 from pypassport.utils import toHexString
+from pypassport.doc9303.mrz import MRZ
+from pypassport.doc9303.access_control import (
+    AccessControlNegotiator,
+    AccessControlNegotiationError,
+    MODE_BAC,
+    MODE_PACE,
+)
+
+
+# Common request templates, mirroring the buttons under Custom > Requests.
+# Selecting one fills the request header fields below; any field a preset
+# omits falls back to _PRESET_DEFAULTS.
+_PRESET_PLACEHOLDER = "Common requests…"
+_RESP_STATUS_HINT = "Send a request to see the status-word translation here."
+_PRESET_DEFAULTS = {"cla": "00", "ins": "00", "p1": "00", "p2": "00", "lc": "", "data": "", "le": "00"}
+_REQUEST_PRESETS = {
+    "External Authenticate": {"ins": "82", "le": "28"},
+    "Internal Authenticate": {"ins": "88"},
+    "Select File":           {"ins": "A4", "p1": "02", "p2": "0C", "le": ""},
+    "Read Binary":           {"ins": "B0"},
+    "Rehabilitate":          {"ins": "44"},
+    "Get UID":               {"cla": "FF", "ins": "CA", "p1": "00", "p2": "00"},
+    "Get ATS":               {"cla": "FF", "ins": "CA", "p1": "01", "p2": "00"},
+    "Get Challenge":         {"ins": "84", "le": "08"},
+}
 
 
 class ForgePane:
@@ -20,6 +45,19 @@ class ForgePane:
         # ── Request ──────────────────────────────────────────────────────────
         req_frame = ttk.LabelFrame(frame, text=" Request ", padding=10)
         req_frame.pack(fill="x", padx=5, pady=8)
+
+        # Preset selector: pick a common request and have its header bytes
+        # filled into the fields below (same set as Custom > Requests).
+        row0 = ttk.Frame(req_frame)
+        row0.pack(fill="x", pady=3)
+        ttk.Label(row0, text="Preset:").pack(side="left", padx=(8, 2))
+        self._preset_var = tk.StringVar(value=_PRESET_PLACEHOLDER)
+        preset_combo = ttk.Combobox(
+            row0, textvariable=self._preset_var, state="readonly", width=22,
+            values=[_PRESET_PLACEHOLDER] + list(_REQUEST_PRESETS),
+        )
+        preset_combo.pack(side="left")
+        preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
 
         row1 = ttk.Frame(req_frame)
         row1.pack(fill="x", pady=3)
@@ -61,6 +99,23 @@ class ForgePane:
 
         ttk.Button(row3, text="Send APDU", command=self._send).pack(side="right", padx=8)
 
+        # ── Secure messaging session ─────────────────────────────────────────
+        # Once a Secure Messaging channel desyncs — e.g. a failed read leaves
+        # the Send Sequence Counter out of step and every following command
+        # comes back 6882 — it stays broken until the channel is rebuilt. These
+        # controls reset the card and re-run BAC/PACE from the MRZ/CAN entered
+        # at the top of the window, giving a clean channel to keep working with.
+        sm_frame = ttk.LabelFrame(frame, text=" Secure messaging session ", padding=10)
+        sm_frame.pack(fill="x", padx=5, pady=8)
+
+        sm_row = ttk.Frame(sm_frame)
+        sm_row.pack(fill="x")
+        ttk.Button(sm_row, text="Reset card", command=self._reset_card).pack(side="left", padx=(8, 3))
+        ttk.Button(sm_row, text="Redo BAC", command=lambda: self._reestablish(MODE_BAC)).pack(side="left", padx=3)
+        ttk.Button(sm_row, text="Redo PACE", command=lambda: self._reestablish(MODE_PACE)).pack(side="left", padx=3)
+        self._sm_status = tk.StringVar()
+        ttk.Label(sm_row, textvariable=self._sm_status, foreground="#333333").pack(side="left", padx=(12, 4))
+
         # ── Response ─────────────────────────────────────────────────────────
         resp_frame = ttk.LabelFrame(frame, text=" Response ", padding=10)
         resp_frame.pack(fill="x", padx=5, pady=8)
@@ -80,8 +135,16 @@ class ForgePane:
         self._resp_sw2 = tk.StringVar()
         ttk.Entry(resp_row, textvariable=self._resp_sw2, width=4, state="readonly").pack(side="left", padx=(0, 8))
 
+        # Plain-language meaning of the returned status word, shown under the
+        # fields so an error code such as 6882 reads as something actionable.
+        self._resp_status = tk.StringVar(value=_RESP_STATUS_HINT)
+        ttk.Label(resp_frame, textvariable=self._resp_status, foreground="#555555").pack(
+            anchor="w", padx=8, pady=(4, 0)
+        )
+
         # Keep a reference on root for TrafficPane to find
         self.root.forge_pane = self
+        self._update_sm_status()
 
         # Re-sync the SM default whenever the Forge tab becomes visible, so a
         # passport read on the View tab is reflected here without a reload.
@@ -100,7 +163,24 @@ class ForgePane:
         self._resp_data.set("")
         self._resp_sw1.set("")
         self._resp_sw2.set("")
+        self._resp_status.set(_RESP_STATUS_HINT)
+        self._preset_var.set(_PRESET_PLACEHOLDER)
         self._sync_sm_default()
+
+    # ── Request presets ───────────────────────────────────────────────────────
+    def _on_preset_selected(self, _event=None):
+        """Fill the request fields from the chosen common-request template."""
+        preset = _REQUEST_PRESETS.get(self._preset_var.get())
+        if preset is None:
+            return
+        fields = {**_PRESET_DEFAULTS, **preset}
+        self._cla.set(fields["cla"])
+        self._ins.set(fields["ins"])
+        self._p1.set(fields["p1"])
+        self._p2.set(fields["p2"])
+        self._lc.set(fields["lc"])
+        self._data.set(fields["data"])
+        self._le.set(fields["le"])
 
     # ── Secure Messaging selector ─────────────────────────────────────────────
     def _active_ciphering(self):
@@ -137,6 +217,89 @@ class ForgePane:
     def _on_tab_changed(self, _event=None):
         if self.root.main_notebook.select() == str(self.root.forge_tab):
             self._sync_sm_default()
+            self._update_sm_status()
+
+    def _update_sm_status(self):
+        """Refresh the one-line summary of the active SM channel."""
+        label = self._active_sm_label()
+        self._sm_status.set(f"Secure messaging: {label}" if label else "Secure messaging: none (plaintext)")
+
+    # ── Secure messaging session (reset / re-establish) ───────────────────────
+    def _reset_card(self):
+        """Reconnect to the card and drop any Secure Messaging channel."""
+        if not self._get_ready():
+            return
+        try:
+            self.parent.iso7816.rstConnectionRaw()
+            logging.info("Forge: reset card connection; secure messaging cleared.")
+        except Exception as e:
+            logging.exception("Forge: card reset failed")
+            messagebox.showerror("Reset failed", str(e))
+        finally:
+            self._sm_user_forced_none = False
+            self._sync_sm_default()
+            self._update_sm_status()
+
+    def _reestablish(self, mode):
+        """Reset the card, then re-run BAC or PACE to build a fresh SM channel.
+
+        Reads the MRZ (Number / DoB / Expiry) and optional CAN from the top of
+        the window, exactly like the View tab's Read button, so recovering a
+        wedged channel needs no re-typing.
+        """
+        if not self._get_ready():
+            return
+        iso = self.parent.iso7816
+        try:
+            doc_number = self.parent.doc_number.get().strip()
+            dob = self.parent.dob.get().strip()
+            expiry = self.parent.expiry.get().strip()
+            can = self.parent.can.get().strip() or None
+
+            build_mrz = None
+            if doc_number and dob and expiry:
+                build_mrz = MRZ((doc_number, dob, expiry))
+                if not build_mrz.checkMRZ():
+                    messagebox.showerror(
+                        "Invalid MRZ",
+                        "The Number / Date of Birth / Expiry at the top of the "
+                        "window do not form a valid MRZ.",
+                    )
+                    return
+
+            if mode == MODE_BAC and build_mrz is None:
+                messagebox.showerror(
+                    "MRZ required",
+                    "BAC needs the Number, Date of Birth and Expiry fields filled in.",
+                )
+                return
+            if mode == MODE_PACE and build_mrz is None and can is None:
+                messagebox.showerror(
+                    "Credentials required",
+                    "PACE needs either a full MRZ or a CAN.",
+                )
+                return
+
+            # Start from a clean card so a stale SSC can't poison the new
+            # handshake, then run the chosen mechanism. The negotiator installs
+            # the fresh SM channel on iso7816 and selects the eMRTD application.
+            iso.rstConnectionRaw()
+            result = AccessControlNegotiator(iso).open(build_mrz, mode=mode, can=can)
+            logging.info(f"Forge: re-established secure messaging via {result.mechanism}.")
+            messagebox.showinfo(
+                "Secure messaging",
+                f"Secure messaging re-established via {result.mechanism}.",
+            )
+        except AccessControlNegotiationError as e:
+            logging.error(f"Forge: re-establishing secure messaging failed: {e}")
+            messagebox.showerror("Secure messaging failed", str(e))
+        except Exception as e:
+            logging.exception("Forge: unexpected error re-establishing secure messaging")
+            messagebox.showerror("Secure messaging failed", str(e))
+        finally:
+            self._sm_user_forced_none = False
+            self._sync_sm_default()
+            self._update_sm_status()
 
     def _get_ready(self):
         if not self.parent.reader:
@@ -189,6 +352,9 @@ class ForgePane:
             self._resp_data.set(toHexString(resp.data) if resp.data else "")
             self._resp_sw1.set("%02X" % resp.sw1)
             self._resp_sw2.set("%02X" % resp.sw2)
+            self._resp_status.set(
+                f"{APDUResponse.describe(resp.sw1, resp.sw2)} ({resp.sw1:02X}{resp.sw2:02X})"
+            )
 
             sm_used = "none" if force_none or not saved_ciphering else self._active_sm_label()
             logging.info(
@@ -200,3 +366,4 @@ class ForgePane:
             messagebox.showerror("Forge error", str(e))
         finally:
             self._sync_sm_default()
+            self._update_sm_status()

@@ -184,11 +184,22 @@ class APDUResponse():
         self.data = data
         self.sw1 = sw1
         self.sw2 = sw2
+        self.status = self.describe(sw1, sw2)
 
-        try:
-            self.status = self.Status[sw1][sw2]
-        except KeyError:
-            self.status = "Unknown error"
+    @classmethod
+    def describe(cls, sw1, sw2):
+        """Translate a status word into a human-readable string.
+
+        Handles both shapes of the Status table: a dict keyed by sw2, and a
+        single string that covers every sw2 for that sw1. Returns
+        "Unknown error" when the status word is not listed.
+        """
+        entry = cls.Status.get(sw1)
+        if isinstance(entry, dict):
+            return entry.get(sw2, "Unknown error")
+        if isinstance(entry, str):
+            return entry
+        return "Unknown error"
 
     def raw(self):
         return bytes(list(self.data) + [self.sw1] + [self.sw2])
