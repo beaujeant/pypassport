@@ -143,11 +143,14 @@ class TrafficPane:
 
         dump_wrap = ttk.Frame(detail_frame)
         dump_wrap.pack(fill="x")
-        # disabledforeground keeps the read-only dump in solid black instead of
-        # tk's default greyed-out colour, which is hard to read.
+        # Kept in the normal state (not "disabled") so the text renders in solid
+        # black; a disabled Text dims to a hard-to-read grey on some platforms.
+        # Editing is blocked via _block_edit instead, while copy/select still work.
         self._dump = tk.Text(dump_wrap, height=10, font=("Courier", 10), wrap="none",
-                             state="disabled", background="#fbfbfb", borderwidth=0,
-                             foreground="#000000", disabledforeground="#000000")
+                             background="#fbfbfb", borderwidth=0, foreground="#000000")
+        self._dump.bind("<Key>", self._block_edit)
+        self._dump.bind("<<Paste>>", lambda e: "break")
+        self._dump.bind("<Button-2>", lambda e: "break")
         dump_vsb = ttk.Scrollbar(dump_wrap, orient="vertical", command=self._dump.yview)
         self._dump.configure(yscrollcommand=dump_vsb.set)
         self._dump.pack(side="left", fill="both", expand=True)
@@ -246,7 +249,6 @@ class TrafficPane:
                 continue
             flat.extend((b, field) for b in data)
 
-        self._dump.config(state="normal")
         self._dump.delete("1.0", "end")
 
         for off in range(0, len(flat), 16):
@@ -266,14 +268,19 @@ class TrafficPane:
                 self._dump.insert("end", ch, (field,))
             self._dump.insert("end", "|\n")
 
-        self._dump.config(state="disabled")
+    def _block_edit(self, event):
+        # Allow copy/select-all shortcuts and cursor movement; block edits.
+        if event.state & 0x4 and event.keysym.lower() in ("c", "a"):
+            return None
+        if event.keysym in ("Left", "Right", "Up", "Down", "Home", "End",
+                             "Prior", "Next"):
+            return None
+        return "break"
 
     def _clear_dump(self):
-        self._dump.config(state="normal")
         self._dump.delete("1.0", "end")
         self._dump.insert("end", "Select a request or response above to inspect its bytes.",
                          ("offset",))
-        self._dump.config(state="disabled")
 
     def _on_select(self, _event=None):
         selected = self._tree.selection()
