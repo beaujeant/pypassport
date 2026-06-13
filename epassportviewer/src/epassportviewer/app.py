@@ -12,6 +12,7 @@ from .viewer import ViewerPane
 from .decoder import DecoderPane
 from .traffic import TrafficPane
 from .forge import ForgePane
+from .intercept import InterceptPane
 from .log import LogPane
 from .resources.gadgets.placeholder import PlaceholderEntry
 
@@ -143,11 +144,14 @@ class EPassportViewer:
         self.root.forge_tab = forge_tab
         decoder_tab = ttk.Frame(notebook)
         self.root.decoder_tab = decoder_tab
+        intercept_tab = ttk.Frame(notebook)
+        self.root.intercept_tab = intercept_tab
 
         notebook.add(view_tab, text="View")
         notebook.add(traffic_tab, text="Traffic")
         notebook.add(forge_tab, text="Forge")
         notebook.add(decoder_tab, text="Decoder")
+        notebook.add(intercept_tab, text="Intercept")
         notebook.pack(fill=tk.BOTH, expand=True, pady=5)
 
         ### Setting up tab content
@@ -155,6 +159,7 @@ class EPassportViewer:
         TrafficPane(self)
         ForgePane(self)
         DecoderPane(self)
+        InterceptPane(self)
 
         ## Footer pane with "Verbose" dropdown, "Logs" button, and version info
         footer_frame = ttk.Frame(main_frame)

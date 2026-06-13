@@ -1,7 +1,8 @@
 import logging
 from pypassport import reader
-from pypassport.utils import toHexString, toList
 from pypassport.apdu_history import APDUHistory, APDUTransaction
+from pypassport.interceptor import Interceptor
+from pypassport.utils import toHexString, toList
 
 
 class APDUCommand():
@@ -219,6 +220,18 @@ class ISO7816Exception(Exception):
         self.sw2 = sw2
 
 
+class APDUDroppedException(ISO7816Exception):
+    """Raised when the interceptor drops a command APDU before it is sent.
+
+    The card is never contacted and Secure Messaging state (the SSC) is left
+    untouched, so subsequent transmits stay in sync with the chip.
+    """
+
+    def __init__(self, apdu):
+        super().__init__(f"APDU dropped by interceptor: {repr(apdu)}")
+        self.apdu = apdu
+
+
 class ISO7816():
 
     def __init__(self, reader):
@@ -246,6 +259,34 @@ class ISO7816():
         log_enc = ""
         if logMsg:
             logging.debug(f"Transmit APDU: {logMsg}")
+
+        # Intercept the cleartext command BEFORE Secure Messaging wrapping, so
+        # edits change exactly what the chip authenticates/decrypts. A None
+        # result means "drop": short-circuit without touching the card and
+        # without advancing the SSC (protect() is never called), keeping the
+        # secure channel in sync for later traffic. The history then records the
+        # command as the chip actually received it (post-edit).
+        intercepted = Interceptor().intercept(cleartext_cmd)
+        if intercepted is None:
+            logging.debug(f"APDU dropped by interceptor: {repr(cleartext_cmd)}")
+            APDUHistory.get().record(APDUTransaction(
+                request_cla=cleartext_cmd.cla,
+                request_ins=cleartext_cmd.ins,
+                request_p1=cleartext_cmd.p1,
+                request_p2=cleartext_cmd.p2,
+                request_lc=cleartext_cmd.lc,
+                request_data=cleartext_cmd.data,
+                request_le=cleartext_cmd.le,
+                response_data="",
+                response_sw1=0,
+                response_sw2=0,
+                sm_active=bool(self.ciphering),
+                sm_type="",
+                source=source,
+                comment="Dropped by interceptor",
+            ))
+            raise APDUDroppedException(cleartext_cmd)
+        toSend = cleartext_cmd = intercepted
 
         sm_active = bool(self.ciphering)
         sm_type = ""
