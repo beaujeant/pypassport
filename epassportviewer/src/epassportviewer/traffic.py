@@ -5,6 +5,8 @@ from pypassport.apdu_history import APDUHistory
 from pypassport.iso7816 import APDUCommand, APDUResponse
 from pypassport.doc9303 import converter
 
+from .hexdump import HexDumpView, build_legend
+
 
 # ── Column layout for the transaction list ───────────────────────────────────
 _COLUMNS = (
@@ -43,21 +45,6 @@ _INS_NAMES.update({
     0xC0: "GET RESPONSE",
     0xCA: "GET DATA",
 })
-
-
-# ── Per-field colours used by both the hex dump and its legend ───────────────
-_FIELD_COLORS = {
-    "CLA":  "#cfe8ff",
-    "INS":  "#c8f7c5",
-    "P1":   "#fff3bf",
-    "P2":   "#ffe0b3",
-    "LC":   "#ffd6e7",
-    "DATA": "#e9ecef",
-    "LE":   "#d0f0f0",
-    "SW1":  "#ffc9c9",
-    "SW2":  "#ff8787",
-}
-_LEGEND_ORDER = ("CLA", "INS", "P1", "P2", "LC", "DATA", "LE", "SW1", "SW2")
 
 
 def _select_detail(p1, p2, data):
@@ -194,17 +181,8 @@ class TrafficPane:
         detail_frame = ttk.LabelFrame(frame, text=" Selected transaction ", padding=6)
         detail_frame.pack(side="bottom", fill="x", padx=5, pady=(0, 5))
 
-        legend = ttk.Frame(detail_frame)
+        legend = build_legend(detail_frame)
         legend.pack(fill="x", pady=(0, 4))
-        ttk.Label(legend, text="Fields:").pack(side="left", padx=(0, 4))
-        for field in _LEGEND_ORDER:
-            # Force solid black text: the default label foreground is a low
-            # contrast grey that is hard to read on these pale swatch colours.
-            tk.Label(
-                legend, text=field, background=_FIELD_COLORS[field],
-                foreground="#000000",
-                padx=5, pady=1, relief="solid", borderwidth=1,
-            ).pack(side="left", padx=2)
 
         # Wire-vs-cleartext toggle. The dump defaults to the decoded (cleartext)
         # APDU; flipping this shows the bytes actually exchanged over PC/SC,
@@ -218,24 +196,8 @@ class TrafficPane:
         )
         self._wire_toggle.pack(side="right", padx=4)
 
-        dump_wrap = ttk.Frame(detail_frame)
-        dump_wrap.pack(fill="x")
-        # Kept in the normal state (not "disabled") so the text renders in solid
-        # black; a disabled Text dims to a hard-to-read grey on some platforms.
-        # Editing is blocked via _block_edit instead, while copy/select still work.
-        self._dump = tk.Text(dump_wrap, height=10, font=("Courier", 10), wrap="none",
-                             background="#fbfbfb", borderwidth=0, foreground="#000000")
-        self._dump.bind("<Key>", self._block_edit)
-        self._dump.bind("<<Paste>>", lambda e: "break")
-        self._dump.bind("<Button-2>", lambda e: "break")
-        dump_vsb = ttk.Scrollbar(dump_wrap, orient="vertical", command=self._dump.yview)
-        self._dump.configure(yscrollcommand=dump_vsb.set)
-        self._dump.pack(side="left", fill="both", expand=True)
-        dump_vsb.pack(side="right", fill="y")
-
-        self._dump.tag_configure("offset", foreground="#666666")
-        for field, color in _FIELD_COLORS.items():
-            self._dump.tag_configure(field, background=color)
+        self._dump = HexDumpView(detail_frame, height=10)
+        self._dump.pack(fill="x")
 
         # ── Transaction list ─────────────────────────────────────────────────
         tree_frame = ttk.Frame(frame)
@@ -383,49 +345,12 @@ class TrafficPane:
 
     def _render_dump(self, tx, direction):
         wire = self._show_wire.get() and self._wire_available(tx, direction)
-        # Flatten every field into a (byte, field) list so each byte keeps its tag.
-        flat = []
-        for field, hexstr in self._segments(tx, direction, wire=wire):
-            try:
-                data = bytes.fromhex(hexstr)
-            except ValueError:
-                continue
-            flat.extend((b, field) for b in data)
-
-        self._dump.delete("1.0", "end")
-
-        for off in range(0, len(flat), 16):
-            chunk = flat[off:off + 16]
-            self._dump.insert("end", "%08X  " % off, ("offset",))
-            for i in range(16):
-                if i == 8:
-                    self._dump.insert("end", " ")
-                if i < len(chunk):
-                    b, field = chunk[i]
-                    self._dump.insert("end", "%02X " % b, (field,))
-                else:
-                    self._dump.insert("end", "   ")
-            self._dump.insert("end", " |")
-            for b, field in chunk:
-                ch = chr(b) if 32 <= b < 127 else "."
-                self._dump.insert("end", ch, (field,))
-            self._dump.insert("end", "|\n")
-
-    def _block_edit(self, event):
-        # Allow copy/select-all shortcuts and cursor movement; block edits.
-        if event.state & 0x4 and event.keysym.lower() in ("c", "a"):
-            return None
-        if event.keysym in ("Left", "Right", "Up", "Down", "Home", "End",
-                             "Prior", "Next"):
-            return None
-        return "break"
+        self._dump.render(self._segments(tx, direction, wire=wire))
 
     def _clear_dump(self):
         self._current = None
         self._wire_toggle.configure(state="disabled")
-        self._dump.delete("1.0", "end")
-        self._dump.insert("end", "Select a request or response above to inspect its bytes.",
-                         ("offset",))
+        self._dump.clear("Select a request or response above to inspect its bytes.")
 
     def _on_select(self, _event=None):
         selected = self._tree.selection()

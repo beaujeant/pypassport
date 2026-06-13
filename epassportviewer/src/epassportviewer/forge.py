@@ -2,6 +2,7 @@ import logging
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pypassport.iso7816 import ISO7816, APDUCommand, APDUResponse
+from pypassport.apdu_history import APDUHistory
 from pypassport.utils import toHexString
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.access_control import (
@@ -11,12 +12,16 @@ from pypassport.doc9303.access_control import (
     MODE_PACE,
 )
 
+from .hexdump import HexDumpView, build_legend
+from .apdu_format import parse_apdu, assemble_apdu
+
 
 # Common request templates, mirroring the buttons under Custom > Requests.
 # Selecting one fills the request header fields below; any field a preset
 # omits falls back to _PRESET_DEFAULTS.
 _PRESET_PLACEHOLDER = "Common requests…"
 _RESP_STATUS_HINT = "Send a request to see the status-word translation here."
+_RESP_DUMP_HINT = "Send a request to see the response bytes here."
 _PRESET_DEFAULTS = {"cla": "00", "ins": "00", "p1": "00", "p2": "00", "lc": "", "data": "", "le": "00"}
 _REQUEST_PRESETS = {
     "External Authenticate": {"ins": "82", "le": "28"},
@@ -29,6 +34,36 @@ _REQUEST_PRESETS = {
     "Get Challenge":         {"ins": "84", "le": "08"},
 }
 
+# How many forged requests to keep in memory (Burp-Repeater style tabs). When a
+# new request pushes past this, the oldest tab is dropped.
+_MAX_REQUESTS = 12
+
+
+class _ForgeRequest:
+    """In-memory state for one Forge request tab.
+
+    Holds the editable request fields plus the last response captured for this
+    tab, so switching between tabs restores both the request and its result.
+    """
+
+    def __init__(self, cla="", ins="", p1="", p2="", lc="", data="", le="", raw_mode=False):
+        self.cla = cla
+        self.ins = ins
+        self.p1 = p1
+        self.p2 = p2
+        self.lc = lc
+        self.data = data
+        self.le = le
+        self.raw_mode = raw_mode
+        # Last response captured for this tab.
+        self.resp_data = ""
+        self.resp_sw1 = None
+        self.resp_sw2 = None
+        self.resp_status = _RESP_STATUS_HINT
+        # The APDUTransaction recorded for the last send, used by "Send to
+        # Comparer". None until the tab has been sent at least once.
+        self.last_tx = None
+
 
 class ForgePane:
     def __init__(self, main):
@@ -40,14 +75,28 @@ class ForgePane:
         # the active SM on every refresh.
         self._sm_user_forced_none = False
 
+        # Burp-Repeater style request tabs. Always at least one.
+        self._requests = [_ForgeRequest()]
+        self._active = 0
+
         frame = self.root.forge_tab
+
+        # ── Request tab strip ────────────────────────────────────────────────
+        # A row of numbered tabs, each keeping its own request and last
+        # response. "+" opens a fresh tab; "✕" closes the current one.
+        tabbar = ttk.Frame(frame)
+        tabbar.pack(fill="x", padx=5, pady=(8, 0))
+        ttk.Label(tabbar, text="Requests:").pack(side="left", padx=(3, 6))
+        self._tabstrip = ttk.Frame(tabbar)
+        self._tabstrip.pack(side="left", fill="x", expand=True)
+        ttk.Button(tabbar, text="✕", width=3, command=self._close_request).pack(side="right", padx=2)
+        ttk.Button(tabbar, text="+", width=3, command=self._add_request).pack(side="right", padx=2)
 
         # ── Request ──────────────────────────────────────────────────────────
         req_frame = ttk.LabelFrame(frame, text=" Request ", padding=10)
         req_frame.pack(fill="x", padx=5, pady=8)
 
-        # Preset selector: pick a common request and have its header bytes
-        # filled into the fields below (same set as Custom > Requests).
+        # Preset selector + raw-mode toggle.
         row0 = ttk.Frame(req_frame)
         row0.pack(fill="x", pady=3)
         ttk.Label(row0, text="Preset:").pack(side="left", padx=(8, 2))
@@ -59,9 +108,16 @@ class ForgePane:
         preset_combo.pack(side="left")
         preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
 
-        row1 = ttk.Frame(req_frame)
-        row1.pack(fill="x", pady=3)
+        # Raw mode: edit the whole command APDU as one hex string instead of
+        # the individual fields. Toggling converts between the two views.
+        self._raw_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row0, text="Raw (paste full APDU hex)",
+            variable=self._raw_mode, command=self._toggle_raw,
+        ).pack(side="right", padx=8)
 
+        # Fielded view: CLA / INS / P1 / P2 / LC / LE on one row, DATA below.
+        self._fields_row = ttk.Frame(req_frame)
         for label, width, attr in (
             ("CLA", 3, "cla"),
             ("INS", 3, "ins"),
@@ -70,34 +126,44 @@ class ForgePane:
             ("LC",  4, "lc"),
             ("LE",  4, "le"),
         ):
-            ttk.Label(row1, text=f"{label}:").pack(side="left", padx=(8, 2))
+            ttk.Label(self._fields_row, text=f"{label}:").pack(side="left", padx=(8, 2))
             var = tk.StringVar()
             setattr(self, f"_{attr}", var)
-            ttk.Entry(row1, textvariable=var, width=width).pack(side="left")
+            ttk.Entry(self._fields_row, textvariable=var, width=width).pack(side="left")
 
-        row2 = ttk.Frame(req_frame)
-        row2.pack(fill="x", pady=3)
-        ttk.Label(row2, text="DATA:").pack(side="left", padx=(8, 2))
+        self._data_row = ttk.Frame(req_frame)
+        ttk.Label(self._data_row, text="DATA:").pack(side="left", padx=(8, 2))
         self._data = tk.StringVar()
-        ttk.Entry(row2, textvariable=self._data, width=80).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Entry(self._data_row, textvariable=self._data, width=80).pack(
+            side="left", fill="x", expand=True, padx=(0, 8)
+        )
 
-        row3 = ttk.Frame(req_frame)
-        row3.pack(fill="x", pady=5)
+        # Raw view: a single wide entry for the full command APDU hex.
+        self._raw_row = ttk.Frame(req_frame)
+        ttk.Label(self._raw_row, text="APDU (hex):").pack(side="left", padx=(8, 2))
+        self._raw = tk.StringVar()
+        ttk.Entry(self._raw_row, textvariable=self._raw, width=80).pack(
+            side="left", fill="x", expand=True, padx=(0, 8)
+        )
 
+        # SM selector + Send. Kept after the request rows so it stays put when
+        # the fielded/raw rows are swapped in and out.
+        self._sm_row = ttk.Frame(req_frame)
+        self._sm_row.pack(fill="x", pady=5)
         # SM selector. Defaults to whatever Secure Messaging channel is already
         # in place (BAC/PACE), so sends are encrypted transparently. The user
         # can force "None" to send a single plaintext APDU without tearing down
         # the shared channel.
-        ttk.Label(row3, text="SM:").pack(side="left", padx=(8, 2))
+        ttk.Label(self._sm_row, text="SM:").pack(side="left", padx=(8, 2))
         self._sm_var = tk.StringVar(value="None")
         self._sm_combo = ttk.Combobox(
-            row3, textvariable=self._sm_var, state="readonly", width=14,
+            self._sm_row, textvariable=self._sm_var, state="readonly", width=14,
             values=["None"], postcommand=self._refresh_sm_options,
         )
         self._sm_combo.pack(side="left")
         self._sm_combo.bind("<<ComboboxSelected>>", self._on_sm_choice)
 
-        ttk.Button(row3, text="Send APDU", command=self._send).pack(side="right", padx=8)
+        ttk.Button(self._sm_row, text="Send APDU", command=self._send).pack(side="right", padx=8)
 
         # ── Secure messaging session ─────────────────────────────────────────
         # Once a Secure Messaging channel desyncs — e.g. a failed read leaves
@@ -118,7 +184,7 @@ class ForgePane:
 
         # ── Response ─────────────────────────────────────────────────────────
         resp_frame = ttk.LabelFrame(frame, text=" Response ", padding=10)
-        resp_frame.pack(fill="x", padx=5, pady=8)
+        resp_frame.pack(fill="both", expand=True, padx=5, pady=8)
 
         resp_row = ttk.Frame(resp_frame)
         resp_row.pack(fill="x", pady=3)
@@ -142,30 +208,196 @@ class ForgePane:
             anchor="w", padx=8, pady=(4, 0)
         )
 
+        # Coloured hex dump of the response, sharing Traffic's renderer.
+        dump_head = ttk.Frame(resp_frame)
+        dump_head.pack(fill="x", pady=(6, 2))
+        legend = build_legend(dump_head)
+        legend.pack(side="left")
+        # "Send to Comparer" stays disabled until a Comparer pane exists and the
+        # tab has a response to send — mirroring the Traffic tab's guard.
+        self._comparer_btn = ttk.Button(
+            dump_head, text="Send to Comparer", command=self._send_to_comparer, state="disabled",
+        )
+        self._comparer_btn.pack(side="right", padx=4)
+
+        self._resp_dump = HexDumpView(resp_frame, height=8)
+        self._resp_dump.pack(fill="both", expand=True)
+
         # Keep a reference on root for TrafficPane to find
         self.root.forge_pane = self
+
+        # Paint the initial (empty) tab.
+        self._render_tabstrip()
+        self._load_active()
         self._update_sm_status()
 
         # Re-sync the SM default whenever the Forge tab becomes visible, so a
         # passport read on the View tab is reflected here without a reload.
         self.root.main_notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed, add="+")
 
-    def load_transaction(self, tx):
-        """Populate the request form from an APDUTransaction (called from Traffic tab)."""
-        self._cla.set(tx.request_cla)
-        self._ins.set(tx.request_ins)
-        self._p1.set(tx.request_p1)
-        self._p2.set(tx.request_p2)
-        self._lc.set(tx.request_lc)
-        self._data.set(tx.request_data)
-        # Leave LE empty so it is recomputed at send time.
-        self._le.set("")
-        self._resp_data.set("")
-        self._resp_sw1.set("")
-        self._resp_sw2.set("")
-        self._resp_status.set(_RESP_STATUS_HINT)
+    # ── Request tabs ────────────────────────────────────────────────────────
+    def _render_tabstrip(self):
+        """Redraw the numbered tab buttons, highlighting the active one."""
+        for w in self._tabstrip.winfo_children():
+            w.destroy()
+        for i in range(len(self._requests)):
+            active = (i == self._active)
+            tk.Button(
+                self._tabstrip, text="#%d" % (i + 1),
+                relief="sunken" if active else "raised",
+                takefocus=0, padx=6, pady=1,
+                command=lambda idx=i: self._select_request(idx),
+            ).pack(side="left", padx=1)
+
+    def _commit_active(self):
+        """Save the on-screen request back into the active tab's model."""
+        req = self._requests[self._active]
+        req.raw_mode = self._raw_mode.get()
+        if req.raw_mode:
+            # Keep the model's fields consistent with the raw text when it
+            # parses; if it is malformed, leave the last good fields in place.
+            try:
+                f = parse_apdu(self._raw.get())
+            except ValueError:
+                return
+            req.cla, req.ins, req.p1, req.p2 = f["cla"], f["ins"], f["p1"], f["p2"]
+            req.lc, req.data, req.le = f["lc"], f["data"], f["le"]
+        else:
+            req.cla = self._cla.get()
+            req.ins = self._ins.get()
+            req.p1 = self._p1.get()
+            req.p2 = self._p2.get()
+            req.lc = self._lc.get()
+            req.data = self._data.get()
+            req.le = self._le.get()
+
+    def _load_active(self):
+        """Populate the form and response area from the active tab's model."""
+        req = self._requests[self._active]
+        self._cla.set(req.cla)
+        self._ins.set(req.ins)
+        self._p1.set(req.p1)
+        self._p2.set(req.p2)
+        self._lc.set(req.lc)
+        self._data.set(req.data)
+        self._le.set(req.le)
+        self._raw.set(assemble_apdu(req.cla, req.ins, req.p1, req.p2, req.lc, req.data, req.le))
+        self._raw_mode.set(req.raw_mode)
         self._preset_var.set(_PRESET_PLACEHOLDER)
+        self._apply_raw_visibility(req.raw_mode)
+
+        self._resp_data.set(req.resp_data)
+        self._resp_sw1.set("" if req.resp_sw1 is None else "%02X" % req.resp_sw1)
+        self._resp_sw2.set("" if req.resp_sw2 is None else "%02X" % req.resp_sw2)
+        self._resp_status.set(req.resp_status)
+        self._render_response_dump(req)
+        self._update_comparer_button(req)
+
+    def _select_request(self, idx):
+        if idx == self._active:
+            return
+        self._commit_active()
+        self._active = idx
+        self._render_tabstrip()
+        self._load_active()
+
+    def _add_request(self, req=None):
+        """Append a new request tab (optionally pre-filled) and select it."""
+        self._commit_active()
+        if req is None:
+            req = _ForgeRequest()
+        self._requests.append(req)
+        if len(self._requests) > _MAX_REQUESTS:
+            self._requests = self._requests[-_MAX_REQUESTS:]
+        self._active = len(self._requests) - 1
+        self._render_tabstrip()
+        self._load_active()
+
+    def _close_request(self):
+        """Close the active tab; the last remaining tab is reset, not removed."""
+        if len(self._requests) == 1:
+            self._requests[0] = _ForgeRequest()
+            self._load_active()
+            return
+        del self._requests[self._active]
+        if self._active >= len(self._requests):
+            self._active = len(self._requests) - 1
+        self._render_tabstrip()
+        self._load_active()
+
+    def load_transaction(self, tx):
+        """Open a new tab populated from an APDUTransaction (Traffic → Forge)."""
+        req = _ForgeRequest(
+            cla=tx.request_cla, ins=tx.request_ins, p1=tx.request_p1, p2=tx.request_p2,
+            lc=tx.request_lc, data=tx.request_data,
+            # Leave LE empty so it is recomputed at send time.
+            le="",
+        )
+        self._add_request(req)
         self._sync_sm_default()
+        self._update_sm_status()
+
+    # ── Raw / fielded toggle ──────────────────────────────────────────────────
+    def _apply_raw_visibility(self, raw_mode):
+        """Show the raw entry or the fielded rows, never both."""
+        self._fields_row.pack_forget()
+        self._data_row.pack_forget()
+        self._raw_row.pack_forget()
+        if raw_mode:
+            self._raw_row.pack(fill="x", pady=3, before=self._sm_row)
+        else:
+            self._fields_row.pack(fill="x", pady=3, before=self._sm_row)
+            self._data_row.pack(fill="x", pady=3, before=self._sm_row)
+
+    def _toggle_raw(self):
+        """Convert between the fielded and raw views when the box is ticked."""
+        raw_mode = self._raw_mode.get()
+        if raw_mode:
+            # fielded → raw: assemble the current fields into the raw box.
+            self._raw.set(assemble_apdu(
+                self._cla.get(), self._ins.get(), self._p1.get(), self._p2.get(),
+                self._lc.get(), self._data.get(), self._le.get(),
+            ))
+        else:
+            # raw → fielded: parse the raw box back into the fields.
+            try:
+                f = parse_apdu(self._raw.get())
+            except ValueError as e:
+                messagebox.showerror("Invalid APDU", str(e))
+                self._raw_mode.set(True)  # stay in raw mode so nothing is lost
+                return
+            self._cla.set(f["cla"])
+            self._ins.set(f["ins"])
+            self._p1.set(f["p1"])
+            self._p2.set(f["p2"])
+            self._lc.set(f["lc"])
+            self._data.set(f["data"])
+            self._le.set(f["le"])
+        self._apply_raw_visibility(raw_mode)
+
+    def _current_fields(self):
+        """Return (cla, ins, p1, p2, lc, data, le) for the active view.
+
+        In raw mode the hex box is the source of truth and is parsed here (also
+        refreshing the fielded entries so the two views stay in step); in
+        fielded mode the entries are read directly. Raises ValueError on a bad
+        raw string.
+        """
+        if self._raw_mode.get():
+            f = parse_apdu(self._raw.get())
+            self._cla.set(f["cla"])
+            self._ins.set(f["ins"])
+            self._p1.set(f["p1"])
+            self._p2.set(f["p2"])
+            self._lc.set(f["lc"])
+            self._data.set(f["data"])
+            self._le.set(f["le"])
+            return f["cla"], f["ins"], f["p1"], f["p2"], f["lc"], f["data"], f["le"]
+        return (
+            self._cla.get().strip(), self._ins.get().strip(),
+            self._p1.get().strip(), self._p2.get().strip(),
+            self._lc.get().strip(), self._data.get().strip(), self._le.get().strip(),
+        )
 
     # ── Request presets ───────────────────────────────────────────────────────
     def _on_preset_selected(self, _event=None):
@@ -181,6 +413,12 @@ class ForgePane:
         self._lc.set(fields["lc"])
         self._data.set(fields["data"])
         self._le.set(fields["le"])
+        if self._raw_mode.get():
+            # Keep the raw box in step with the freshly-filled fields.
+            self._raw.set(assemble_apdu(
+                fields["cla"], fields["ins"], fields["p1"], fields["p2"],
+                fields["lc"], fields["data"], fields["le"],
+            ))
 
     # ── Secure Messaging selector ─────────────────────────────────────────────
     def _active_ciphering(self):
@@ -223,6 +461,37 @@ class ForgePane:
         """Refresh the one-line summary of the active SM channel."""
         label = self._active_sm_label()
         self._sm_status.set(f"Secure messaging: {label}" if label else "Secure messaging: none (plaintext)")
+
+    # ── Response rendering ─────────────────────────────────────────────────────
+    def _response_segments(self, req):
+        segs = []
+        if req.resp_data:
+            segs.append(("DATA", req.resp_data))
+        if req.resp_sw1 is not None:
+            segs.append(("SW1", "%02X" % req.resp_sw1))
+        if req.resp_sw2 is not None:
+            segs.append(("SW2", "%02X" % req.resp_sw2))
+        return segs
+
+    def _render_response_dump(self, req):
+        segs = self._response_segments(req)
+        if segs:
+            self._resp_dump.render(segs)
+        else:
+            self._resp_dump.clear(_RESP_DUMP_HINT)
+
+    def _update_comparer_button(self, req):
+        has_comparer = hasattr(self.root, "comparer_pane")
+        ready = has_comparer and req.last_tx is not None
+        self._comparer_btn.configure(state="normal" if ready else "disabled")
+
+    def _send_to_comparer(self):
+        req = self._requests[self._active]
+        if req.last_tx is None or not hasattr(self.root, "comparer_pane"):
+            return
+        self.root.comparer_pane.load_transactions([req.last_tx])
+        notebook = self.root.main_notebook
+        notebook.select(notebook.index(self.root.comparer_tab))
 
     # ── Secure messaging session (reset / re-establish) ───────────────────────
     def _reset_card(self):
@@ -318,13 +587,19 @@ class ForgePane:
         if not self._get_ready():
             return
         try:
-            cla  = self._cla.get().strip() or "00"
-            ins  = self._ins.get().strip() or "00"
-            p1   = self._p1.get().strip() or "00"
-            p2   = self._p2.get().strip() or "00"
-            lc   = self._lc.get().strip()
-            data = self._data.get().strip()
-            le   = self._le.get().strip()
+            try:
+                cla, ins, p1, p2, lc, data, le = self._current_fields()
+            except ValueError as e:
+                messagebox.showerror("Invalid APDU", str(e))
+                return
+
+            cla = cla.strip() or "00"
+            ins = ins.strip() or "00"
+            p1 = p1.strip() or "00"
+            p2 = p2.strip() or "00"
+            lc = lc.strip()
+            data = data.strip()
+            le = le.strip()
 
             if not lc and data:
                 lc = "%02x" % (len(data) // 2)
@@ -349,12 +624,21 @@ class ForgePane:
                 # one-off plaintext send and the View tab keeps working.
                 iso.ciphering = saved_ciphering
 
-            self._resp_data.set(toHexString(resp.data) if resp.data else "")
+            # Record the response on the active tab so it survives tab switches.
+            req = self._requests[self._active]
+            req.resp_data = toHexString(resp.data) if resp.data else ""
+            req.resp_sw1 = resp.sw1
+            req.resp_sw2 = resp.sw2
+            req.resp_status = f"{APDUResponse.describe(resp.sw1, resp.sw2)} ({resp.sw1:02X}{resp.sw2:02X})"
+            history = APDUHistory.get()
+            req.last_tx = history[-1] if len(history) else None
+
+            self._resp_data.set(req.resp_data)
             self._resp_sw1.set("%02X" % resp.sw1)
             self._resp_sw2.set("%02X" % resp.sw2)
-            self._resp_status.set(
-                f"{APDUResponse.describe(resp.sw1, resp.sw2)} ({resp.sw1:02X}{resp.sw2:02X})"
-            )
+            self._resp_status.set(req.resp_status)
+            self._render_response_dump(req)
+            self._update_comparer_button(req)
 
             sm_used = "none" if force_none or not saved_ciphering else self._active_sm_label()
             logging.info(
