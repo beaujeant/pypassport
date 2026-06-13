@@ -22,6 +22,11 @@ class APDUTransaction:
     sm_active: bool
     sm_type: str   # "" | "3DES" | "AES"
     source: str    # {"tool", "forge", "imported", "replay"}
+    # Wire-level bytes actually exchanged over PC/SC. When SM is active these
+    # carry the protected frame (87/97/8E DOs) and the raw response+SW before
+    # unprotect; when SM is off they match the cleartext request/response.
+    wire_request_hex: str = ""
+    wire_response_hex: str = ""
     timestamp: datetime = field(default_factory=datetime.now)
     # User annotations (set from the Traffic tab). Purely descriptive: they
     # never affect transport and are view-only metadata on the record.

@@ -206,10 +206,11 @@ class TrafficPane:
                 padx=5, pady=1, relief="solid", borderwidth=1,
             ).pack(side="left", padx=2)
 
-        # Wire-vs-cleartext toggle. The on-the-wire (encrypted) bytes are not
-        # captured yet — that comes with the wire-capture work — so the dump
-        # always shows cleartext and the toggle stays disabled until a selected
-        # transaction actually carries wire data (see _wire_available).
+        # Wire-vs-cleartext toggle. The dump defaults to the decoded (cleartext)
+        # APDU; flipping this shows the bytes actually exchanged over PC/SC,
+        # which for an SM session are the protected 87/97/8E DOs. The toggle
+        # stays disabled until the selected row carries wire data (see
+        # _wire_available).
         self._show_wire = tk.BooleanVar(value=False)
         self._wire_toggle = ttk.Checkbutton(
             legend, text="Show wire (encrypted) bytes",
@@ -345,19 +346,20 @@ class TrafficPane:
 
     # ── Hex dump ──────────────────────────────────────────────────────────────
     def _wire_available(self, tx, direction):
-        """Whether on-the-wire (encrypted) bytes were captured for this row.
+        """Whether on-the-wire bytes were captured for this row.
 
-        Wire capture is not implemented yet, so this is always False today and
-        the toggle stays locked. Once a transaction carries wire bytes the
-        toggle unlocks automatically — no further changes needed here.
+        ISO7816.transmit records the exact frame sent and the raw response
+        received before unprotect. For an SM session these differ from the
+        cleartext APDU; for a plaintext session they match it. A row only
+        unlocks the wire toggle once it actually carries these bytes.
         """
-        attr = "wire_request" if direction == "req" else "wire_response"
+        attr = "wire_request_hex" if direction == "req" else "wire_response_hex"
         return bool(getattr(tx, attr, None))
 
     def _segments(self, tx, direction, wire=False):
         """Return [(field, hexstring), …] for the chosen direction."""
         if wire:
-            attr = "wire_request" if direction == "req" else "wire_response"
+            attr = "wire_request_hex" if direction == "req" else "wire_response_hex"
             return [("DATA", getattr(tx, attr, "") or "")]
         if direction == "req":
             segs = [

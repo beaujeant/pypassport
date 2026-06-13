@@ -257,9 +257,18 @@ class ISO7816():
 
         logging.debug(f"> {log_enc}{repr(toSend)}")
 
-        data, sw1, sw2 = self._reader.transmit(toSend.raw())
-        response = APDUResponse(data, sw1, sw2)
+        # Wire request: the bytes actually transmitted (SM-protected when SM is
+        # on, otherwise identical to the cleartext command).
+        wire_request_hex = toHexString(toSend.raw())
 
+        data, sw1, sw2 = self._reader.transmit(toSend.raw())
+
+        # Wire response: the raw data + SW exactly as received, captured before
+        # unprotect so the protected DOs are preserved in the history.
+        wire_response = APDUResponse(data, sw1, sw2)
+        wire_response_hex = toHexString(wire_response.raw())
+
+        response = wire_response
         if self.ciphering:
             response = self.ciphering.unprotect(response)
 
@@ -279,6 +288,8 @@ class ISO7816():
             sm_active=sm_active,
             sm_type=sm_type,
             source=source,
+            wire_request_hex=wire_request_hex,
+            wire_response_hex=wire_response_hex,
         ))
 
         if full:
