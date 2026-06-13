@@ -16,3 +16,36 @@
 # License along with epassportviewer.
 # If not, see <http://www.gnu.org/licenses/>.
 
+"""Security research modules for ePassport / eMRTD vulnerability analysis."""
+
+from pypassport.attacks.brute_force import BruteForce, BruteForceException
+from pypassport.attacks.mac_traceability import (
+    MacTraceability,
+    MacTraceabilityException,
+)
+from pypassport.attacks.error_fingerprinting import (
+    ErrorFingerprinting,
+    ErrorFingerprintingException,
+)
+from pypassport.attacks.sign_everything import (
+    SignEverything,
+    SignEverythingException,
+)
+from pypassport.attacks.active_authentication_traceability import (
+    AATraceability,
+    AATraceabilityException,
+)
+
+__all__ = [
+    "BruteForce",
+    "BruteForceException",
+    "MacTraceability",
+    "MacTraceabilityException",
+    "ErrorFingerprinting",
+    "ErrorFingerprintingException",
+    "SignEverything",
+    "SignEverythingException",
+    "AATraceability",
+    "AATraceabilityException",
+]
+

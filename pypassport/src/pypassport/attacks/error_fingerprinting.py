@@ -17,32 +17,31 @@
 # If not, see <http://www.gnu.org/licenses/>.
 
 import datetime
-import pickle
+import json
+import logging
 import os
 
-from pypassport.logger import Logger
-from pypassport.iso7816 import ISO7816, ISO7816Exception
-from pypassport.reader import ReaderException
-# TODO: pypassport.apdu does not exist; APDU classes live in pypassport.iso7816
-from pypassport.iso9797 import mac, pad, unpad
-from pypassport.hex_utils import hexToHexRep, binToHexRep
+from pypassport.iso7816 import ISO7816, APDUCommand
 
 class ErrorFingerprintingException(Exception):
     pass
 
-class ErrorFingerprinting(Logger):
+class ErrorFingerprinting():
     """
     ICAO described minimum required instruction for the communication between the reader and the passport.
     Therefore, regarding features implemented, a passport might behave in a different way with a different error message
     This lack of standardisation creates a fingerprint an attacker could use to identify the issuer and the version of the passport.
     This class implements methods in order to store error regarding the country and the version and identify a passport.
+
+    The error database is persisted as JSON (human-readable and diff-able)
+    rather than pickle.
     """
 
-    def __init__(self, iso7816, path="error.dat"):
-        Logger.__init__(self, "ERROR FINGERPRINTING")
+    def __init__(self, iso7816, path="error.json"):
+        logging.info("ERROR FINGERPRINTING")
         self._iso7816 = iso7816
 
-        if type(self._iso7816) != type(ISO7816(None)):
+        if not isinstance(self._iso7816, ISO7816):
             raise ErrorFingerprintingException("The sublayer iso7816 is not available")
 
         self._iso7816.rstConnection()
@@ -50,9 +49,8 @@ class ErrorFingerprinting(Logger):
         self._path = path
 
         if os.path.exists(path):
-            with open(path, 'rb') as file_errors:
-                my_unpickler = pickle.Unpickler(file_errors)
-                self.errors = my_unpickler.load()
+            with open(path, 'r') as file_errors:
+                self.errors = json.load(file_errors)
         else:
             self.errors = { "0000000000": { "0x6d 0x0": {   "BEL": ["2009", "2011"],
                                                             "FRA": ["2010"]
@@ -67,17 +65,16 @@ class ErrorFingerprinting(Logger):
         @param cla, ins, p1, p2, lc, data, le: APDU value
         @type cla, ins, p1, p2, lc, data, le: String of 2hex (from 00 to FF) except lc and date that may be an empty String
 
-        @return: A set composed of boolean (True=Succeed, False=Error) and a passport answer
+        @return: A tuple (success, APDUResponse) where success is True when the
+            chip returned a success status word and False otherwise.
         """
 
-        toSend = self._iso7816.APDUCommand(cla, ins, p1, p2, lc, data, le)
+        toSend = APDUCommand(cla, ins, p1, p2, lc, data, le)
 
-        try:
-            self.log("Send APDU: {0}:{1}:{2}:{3}:{4}:{5}:{6}".format(cla, ins, p1, p2, lc, data, le))
-            ans = self._iso7816.transmit(toSend, "Custom APDU")
-            return (True, binToHexRep(ans))
-        except ISO7816Exception as msg:
-            return (False, msg)
+        logging.info("Send APDU: {0}:{1}:{2}:{3}:{4}:{5}:{6}".format(cla, ins, p1, p2, lc, data, le))
+        response = self._iso7816.transmit(toSend, "Custom APDU", full=True)
+        success = response.status == "Success"
+        return (success, response)
 
     def addError(self, new_query, ans, new_country, year=str(datetime.datetime.today().year)):
         """
@@ -90,19 +87,17 @@ class ErrorFingerprinting(Logger):
         @param new_query: The APDU sent
         @type new_query: String of 10 to 14 hex
         @param ans: The answer from the passport
-        @type ans: A set composed of boolean (True=Succeed, False=Error) and a passport answer
+        @type ans: A tuple (success, APDUResponse) as returned by sendCustom()
         @param new_country: The issuer (country)
         @type new_country: String of 3 char (Official country id)
         @param year: The passport version (date of issue)
         @type year: String of 4 digits (i.e. "2012")
         """
 
-        (valide, err) = ans
-        if valide==True:
-            print(new_query)
+        (success, response) = ans
+        if success:
             raise ErrorFingerprintingException("The query triggered no error")
-        (error_text, nb1, nb2) = err
-        new_error = "{0} {1}".format(hex(nb1), hex(nb2))
+        new_error = "{0} {1}".format(hex(response.sw1), hex(response.sw2))
         i=True
         for query in self.errors:
             if query==new_query:
@@ -112,29 +107,28 @@ class ErrorFingerprinting(Logger):
                             if country==new_country:
                                 for date in self.errors[query][error][country]:
                                     if date==year:
-                                        self.log("The entry already exists")
+                                        logging.info("The entry already exists")
                                         i=False
                                 if i:
                                     self.errors[new_query][new_error][new_country].append(year)
-                                    self.log("The entry has been added")
+                                    logging.info("The entry has been added")
                                     i=False
                         if i:
                             self.errors[new_query][new_error][new_country] = [year]
-                            self.log("The entry has been added")
+                            logging.info("The entry has been added")
                             i=False
                 if i:
                     self.errors[new_query][new_error] = { new_country: [year] }
-                    self.log("The entry has been added")
+                    logging.info("The entry has been added")
                     i=False
         if i:
             self.errors[new_query] = { new_error: { new_country: [year] } }
-            self.log("The entry has been added")
+            logging.info("The entry has been added")
             i=False
 
-        with open(self._path, 'wb') as file_errors:
-            self.log("Save the dictionary")
-            my_pickler = pickle.Pickler(file_errors)
-            my_pickler.dump(self.errors)
+        with open(self._path, 'w') as file_errors:
+            logging.info("Save the dictionary")
+            json.dump(self.errors, file_errors, indent=2, sort_keys=True)
 
     def identify(self, cla="00", ins="00", p1="00", p2="00", lc="", data="", le="00"):
         """
@@ -149,14 +143,13 @@ class ErrorFingerprinting(Logger):
         """
 
         cur_query = cla + ins + p1 + p2 + lc + data + le
-        (valide, err) = self.sendCustom(cla, ins, p1, p2, lc, data, le)
-        if valide==True:
+        (success, response) = self.sendCustom(cla, ins, p1, p2, lc, data, le)
+        if success:
             raise ErrorFingerprintingException("Not possible to identify the passport since the query is correct")
-        (error_text, nb1, nb2) = err
-        new_error = "{0} {1}".format(hex(nb1), hex(nb2))
+        new_error = "{0} {1}".format(hex(response.sw1), hex(response.sw2))
         possibilities = list()
 
-        self.log("Check for error: {0}".format(new_error))
+        logging.info("Check for error: {0}".format(new_error))
         for query in self.errors:
             if query==cur_query:
                 for error in self.errors[query]:

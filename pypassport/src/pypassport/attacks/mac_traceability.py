@@ -3,11 +3,11 @@ import time
 import math
 import logging
 
-from pypassport.iso7816 import ISO7816, ISO7816Exception, APDUResponse
+from pypassport.iso7816 import ISO7816, ISO7816Exception, APDUCommand
 from pypassport.doc9303.bac import BAC, BACException
 from pypassport.reader import ReaderException
 from pypassport.doc9303.mrz import MRZ
-from pypassport.hex_utils import hexToHexRep, binToHexRep
+from pypassport.utils import toHexString
 
 class MacTraceabilityException(Exception):
     pass
@@ -25,17 +25,17 @@ class MacTraceability():
         logging.info("MAC TRACEABILITY")
         self._iso7816 = iso7816
 
-        if type(mrz) == type("") or type(mrz) == type(b""):
+        if isinstance(mrz, (str, bytes)):
             self._mrz = MRZ(mrz)
             if not self._mrz.checkMRZ():
                 raise MacTraceabilityException("Unvalid MRZ provided: the provided string is not a valid MRZ.")
 
-        elif type(mrz) == type(MRZ("")):
+        elif isinstance(mrz, MRZ):
             self._mrz = mrz
         else:
             raise MacTraceabilityException("Unvalid MRZ provided: Could be either a string, a bytearray or a MRZ object.")
 
-        if type(self._iso7816) != type(ISO7816(None)):
+        if not isinstance(self._iso7816, ISO7816):
             raise MacTraceabilityException("The sublayer iso7816 is not available")
 
         self._iso7816.rstConnection()
@@ -69,13 +69,15 @@ class MacTraceability():
         self.rstBAC()
         (ans2, res_time2) = self._sendPair(cmd_data)
 
-        
         comment = "Cut-off: {} Wrong MAC: SW1:{} SW2:{} - Wrong cipher: SW1:{} SW2:{}".format((res_time2-res_time1)*1000, ans1.sw1, ans1.sw2, ans2.sw1, ans2.sw2)
 
-        if ans1.res != ans2.res or ans1.sw1 != ans2.sw1 or ans1.sw2 != ans2.sw2:
+        # A positive response-difference result must not be overwritten by the
+        # timing comparison: only fall back to timing when the two answers are
+        # identical (same data and same status word).
+        if ans1.data != ans2.data or ans1.sw1 != ans2.sw1 or ans1.sw2 != ans2.sw2:
             logging.info("Vulnerable: Response is different")
             vulnerable = True
-        if (res_time2 - res_time1) > (CO/1000):
+        elif (res_time2 - res_time1) > (CO/1000):
             logging.info("It seems to be vulnerable based on the long response time. Verify if this is consistent and fine tune the cut-off threshold if that seems too low...")
             vulnerable = True
         else:
@@ -107,22 +109,28 @@ class MacTraceability():
         i=0
         while i<validate:
 
-            ans1 = ans2 = [""]
+            ans1 = ans2 = None
             res_time1 = res_time2 = 0
 
             try:
                 self._iso7816.rstConnection()
 
-                try: (ans1, res_time1) = self._sendPair()
-                except ReaderException: pass
+                try:
+                    (ans1, res_time1) = self._sendPair()
+                except ReaderException:
+                    pass
 
-                try: (ans2, res_time2) = self._sendPair(cmd_data)
-                except ReaderException: pass
+                try:
+                    (ans2, res_time2) = self._sendPair(cmd_data)
+                except ReaderException:
+                    pass
 
             except ISO7816Exception:
                 pass
 
-            if ans1[0] != ans2[0]:
+            data1 = ans1.data if ans1 is not None else None
+            data2 = ans2.data if ans2 is not None else None
+            if data1 != data2:
                 i+=1
             elif (res_time2 - res_time1) > (CO/1000):
                 i+=1
@@ -142,7 +150,8 @@ class MacTraceability():
 
         @return: the path and the name of the file where the pair has been saved.
         """
-        if not os.path.exists(path): os.makedirs(path)
+        if not os.path.exists(path):
+            os.makedirs(path)
         if os.path.exists(os.path.join(path, filename)):
             i = 0
             while os.path.exists(os.path.join(path, filename+str(i))):
@@ -166,7 +175,8 @@ class MacTraceability():
 
         @return: A boolean where True means that the passport is the one who creates the pair in the file.
         """
-        if not os.path.exists(path): raise MacTraceabilityException("The pair file doesn't exist (path={0})".format(path))
+        if not os.path.exists(path):
+            raise MacTraceabilityException("The pair file doesn't exist (path={0})".format(path))
         with open(path, 'rb') as pair:
             cmd_data = pair.read()
 
@@ -174,7 +184,7 @@ class MacTraceability():
         (ans1, res_time1) = self._sendPair()
         (ans2, res_time2) = self._sendPair(cmd_data)
 
-        if ans1[0] != ans2[0]:
+        if ans1.data != ans2.data or ans1.sw1 != ans2.sw1 or ans1.sw2 != ans2.sw2:
             belongs = True
 
         elif (res_time2 - res_time1) > (CO/1000):
@@ -256,9 +266,9 @@ class MacTraceability():
 
         self._bac.derivationOfDocumentBasicAccesKeys(self._mrz)
         rnd_icc = self._iso7816.getChallenge()
-        logging.debug("RND.ICC: " + binToHexRep(rnd_icc))
+        logging.debug("RND.ICC: " + toHexString(rnd_icc))
         cmd_data = self._bac.authentication(rnd_icc)
-        logging.debug("The valid pair:" + binToHexRep(cmd_data))
+        logging.debug("The valid pair:" + toHexString(cmd_data))
         logging.debug("RST connection")
         self._iso7816.rstConnection()
         return cmd_data
@@ -272,27 +282,28 @@ class MacTraceability():
         @param cmd_data: pair to send
         @type cmd_data: a string of the raw data to send
 
-        @return: The response time together with error message
+        @return: A tuple (APDUResponse, response time in seconds)
         """
         self._iso7816.getChallenge()
 
-        if cmd_data == None:
+        if cmd_data is None:
             logging.debug("Send a message with a wrong MAC")
             logMsg = "Wrong MAC"
-            data = binToHexRep(b"\x55"*40)
+            data = b"\x55"*40
         else:
             logging.debug("Send a message with a correct MAC")
             logMsg = "Correct MAC"
-            data = binToHexRep(cmd_data)
+            data = cmd_data
 
-        toSend = self._iso7816.mutualAuthentication(data=data)
+        # Build the EXTERNAL AUTHENTICATE command ourselves and transmit with
+        # full=True so the raw APDUResponse (data + SW1/SW2) is returned even
+        # when the chip rejects the forged pair. mutualAuthentication() raises
+        # on a non-success status and only yields the response bytes, which
+        # would hide exactly the status word this attack compares.
+        toSend = APDUCommand("00", "82", "00", "00", data=data, le="28")
         starttime = time.time()
-        try:
-            response = self._iso7816.transmit(toSend, logMsg)
-            response = APDUResponse(response, 0x90, 0x00)
-        except ISO7816Exception as msg:
-            response = APDUResponse(msg.description, msg.sw1, msg.sw2)
-        timetaken =  time.time() - starttime
+        response = self._iso7816.transmit(toSend, logMsg, full=True)
+        timetaken = time.time() - starttime
         logging.debug("Response time:" + str(timetaken))
         logging.debug("RST connection")
         self._iso7816.rstConnection()

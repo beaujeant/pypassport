@@ -16,30 +16,26 @@
 # License along with pyPassport.
 # If not, see <http://www.gnu.org/licenses/>.
 
+import logging
 from hashlib import sha1
 
-from pypassport.logger import Logger
-from pypassport.iso9797 import mac, pad, unpad
-from pypassport.iso7816 import ISO7816, ISO7816Exception
-from pypassport.reader import ReaderException
-from pypassport.doc9303 import mrz, bac, data_group
+from pypassport.iso7816 import ISO7816
+from pypassport.doc9303 import mrz, bac
 from pypassport.doc9303.data_group import readElementaryFile
 from pypassport.doc9303.secure_messaging import SecureMessaging
-from pypassport.hex_utils import hexToHexRep, binToHexRep, hexRepToBin
-from pypassport.openssl import OpenSSL, OpenSSLException
-from pypassport.utils import toHexString
-from smartcard.util import toBytes, toASCIIBytes, PACK
+from pypassport.openssl import OpenSSL
+from pypassport.utils import toHexString, toBytes
 
 class SignEverythingException(Exception):
     pass
 
-class SignEverything(Logger):
+class SignEverything():
     """
     This class allows a user to sign any 64bits message.
     The main method is I{sign}
     """
     def __init__(self, iso7816):
-        Logger.__init__(self, "SIGN EVERYTHING ATTACK")
+        logging.info("SIGN EVERYTHING ATTACK")
         self._iso7816 = iso7816
 
         if not isinstance(self._iso7816, ISO7816):
@@ -64,39 +60,39 @@ class SignEverything(Logger):
         """
         validated = False
         if mrz_value:
-            self.log("Validation required")
-            self.log("MRZ: {0}".format(mrz_value))
+            logging.info("Validation required")
+            logging.info("MRZ: {0}".format(mrz_value))
             public_key = self.getPubKey(self._bac, mrz_value)
 
-        message = message_to_sign
-        message_bin = toHexString(list(message), PACK)
-
-        signature = self._iso7816.internalAuthentication(message_bin)
-        self.log("Signature: {0}".format(binToHexRep(signature)))
+        # internalAuthentication() accepts the challenge as a hex string and
+        # builds the INTERNAL AUTHENTICATE APDU itself, so pass the message
+        # straight through. transmit() returns the signature as raw bytes.
+        signature = self._iso7816.internalAuthentication(message_to_sign)
+        logging.info("Signature: {0}".format(toHexString(signature)))
 
         if mrz_value:
-            self.log("Check if the signature is correct regarding the public key:")
+            logging.info("Check if the signature is correct regarding the public key:")
             data = self._openssl.retrieveSignedData(public_key, signature)
-            data_hex = binToHexRep(data)
+            data_hex = toHexString(data)
             header = data_hex[:2]
-            self.log("\tHeader: {0}".format(header))
+            logging.info("\tHeader: {0}".format(header))
             M1 = data_hex[2:214]
-            self.log("\tM1: {0}".format(M1))
+            logging.info("\tM1: {0}".format(M1))
             hash_M = data_hex[214:254]
-            self.log("\tHash: {0}".format(hash_M))
+            logging.info("\tHash: {0}".format(hash_M))
             trailer = data_hex[254:256]
-            self.log("\tTrailer: {0}".format(trailer))
+            logging.info("\tTrailer: {0}".format(trailer))
 
             # If using SHA-1
             if header=='6A' and trailer=='BC':
-                M = hexRepToBin(M1 + message)
+                M = toBytes(M1 + message_to_sign)
                 new_hash = sha1(M).digest()
-                hash_M_bin = hexRepToBin(hash_M)
+                hash_M_bin = toBytes(hash_M)
                 if new_hash==hash_M_bin:
-                    self.log("hash(M|message to sign) == Hash")
+                    logging.info("hash(M|message to sign) == Hash")
                     validated = True
 
-        return (binToHexRep(signature), validated)
+        return (toHexString(signature), validated)
 
     def getPubKey(self, bac_cp, mrz_value):
         """
@@ -109,25 +105,25 @@ class SignEverything(Logger):
 
         @return: The public key (DG15)
         """
-        self.log("Reset conenction")
+        logging.info("Reset connection")
         self._iso7816.rstConnection()
 
-        self.log("Generate the MRZ object")
+        logging.info("Generate the MRZ object")
         mrz_pass = mrz.MRZ(mrz_value)
-        self.log("Check the MRZ")
+        logging.info("Check the MRZ")
         mrz_pass.checkMRZ()
 
-        self.log("Authentication and establishment of session keys")
+        logging.info("Authentication and establishment of session keys")
         (KSenc, KSmac, ssc) = bac_cp.authenticationAndEstablishmentOfSessionKeys(mrz_pass)
-        self.log("Encryption key: {0}".format(binToHexRep(KSenc)))
-        self.log("MAC key: {0}".format(binToHexRep(KSmac)))
-        self.log("Send Sequence Counter: {0}".format(binToHexRep(ssc)))
+        logging.info("Encryption key: {0}".format(toHexString(KSenc)))
+        logging.info("MAC key: {0}".format(toHexString(KSmac)))
+        logging.info("Send Sequence Counter: {0}".format(toHexString(ssc)))
         sm = SecureMessaging(KSenc, KSmac, ssc)
         self._iso7816.ciphering = sm
 
-        self.log("Get public key")
+        logging.info("Get public key")
         dg15 = readElementaryFile("DG15", self._iso7816)
-        self.log("Public key: {0}".format(binToHexRep(dg15.body)))
+        logging.info("Public key: {0}".format(toHexString(dg15.body)))
         return dg15.body
 
 
