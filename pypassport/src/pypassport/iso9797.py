@@ -45,5 +45,8 @@ def mac(key: bytes, msg: bytes) -> bytes:
     tdesb = DES.new(key[8:16], DES.MODE_ECB)
     tdesa = DES.new(key[0:8], DES.MODE_ECB)
 
+    # size >= 1 because msg is non-empty and padded to a multiple of 8, so the
+    # loop above always assigned cb.
+    assert cb is not None
     res = tdesb.decrypt(cb)
     return tdesa.encrypt(res)

@@ -10,6 +10,17 @@
 [tool.uv.workspace]
 members = ["pypassport", "epassportviewer"]
 
+# Tooling needed to run the test suite, linter and type checker. Installed into
+# the workspace .venv by `uv sync` (the `dev` group is synced by default), so
+# `uv run pytest` / `uv run ruff` / `uv run mypy` all use the venv interpreter
+# rather than whatever happens to be on PATH.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
 [tool.pytest.ini_options]
 testpaths = [
     "pypassport/tests",
@@ -25,10 +36,24 @@ target-version = "py39"
 select = ["E", "F", "W", "I"]
 
 [tool.mypy]
-python_version = "3.9"
+# mypy 1.x no longer type-checks against 3.9; 3.10 is the lowest it accepts.
+# Runtime support floor stays at 3.9 (see requires-python and ruff target).
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 mypy_path = "pypassport/src:epassportviewer/src"
+
+# Third-party dependencies that ship no type information (no py.typed marker or
+# stubs). Silence the "missing stubs / skipping analysing" noise so mypy can
+# still type-check our own code against them.
+[[tool.mypy.overrides]]
+module = [
+    "smartcard.*",
+    "pyasn1.*",
+    "ecdsa.*",
+    "Crypto.*",
+]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["pypassport/src", "epassportviewer/src"]

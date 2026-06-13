@@ -19,6 +19,7 @@ https://github.com/jllarraz/AndroidPassportReader/...
 
 import hashlib
 import logging
+from typing import Optional
 
 from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
@@ -82,7 +83,7 @@ class PACE:
         self.__load_brainpool()
         self._iso7816 = iso7816
         self._password = password
-        self._password_ref = None
+        self._password_ref: Optional[bytes] = None
         if can is not None:
             if isinstance(can, str):
                 can = can.strip().encode("ascii")
@@ -93,7 +94,7 @@ class PACE:
             self._password_ref = self.PWD_MRZ
 
     @property
-    def password_reference(self) -> bytes:
+    def password_reference(self) -> Optional[bytes]:
         """Return the ICAO password reference byte (0x01 MRZ, 0x02 CAN, ...).
         ``None`` if PACE was initialised with a raw password.
         """
@@ -178,14 +179,14 @@ class PACE:
 
         # ── GA2: first ephemeral ECDH key exchange ──────────────────────
         pcd_pk_x1 = self._get_x1()
-        ga2_raw = self._send_ga(0x81, pcd_pk_x1, cla=0x10)
+        ga2_raw = self._send_ga(0x81, bytes(pcd_pk_x1), cla=0x10)
         picc_pk_y1 = self._parse_ga_response(ga2_raw, 0x82)
 
         # ── Generic Mapping: G' = s·G + H (H = x1·Y1) ──────────────────
         pcd_pk_x2 = self._get_x2(bytes(picc_pk_y1), s)
 
         # ── GA3: second ephemeral ECDH key exchange over mapped group ───
-        ga3_raw = self._send_ga(0x83, pcd_pk_x2, cla=0x10)
+        ga3_raw = self._send_ga(0x83, bytes(pcd_pk_x2), cla=0x10)
         picc_pk_y2 = self._parse_ga_response(ga3_raw, 0x84)
 
         # ── Derive session keys ─────────────────────────────────────────
@@ -196,7 +197,7 @@ class PACE:
 
         # ── GA4: authenticate ───────────────────────────────────────────
         t_pcd = self._calc_auth_token(k_mac, list(oid_der), bytearray(picc_pk_y2))
-        ga4_raw = self._send_ga(0x85, t_pcd, cla=0x00)
+        ga4_raw = self._send_ga(0x85, bytes(t_pcd), cla=0x00)
         t_picc_received = self._parse_ga_response(ga4_raw, 0x86)
 
         t_picc_expected = self._calc_auth_token(k_mac, list(oid_der), bytearray(pcd_pk_x2))
@@ -232,14 +233,14 @@ class PACE:
     def getCMAC(self, key: bytes, data: bytes) -> bytes:
         cmac = CMAC.new(bytes(key), ciphermod=AES)
         cmac.update(bytes(data))
-        return bytearray(cmac.digest())
+        return bytes(cmac.digest())
 
     def getMAC(self, key: bytes, ssc: bytes, data: bytes) -> bytes:
         n = ssc + data
         padded = self.addPadding(n)
         cmac = CMAC.new(bytes(key), ciphermod=AES)
         cmac.update(padded)
-        return bytearray(cmac.digest())
+        return bytes(cmac.digest())
 
     def decryptBlock(self, key: bytes, ciphertext: bytes) -> bytearray:
         return bytearray(AES.new(bytes(key), AES.MODE_ECB).decrypt(bytes(ciphertext)))
@@ -324,7 +325,7 @@ class PACE:
         oid_tlv = [0x06, len(algorithm_oid)] + algorithm_oid
         inner = oid_tlv + [0x86, len(pk)] + list(pk)
         mac_input = [0x7F, 0x49, len(inner)] + inner
-        return bytearray(self.getCMAC(k_mac, bytearray(mac_input)))[:8]
+        return bytearray(self.getCMAC(k_mac, bytes(mac_input)))[:8]
 
     # ------------------------------------------------------------------
     # APDU transport helpers

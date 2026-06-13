@@ -3,7 +3,7 @@ from hashlib import sha1
 from Crypto import Random
 from Crypto.Cipher import DES3
 from pypassport.doc9303.mrz import MRZ
-from pypassport.utils import toHexString, toBytes
+from pypassport.utils import toHexString
 from pypassport.iso9797 import mac, pad
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 
@@ -117,7 +117,8 @@ class BAC():
             logging.debug("Compute Encryption key (Kenc) (c:" + toHexString(BAC.KENC) + ")")
         kenc = self.keyDerivation(Kseed, BAC.KENC)
 
-        if _DEBUG_CRYPTO: logging.debug("Compute MAC Computation key (Kmac) (c:" + toHexString(BAC.KMAC) + ")")
+        if _DEBUG_CRYPTO:
+            logging.debug("Compute MAC Computation key (Kmac) (c:" + toHexString(BAC.KMAC) + ")")
         kmac = self.keyDerivation(Kseed, BAC.KMAC)
 
         return (kenc, kmac)
@@ -159,7 +160,8 @@ class BAC():
         @type rnd_icc: A 8 bytes binary string
         @return: The APDU binary data for the mutual authenticate command
         """
-        if _DEBUG_CRYPTO: logging.debug("\tRND.ICC: " + toHexString(rnd_icc))
+        if _DEBUG_CRYPTO:
+            logging.debug("\tRND.ICC: " + toHexString(rnd_icc))
 
         if rnd_ifd is None:
             rnd_ifd = Random.get_random_bytes(8)
@@ -204,7 +206,8 @@ class BAC():
         @return: A set of two 16 bytes keys (KSenc, KSmac) and the SSC
         """
 
-        if _DEBUG_CRYPTO: logging.debug("Decrypt and verify received data and compare received RND.IFD with generated RND.IFD")
+        if _DEBUG_CRYPTO:
+            logging.debug("Decrypt and verify received data and compare received RND.IFD with generated RND.IFD")
         if mac(self._ksmac, pad(data[0:32])) != data[32:]:
             raise Exception("The MAC value is not correct")
 
@@ -271,7 +274,8 @@ class BAC():
         @return: a 16 bytes string
         """
 
-        if _DEBUG_CRYPTO: logging.debug("Calculate the SHA-1 hash of MRZ_information")
+        if _DEBUG_CRYPTO:
+            logging.debug("Calculate the SHA-1 hash of MRZ_information")
 
         kseedhash = sha1(kmrz.encode("utf-8"))
         kseed = kseedhash.digest()

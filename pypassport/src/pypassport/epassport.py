@@ -267,9 +267,9 @@ class EPassport(dict):
             logging.debug("Data Groups integrity verification: " + str(res))
 
     def doPACE(self):
+        # PACE password references (ICAO 9303-11): MRZ=0x01, CAN=0x02, PIN=0x03.
+        # Only MRZ-based PACE is wired up here.
         PWD_MRZ = bytes([0x01])
-        PWD_CAN = bytes([0x02])
-        PWD_PIN = bytes([0x03])
         CHAT = b"\x06\x09\x04\x00\x7F\x00\x07\x03\x01\x02\x02\x53\x05\x00\x00\x00\x01\x10"
         oid, domain = self._pace.getPACEInfo(self["DG14"].body)
         self._pace.performPACE(oid, PWD_MRZ, domain_params=domain, chat=CHAT)

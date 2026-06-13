@@ -16,7 +16,7 @@ from .intercept import InterceptPane
 from .comparer import ComparerPane
 from .sequencer import SequencerPane
 from .analyze import AnalyzePane
-from .log import LogPane
+from .log import LogPane, LOG_FORMAT
 from .resources.gadgets.placeholder import PlaceholderEntry
 
 
@@ -30,25 +30,16 @@ def _app_data_dir() -> Path:
     return base / "epassportviewer"
 
 
-class LoggingHandler(logging.Handler):
-    def __init__(self):
-        super().__init__()
-        self.log_entries = []
-
-    def emit(self, record):
-        log_entry = self.format(record)
-        self.log_entries.append(log_entry)
-
-
 class EPassportViewer:
     def __init__(self):
         # CONFIGURATION
-        ## Logging
-        log_handler = LoggingHandler()
+        ## Logging. One stdlib logging system: a console handler here, and the
+        ## GUI Log pane installs the single handler that mirrors records into the
+        ## Logs window (see LogPane / GuiLogHandler).
         logging.basicConfig(
             level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            handlers=[logging.StreamHandler(), log_handler],
+            format=LOG_FORMAT,
+            handlers=[logging.StreamHandler()],
         )
 
         # BUILDING UI
@@ -57,7 +48,6 @@ class EPassportViewer:
         self.root.title("ePassportViewer")
         self.root.geometry("1120x820")
         self.root.minsize(1120, 820)
-        self.root.log_handler = log_handler
 
         ## History
         app_dir = _app_data_dir()
@@ -121,8 +111,8 @@ class EPassportViewer:
 
         ### Refresh reader info
         image = Image.open(Path(__file__).parent / "resources" / "img" / "refresh.png")
-        image = image.resize((20, 20), resample=Image.LANCZOS)
-        photo = ImageTk.PhotoImage(image)
+        resized = image.resize((20, 20), resample=Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(resized)
         image_button = ttk.Button(mrz_frame, image=photo, command=self.get_reader)
         image_button.image = photo
         image_button.pack(side="right", padx=10)

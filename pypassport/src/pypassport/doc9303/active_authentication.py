@@ -5,8 +5,8 @@ import logging
 
 from pypassport.asn1 import SubjectPublicKeyInfo
 from pypassport import hex_utils
-from pypassport.der_object_identifier import OID, OIDException
-from pypassport.openssl import OpenSSL, OpenSSLException
+from pypassport.der_object_identifier import OID
+from pypassport.openssl import OpenSSL
 from pypassport.doc9303 import data_group
 from pypassport.utils import toHexString
 

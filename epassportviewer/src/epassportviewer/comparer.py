@@ -19,7 +19,7 @@ try:
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox, simpledialog
 except ImportError:  # headless (e.g. CI): the pure helpers below stay importable
-    tk = ttk = filedialog = messagebox = simpledialog = None
+    tk = ttk = filedialog = messagebox = simpledialog = None  # type: ignore[assignment]
 
 
 # ── Pure helpers (no Tk) ──────────────────────────────────────────────────────

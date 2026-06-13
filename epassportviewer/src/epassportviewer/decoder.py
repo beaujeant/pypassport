@@ -132,10 +132,10 @@ class DecoderPane:
         self._result.configure(state="disabled")
 
     def _f1(self) -> str:
-        return self.field_one.get().strip().replace(" ", "")
+        return str(self.field_one.get()).strip().replace(" ", "")
 
     def _f2(self) -> str:
-        return self.field_two.get().strip().replace(" ", "")
+        return str(self.field_two.get()).strip().replace(" ", "")
 
     # ── crypto ──────────────────────────────────────────────────────────────
 

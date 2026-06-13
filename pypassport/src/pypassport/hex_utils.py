@@ -20,7 +20,7 @@ def binToHexRep(data) -> str:
         data = data.encode("utf-8")
     if isinstance(data, int):
         data = bytes([data])
-    return data.hex()
+    return bytes(data).hex()
 
 
 def binToHexList(data) -> list:

@@ -39,10 +39,17 @@ def _build_smartcard_stub():
         "smartcard.pcsc",
         "smartcard.pcsc.PCSCExceptions",
         "smartcard.scard",
+        "smartcard.CardType",
+        "smartcard.CardRequest",
     ]
     for name in submodules:
         if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
+            mod = types.ModuleType(name)
+            # Give the top-level package a __path__ so "smartcard.X" reads as a
+            # package import rather than "smartcard is not a package".
+            if name == "smartcard":
+                mod.__path__ = []  # type: ignore[attr-defined]
+            sys.modules[name] = mod
 
     util = sys.modules["smartcard.util"]
     util.toHexString = _to_hex
@@ -51,8 +58,9 @@ def _build_smartcard_stub():
     util.HEX = 2
 
     exc_mod = sys.modules["smartcard.Exceptions"]
-    if not hasattr(exc_mod, "NoCardException"):
-        exc_mod.NoCardException = type("NoCardException", (Exception,), {})
+    for exc in ("NoCardException", "CardConnectionException"):
+        if not hasattr(exc_mod, exc):
+            setattr(exc_mod, exc, type(exc, (Exception,), {}))
 
     sys_mod = sys.modules["smartcard.System"]
     if not hasattr(sys_mod, "readers"):
@@ -62,6 +70,14 @@ def _build_smartcard_stub():
     if not hasattr(pcsc_mod, "PCSCExceptions"):
         pcsc_mod.PCSCExceptions = types.ModuleType("smartcard.pcsc.PCSCExceptions")
         sys.modules["smartcard.pcsc.PCSCExceptions"] = pcsc_mod.PCSCExceptions
+
+    cardtype_mod = sys.modules["smartcard.CardType"]
+    if not hasattr(cardtype_mod, "AnyCardType"):
+        cardtype_mod.AnyCardType = type("AnyCardType", (), {})
+
+    cardreq_mod = sys.modules["smartcard.CardRequest"]
+    if not hasattr(cardreq_mod, "CardRequest"):
+        cardreq_mod.CardRequest = type("CardRequest", (), {})
 
 
 _build_smartcard_stub()

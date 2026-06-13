@@ -312,7 +312,7 @@ class AccessControlNegotiator:
             logging.info("No PACEInfo entries in EF.CardAccess; falling back to BAC.")
             return None
 
-        chosen = self._parser.select_supported(infos)
+        chosen: Optional[PACEInfo] = self._parser.select_supported(infos)
         if chosen is None:
             unsupported = ", ".join(info.oid for info in infos)
             if mandatory:

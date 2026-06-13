@@ -15,7 +15,7 @@ try:
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
 except ImportError:  # headless (e.g. CI): the pure helpers below stay importable
-    tk = ttk = filedialog = messagebox = None
+    tk = ttk = filedialog = messagebox = None  # type: ignore[assignment]
 
 from pypassport.iso7816 import ISO7816
 from pypassport.utils import toHexString

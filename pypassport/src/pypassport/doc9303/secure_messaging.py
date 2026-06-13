@@ -75,7 +75,8 @@ class SecureMessaging():
         size = len(do87) + len(do97) + len(do8e)
         protectedAPDU = cmdHeader[:4] + bytes([size]) + do87 + do97 + do8e + bytes([0x00])
 
-        if _DEBUG_CRYPTO: logging.debug("Construct and send protected APDU")
+        if _DEBUG_CRYPTO:
+            logging.debug("Construct and send protected APDU")
 
         return APDUCommand(
             protectedAPDU[0],
@@ -96,7 +97,6 @@ class SecureMessaging():
         do87 = b""
         do87Data = None
         do99 = b""
-        do8e = b""
         offset = 0
 
         # Check for a SM error
@@ -129,7 +129,8 @@ class SecureMessaging():
 
         if do99[0] != 0x99 or do99[1] != 0x02:
             # SM error, return the error code
-            if _DEBUG_CRYPTO: logging.debug("DO99 malformed, must be 9902 instead" + toHexString(rapdu))
+            if _DEBUG_CRYPTO:
+                logging.debug("DO99 malformed, must be 9902 instead" + toHexString(rapdu))
             return APDUResponse([], sw1, sw2)
 
         # DO'8E'
@@ -137,7 +138,6 @@ class SecureMessaging():
         if rapdu[offset] == 0x8e:
             ccLength = rapdu[offset + 1]
             CC = rapdu[offset + 2:offset + 2 + ccLength]
-            do8e = rapdu[offset:offset + 2 + ccLength]
 
             # CheckCC
             debug_msg = ""
@@ -145,7 +145,8 @@ class SecureMessaging():
                 debug_msg += " DO'87"
             if do99:
                 debug_msg += " DO'99"
-            if _DEBUG_CRYPTO: logging.debug("Verify RAPDU CC by computing MAC of" + debug_msg)
+            if _DEBUG_CRYPTO:
+                logging.debug("Verify RAPDU CC by computing MAC of" + debug_msg)
 
             self._ssc = self._incSSC()
             if _DEBUG_CRYPTO: 
@@ -157,9 +158,11 @@ class SecureMessaging():
                 logging.debug("\tConcatenate SSC and" + debug_msg + " and add padding")
                 logging.debug("\t\tK: " + toHexString(K))
 
-            if _DEBUG_CRYPTO: logging.debug("\tCompute MAC with KSmac")
+            if _DEBUG_CRYPTO:
+                logging.debug("\tCompute MAC with KSmac")
             CCb = mac(self._ksmac, K)
-            if _DEBUG_CRYPTO: logging.debug("\t\tCC: " + toHexString(CCb))
+            if _DEBUG_CRYPTO:
+                logging.debug("\t\tCC: " + toHexString(CCb))
 
             res = (CC == CCb)
             if _DEBUG_CRYPTO: 
@@ -177,15 +180,18 @@ class SecureMessaging():
             # There is a payload
             tdes = DES3.new(self._ksenc, DES3.MODE_CBC, b'\x00\x00\x00\x00\x00\x00\x00\x00')
             data = unpad(tdes.decrypt(do87Data))
-            if _DEBUG_CRYPTO: logging.debug("Decrypt data of DO'87 with KSenc")
+            if _DEBUG_CRYPTO:
+                logging.debug("Decrypt data of DO'87 with KSenc")
 
         return APDUResponse(data, sw1, sw2)
 
 
     def _maskClassAndPad(self, apdu):
-        if _DEBUG_CRYPTO: logging.debug("Mask class byte and pad command header")
+        if _DEBUG_CRYPTO:
+            logging.debug("Mask class byte and pad command header")
         res = pad(toBytes("0C" + apdu.ins + apdu.p1 + apdu.p2))
-        if _DEBUG_CRYPTO: logging.debug("\tCmdHeader: " + toHexString(res))
+        if _DEBUG_CRYPTO:
+            logging.debug("\tCmdHeader: " + toHexString(res))
         return res
 
 

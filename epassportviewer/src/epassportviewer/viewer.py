@@ -558,8 +558,8 @@ class ViewerPane:
         max_width = 200
         width, height = image.size
         new_height = int(max_width * height / width)
-        image = image.resize((max_width, new_height), Image.LANCZOS)
-        tk_image = ImageTk.PhotoImage(image)
+        resized = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
+        tk_image = ImageTk.PhotoImage(resized)
         self.passport_photo.configure(image=tk_image, width=max_width, height=new_height, text="")
         self.passport_photo.image = tk_image
 

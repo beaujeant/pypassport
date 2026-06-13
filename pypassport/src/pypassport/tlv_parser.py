@@ -10,7 +10,7 @@ class TLVParserException(Exception):
 
 
 class TLVParser(dict):
-    def __init__(self, data: bytes = None):
+    def __init__(self, data: bytes = b""):
         self._data = data
         self._byteNb = 0
 
@@ -26,7 +26,7 @@ class TLVParser(dict):
     def _getLength(self) -> int:
         length, offset = asn1Length(self._data[self._byteNb:])
         self._byteNb += offset
-        return length
+        return int(length)
 
     def _getValue(self) -> bytes:
         length = self._getLength()

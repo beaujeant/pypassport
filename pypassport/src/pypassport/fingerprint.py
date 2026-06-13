@@ -161,7 +161,7 @@ class Fingerprint(object):
             self.callback.put((None, 'slfp', "Read SOD"))
             self.callback.put((None, 'fp', 45))
 
-        if sod != None:
+        if sod is not None:
             with tempfile.NamedTemporaryFile(suffix='.der', delete=False) as fd:
                 sod_path = fd.name
                 fd.write(sod.body)

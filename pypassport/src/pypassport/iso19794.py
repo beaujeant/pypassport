@@ -7,6 +7,8 @@ References:
   ICAO Doc 9303 Part 10 §4.7.2 (DG2), §4.7.3 (DG3), §4.7.4 (DG4)
 """
 
+from typing import Any
+
 # --- Magic bytes ------------------------------------------------------------
 
 FAC = b"FAC\x00"   # ISO 19794-5 face
@@ -206,7 +208,7 @@ class ISO19794_5:
         if data[0:4] != FAC:
             raise Exception(f"Missing FAC magic: {data[0:4]!r}")
 
-        result = {}
+        result: dict[str, Any] = {}
         # Bytes 4-7: version "010\0" (4 bytes per spec; previously only 3 read)
         result['VersionNumber']        = data[4:8]
         result['LengthOfRecord']       = int.from_bytes(data[8:12], 'big')
@@ -239,16 +241,24 @@ class ISO19794_5:
             })
             offset += 8
 
-        result['FaceImageType']    = _translate(ISO19794_5_IMG_TYPE,   data[offset]);     offset += 1
-        result['ImageDataType']    = _translate(ISO19794_5_IMG_DTYPE,  data[offset]);     offset += 1
-        result['ImageWidth']       = int.from_bytes(data[offset:offset + 2], 'big');      offset += 2
-        result['ImageHeight']      = int.from_bytes(data[offset:offset + 2], 'big');      offset += 2
-        result['ImageColourSpace'] = _translate(ISO19794_5_IMG_CSPACE, data[offset]);     offset += 1
-        result['ImageSourceType']  = _translate(ISO19794_5_IMG_SOURCE, data[offset]);     offset += 1
-        result['ImageDeviceType']  = int.from_bytes(data[offset:offset + 2], 'big');      offset += 2
-        result['ImageQuality']     = _translate(
+        result['FaceImageType'] = _translate(ISO19794_5_IMG_TYPE, data[offset])
+        offset += 1
+        result['ImageDataType'] = _translate(ISO19794_5_IMG_DTYPE, data[offset])
+        offset += 1
+        result['ImageWidth'] = int.from_bytes(data[offset:offset + 2], 'big')
+        offset += 2
+        result['ImageHeight'] = int.from_bytes(data[offset:offset + 2], 'big')
+        offset += 2
+        result['ImageColourSpace'] = _translate(ISO19794_5_IMG_CSPACE, data[offset])
+        offset += 1
+        result['ImageSourceType'] = _translate(ISO19794_5_IMG_SOURCE, data[offset])
+        offset += 1
+        result['ImageDeviceType'] = int.from_bytes(data[offset:offset + 2], 'big')
+        offset += 2
+        result['ImageQuality'] = _translate(
             ISO19794_5_IMG_QUALITY, int.from_bytes(data[offset:offset + 2], 'big')
-        );                                                                                 offset += 2
+        )
+        offset += 2
 
         return result, offset
 
@@ -270,7 +280,7 @@ class ISO19794_4:
         if data[0:4] != FIR:
             raise Exception(f"Missing FIR magic: {data[0:4]!r}")
 
-        result = {}
+        result: dict[str, Any] = {}
         result['VersionNumber']    = data[4:8]
         result['LengthOfRecord']   = int.from_bytes(data[8:12], 'big')
         result['CBEFFProductID']   = int.from_bytes(data[12:14], 'big')
@@ -326,7 +336,7 @@ class ISO19794_6:
         if data[0:4] != IIR:
             raise Exception(f"Missing IIR magic: {data[0:4]!r}")
 
-        result = {}
+        result: dict[str, Any] = {}
         result['VersionNumber']   = data[4:8]
         result['LengthOfRecord']  = int.from_bytes(data[8:12], 'big')
         result['CBEFFProductID']  = int.from_bytes(data[12:14], 'big')

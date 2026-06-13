@@ -24,7 +24,7 @@ def _unwrap_security_infos(data: bytes) -> bytes:
     if data and (data[0] & 0xC0) == 0x40:  # Application-class tag
         try:
             _, inner, _ = parseTLV(data)
-            return inner
+            return bytes(inner)
         except Exception:
             pass
     return data
@@ -33,7 +33,6 @@ def _unwrap_security_infos(data: bytes) -> bytes:
 
 
 tagToName = {
-    "02" : "Integer",
     "5C" : "Tag list",
 
     # DataGroup
@@ -84,7 +83,6 @@ tagToName = {
     "5F1F" : "MRZ data elements",
 
     "5F26" : "Date of Issue",
-    "5F2B" : "Date of birth (8 digit)",
     "5F2E" : "Biometric data block",
 
     "5F36" : "Unicode Version Level",
@@ -215,7 +213,7 @@ def readElementaryFile(tag, iso7816, maxSize=0xDF):
 
         # Read the DG body
         offset += header.headerSize
-        logging.debug(f"Read EF body")
+        logging.debug("Read EF body")
         body = b""
         remaining = header.bodySize
 
@@ -265,10 +263,14 @@ class ElementaryFile(dict):
         self._header = None
         self._body = b""
 
-        if tag: self.tag = tag
-        if header: self.header = header
-        if body: self.body = body
-        if file: self.file = file
+        if tag:
+            self.tag = tag
+        if header:
+            self.header = header
+        if body:
+            self.body = body
+        if file:
+            self.file = file
 
     def _setHeader(self, header):
         if isinstance(header, ElementaryFileHeader):

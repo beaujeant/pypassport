@@ -3,7 +3,7 @@ from pypassport.asn1 import asn1Length
 from binascii import unhexlify, hexlify
 
 
-def toHexString(input, format=util.PACK):
+def toHexString(input, format=util.PACK) -> str:
     """
     b"ABC"             -> '414243'
     [0x41, 0x42, 0x43] -> '414243'
@@ -12,21 +12,22 @@ def toHexString(input, format=util.PACK):
         input = list(input)
     if isinstance(input, int):
         input = [input]
-    return util.toHexString(input, format)
+    # util.toHexString comes from the untyped pyscard package; pin the result.
+    return str(util.toHexString(input, format))
 
 
-def toBytes(input):
+def toBytes(input) -> bytes:
     """
     '414243' -> b"ABC"
     """
     return bytes(util.toBytes(input))
 
 
-def toList(input):
+def toList(input) -> list:
     """
     '414243' -> [0x41, 0x42, 0x43]
     """
-    return util.toBytes(input)
+    return list(util.toBytes(input))
 
 
 def parseTLV(data):

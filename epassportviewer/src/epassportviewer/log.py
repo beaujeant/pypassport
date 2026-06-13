@@ -2,6 +2,59 @@ import logging
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
+# Single format shared by the console and the GUI log view so a line reads the
+# same wherever it lands.
+LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+
+
+class GuiLogHandler(logging.Handler):
+    """The one bridge between the stdlib logging system and the GUI Log pane.
+
+    Every ``pypassport`` and ``epassportviewer`` module logs through the stdlib
+    ``logging`` root logger; this handler is the single place those records turn
+    into text the user can see. Records are formatted once and buffered, so the
+    Logs window shows the full backlog the moment it is opened, and — while a
+    window is open — appended live.
+
+    The handler keeps working with no window attached (it just buffers), which
+    is also what makes it unit-testable without a running Tk main loop.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.records: list[str] = []
+        self._widget = None  # live ScrolledText while a Logs window is open
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.records.append(msg)
+        widget = self._widget
+        if widget is not None:
+            # emit() may fire from a worker thread (background reads); marshal the
+            # Tk update onto the main loop via after() to stay thread-safe.
+            try:
+                widget.after(0, self._append, widget, msg)
+            except (tk.TclError, RuntimeError):
+                # Window went away between the None-check and the call.
+                self._widget = None
+
+    @staticmethod
+    def _append(widget, msg):
+        try:
+            widget.configure(state="normal")
+            widget.insert(tk.END, msg + "\n")
+            widget.see(tk.END)
+            widget.configure(state="disabled")
+        except tk.TclError:
+            pass
+
+    def attach(self, widget):
+        self._widget = widget
+
+    def detach(self, widget):
+        if self._widget is widget:
+            self._widget = None
+
 
 class LogPane:
     def __init__(self, root):
@@ -13,6 +66,14 @@ class LogPane:
             "WARNING": logging.WARNING,
             "ERROR": logging.ERROR,
         }
+
+        # Install the single GUI handler on the root logger. Library logs use the
+        # root logger, so this is all that is needed to route them here.
+        self.handler = GuiLogHandler()
+        self.handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        logging.getLogger().addHandler(self.handler)
+        # Keep a reference on root for the rest of the app/tests.
+        self.root.log_handler = self.handler
 
         # "Verbose" dropdown menu
         verbose_label = ttk.Label(self.root.footer_frame, text="Log level:")
@@ -49,8 +110,15 @@ class LogPane:
         log_text = scrolledtext.ScrolledText(log_window, wrap=tk.WORD, state="normal")
         log_text.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
-        # Add logs to the text box
-        for log_entry in self.root.log_handler.log_entries:
+        # Seed with the backlog, then stream new records live until the window
+        # closes.
+        for log_entry in self.handler.records:
             log_text.insert(tk.END, log_entry + "\n")
-
+        log_text.see(tk.END)
         log_text.configure(state="disabled")
+
+        self.handler.attach(log_text)
+        log_window.protocol(
+            "WM_DELETE_WINDOW",
+            lambda: (self.handler.detach(log_text), log_window.destroy()),
+        )
