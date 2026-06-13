@@ -216,14 +216,19 @@ class Fingerprint(object):
         for dg in res["EP"]:
             dgs.append(res["EP"][dg])
 
-        res["Integrity"] = self._pa.executePA(sod, dgs)
-        res["Hashes"] = self._pa._calculateHashes(dgs)
+        # Passive Authentication / hash comparison needs a readable SOD. When
+        # BAC failed (or the SOD could not be read) sod is None and executePA
+        # would raise; keep the rest of the report intact instead of aborting.
+        try:
+            res["Integrity"] = self._pa.executePA(sod, dgs)
+            res["Hashes"] = self._pa._calculateHashes(dgs)
+        except Exception:
+            logging.error("Could not verify data-group integrity (passive authentication)")
 
         try:
             res["Algo"] = der_object_identifier.OID[self._pa._content['hashAlgorithm']]
-        except KeyError:
-            logging.error("Hash algorythm not listed")
-            res[converter.toDG(dg)] = "Not defined in hash algorithm list"
+        except (KeyError, TypeError):
+            logging.error("Hash algorithm not listed")
 
         #Check if there is a certificate
         if self.callback:
@@ -269,19 +274,21 @@ class Fingerprint(object):
                 res["pubKey"] = self._doc.getPublicKey()
             if self._doc.doActiveAuthentication():
                 res["activeAuth"] = "Done"
-        except Exception as msg:
+        except Exception:
             logging.error("Could not get the public key and/or execute active authentication")
-            raise Exception(msg)
+            self._doc.iso7816.rstConnection()
 
         # Define generation
         if self.callback:
             self.callback.put((None, 'slfp', "Define the generation"))
             self.callback.put((None, 'fp', 85))
 
-        if not res["bac"]:
+        # res["bac"] / res["activeAuth"] hold the strings "Done"/"Failed", so
+        # compare against "Done" rather than testing truthiness (every
+        # non-empty string is truthy).
+        if res["bac"] != "Done":
             res["generation"] = 1
-
-        if res["activeAuth"]:
+        elif res["activeAuth"] == "Done":
             if res["activeAuthWithoutBac"]:
                 res["generation"] = 3
             else:
@@ -291,6 +298,8 @@ class Fingerprint(object):
                 self._doc["DG7"]
             except Exception:
                 res["generation"] = 4
+        else:
+            res["generation"] = 1
 
 
         # Check if passport implements delay security
@@ -329,8 +338,11 @@ class Fingerprint(object):
     def checkMACTraceability(self):
         self._doc.iso7816.rstConnection()
         try:
-            attack = mac_traceability.MacTraceability(self._doc.iso7816)
-            attack.setMRZ(str(self.curMRZ))
+            # MacTraceability needs a valid MRZ to derive the BAC keys for the
+            # legitimate message/MAC pair. curMRZ is set to the genuine MRZ by
+            # blockAfterFail() earlier in analyse(); a missing/invalid value
+            # raises in the constructor and we fall back to "N/A".
+            attack = mac_traceability.MacTraceability(self._doc.iso7816, str(self.curMRZ))
             return attack.isVulnerable()
         except Exception:
             return (False, "N/A")

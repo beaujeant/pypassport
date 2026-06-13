@@ -15,6 +15,7 @@ from .forge import ForgePane
 from .intercept import InterceptPane
 from .comparer import ComparerPane
 from .sequencer import SequencerPane
+from .analyze import AnalyzePane
 from .log import LogPane
 from .resources.gadgets.placeholder import PlaceholderEntry
 
@@ -152,6 +153,8 @@ class EPassportViewer:
         self.root.comparer_tab = comparer_tab
         sequencer_tab = ttk.Frame(notebook)
         self.root.sequencer_tab = sequencer_tab
+        analyze_tab = ttk.Frame(notebook)
+        self.root.analyze_tab = analyze_tab
 
         notebook.add(view_tab, text="View")
         notebook.add(traffic_tab, text="Traffic")
@@ -160,6 +163,7 @@ class EPassportViewer:
         notebook.add(intercept_tab, text="Intercept")
         notebook.add(comparer_tab, text="Comparer")
         notebook.add(sequencer_tab, text="Sequencer")
+        notebook.add(analyze_tab, text="Analyze")
         notebook.pack(fill=tk.BOTH, expand=True, pady=5)
 
         ### Setting up tab content
@@ -170,6 +174,7 @@ class EPassportViewer:
         InterceptPane(self)
         ComparerPane(self)
         SequencerPane(self)
+        AnalyzePane(self)
 
         ## Footer pane with "Verbose" dropdown, "Logs" button, and version info
         footer_frame = ttk.Frame(main_frame)
