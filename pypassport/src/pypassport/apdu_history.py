@@ -23,6 +23,10 @@ class APDUTransaction:
     sm_type: str   # "" | "3DES" | "AES"
     source: str    # {"tool", "forge", "imported", "replay"}
     timestamp: datetime = field(default_factory=datetime.now)
+    # User annotations (set from the Traffic tab). Purely descriptive: they
+    # never affect transport and are view-only metadata on the record.
+    comment: str = ""   # free-text note shown in the Traffic list
+    color: str = ""     # row highlight colour (hex string, e.g. "#ffd6e7") or ""
 
 
 class APDUHistory:

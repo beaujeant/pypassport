@@ -113,6 +113,16 @@ class DecoderPane:
         scroll.pack(side="right", fill="y")
         self._result.pack(fill="both", expand=True)
 
+        # Let other tabs (e.g. Traffic > "Send to Decoder") find this pane.
+        self.root.decoder_pane = self
+
+    def load_fields(self, field_one: str = "", field_two: str = ""):
+        """Populate the input fields from another tab and reveal the Decoder."""
+        self.field_one.set((field_one or "").upper())
+        self.field_two.set((field_two or "").upper())
+        notebook = self.root.main_notebook
+        notebook.select(notebook.index(self.root.decoder_tab))
+
     # ── helpers ─────────────────────────────────────────────────────────────
 
     def _show(self, text: str):
