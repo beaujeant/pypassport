@@ -78,7 +78,6 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 │   │   ├── der_object_identifier.py # OID registry
 │   │   ├── hex_utils.py           # Hex/bin conversion utilities
 │   │   ├── apdu_history.py        # APDU transaction log and listener registry
-│   │   ├── logger.py              # Callback-based logger (Logger base class)
 │   │   ├── openssl.py             # OpenSSL subprocess wrapper
 │   │   ├── pki.py                 # X.509 / Distinguished Name helpers
 │   │   ├── singleton.py           # Generic Singleton base class

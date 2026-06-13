@@ -1,8 +1,8 @@
+import logging
 import os
 import shutil
 
 from pypassport.openssl import OpenSSL, OpenSSLException
-from pypassport.logger import Logger
 
 
 class DistinguishedName(object):
@@ -94,7 +94,7 @@ class DistinguishedName(object):
     serialNumber = property(getSerialNumber, setSerialNumber, None, None)
 
 
-class CA(Logger):
+class CA():
     def __init__(self, caLoc=os.path.expanduser("~"), csca=None, cscaKey=None, opensslLocation=""):
         """
         Initiate the CA infrastructure.
@@ -103,7 +103,7 @@ class CA(Logger):
         @param cscaKey: The private key of the CSCA in PEM
         @param opensslLocation: The openssl executable location
         """
-        Logger.__init__(self, "CA")
+        logging.info("CA")
 
         self._csca = csca
         self._cscaKey = cscaKey
@@ -190,7 +190,7 @@ class CA(Logger):
     def getCrl(self):
         if not os.path.isfile(os.path.join(self._loc, "crlnumber")):
             self._openssl._toDisk(os.path.join(self._loc, "crlnumber"), "01")
-            self.log("echo '01' > " + os.path.join(self._loc, "crlnumber"))
+            logging.info("echo '01' > " + os.path.join(self._loc, "crlnumber"))
         try:
             crl = self._openssl.genCRL(self.csca, self.cscaKey)
         except OpenSSLException as msg:
@@ -202,21 +202,21 @@ class CA(Logger):
     def _errorHandler(self, msg):
         if msg.find("newcerts") > 0:
             os.makedirs(os.path.join(self._loc, "newcerts"))
-            self.log("mkdir " + os.path.join(self._loc, "newcerts"))
+            logging.info("mkdir " + os.path.join(self._loc, "newcerts"))
         elif msg.find("index.txt") > 0:
             self._openssl._toDisk(os.path.join(self._loc, "index.txt"))
-            self.log("touch " + os.path.join(self._loc, "index.txt"))
+            logging.info("touch " + os.path.join(self._loc, "index.txt"))
             self._openssl._toDisk(os.path.join(self._loc, "index.txt.attr"), "unique_subject = no")
-            self.log("echo 'unique_subject = no' > " + os.path.join(self._loc, "index.txt.attr"))
+            logging.info("echo 'unique_subject = no' > " + os.path.join(self._loc, "index.txt.attr"))
         elif msg.find("serial") > 0:
             self._openssl._toDisk(os.path.join(self._loc, "serial"), "01")
-            self.log("echo '01' > " + os.path.join(self._loc, "serial"))
+            logging.info("echo '01' > " + os.path.join(self._loc, "serial"))
         elif msg.find("openssl.cfg") > 0:
             self._openssl._toDisk(self._configFile, self._getConfigFile(self._loc))
-            self.log("Creation of openssl.cfg")
+            logging.info("Creation of openssl.cfg")
         else:
             raise OpenSSLException(msg)
-        self.log(msg)
+        logging.info(msg)
 
     def resetConfig(self):
         try:
