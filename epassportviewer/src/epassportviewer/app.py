@@ -51,8 +51,8 @@ class EPassportViewer:
         ## Initialize the main window
         self.root = tk.Tk()
         self.root.title("ePassportViewer")
-        self.root.geometry("915x775")
-        self.root.minsize(915, 775)
+        self.root.geometry("1120x820")
+        self.root.minsize(1120, 820)
         self.root.log_handler = log_handler
 
         ## History

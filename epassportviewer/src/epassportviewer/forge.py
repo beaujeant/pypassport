@@ -70,6 +70,13 @@ class ForgePane:
         self.parent = main
         self.root = main.root
 
+        # Grey backgrounds for the numbered request buttons so they blend with
+        # the ttk theme instead of falling back to the stark default (black on
+        # some platforms). The active tab sits a shade darker than the rest.
+        style = ttk.Style()
+        self._tab_bg = style.lookup("TFrame", "background") or "#d9d9d9"
+        self._tab_active_bg = "#b0b0b0"
+
         # Set to True once the user explicitly forces "None" while an SM
         # channel is active, so the default selection stops snapping back to
         # the active SM on every refresh.
@@ -211,7 +218,9 @@ class ForgePane:
         # Coloured hex dump of the response, sharing Traffic's renderer.
         dump_head = ttk.Frame(resp_frame)
         dump_head.pack(fill="x", pady=(6, 2))
-        legend = build_legend(dump_head)
+        # This dump only ever shows a response, so drop the request-only field
+        # swatches (CLA/INS/P1/P2/LC/LE) and keep just DATA/SW1/SW2.
+        legend = build_legend(dump_head, fields=("DATA", "SW1", "SW2"))
         legend.pack(side="left")
         # "Send to Comparer" stays disabled until a Comparer pane exists and the
         # tab has a response to send — mirroring the Traffic tab's guard.
@@ -242,9 +251,12 @@ class ForgePane:
             w.destroy()
         for i in range(len(self._requests)):
             active = (i == self._active)
+            bg = self._tab_active_bg if active else self._tab_bg
             tk.Button(
                 self._tabstrip, text="#%d" % (i + 1),
                 relief="sunken" if active else "raised",
+                background=bg, activebackground=bg,
+                highlightbackground=self._tab_bg, foreground="#000000",
                 takefocus=0, padx=6, pady=1,
                 command=lambda idx=i: self._select_request(idx),
             ).pack(side="left", padx=1)
@@ -326,16 +338,37 @@ class ForgePane:
         self._load_active()
 
     def load_transaction(self, tx):
-        """Open a new tab populated from an APDUTransaction (Traffic → Forge)."""
+        """Populate Forge from an APDUTransaction (Traffic → Forge).
+
+        Normally each send opens a fresh tab, but if the only tab is still
+        pristine (nothing typed, nothing sent) we overwrite it in place rather
+        than leaving an empty #1 behind.
+        """
         req = _ForgeRequest(
             cla=tx.request_cla, ins=tx.request_ins, p1=tx.request_p1, p2=tx.request_p2,
             lc=tx.request_lc, data=tx.request_data,
             # Leave LE empty so it is recomputed at send time.
             le="",
         )
-        self._add_request(req)
+        self._commit_active()
+        if len(self._requests) == 1 and self._is_pristine(self._requests[0]):
+            self._requests[0] = req
+            self._active = 0
+            self._render_tabstrip()
+            self._load_active()
+        else:
+            self._add_request(req)
         self._sync_sm_default()
         self._update_sm_status()
+
+    @staticmethod
+    def _is_pristine(req):
+        """True if the tab has no request fields filled and was never sent."""
+        return (
+            not any((req.cla, req.ins, req.p1, req.p2, req.lc, req.data, req.le))
+            and req.last_tx is None
+            and not req.resp_data
+        )
 
     # ── Raw / fielded toggle ──────────────────────────────────────────────────
     def _apply_raw_visibility(self, raw_mode):

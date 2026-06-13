@@ -25,15 +25,17 @@ FIELD_COLORS = {
 LEGEND_ORDER = ("CLA", "INS", "P1", "P2", "LC", "DATA", "LE", "SW1", "SW2")
 
 
-def build_legend(parent):
+def build_legend(parent, fields=LEGEND_ORDER):
     """Build a row of coloured field swatches and return the frame.
 
     The frame is returned un-packed so the caller controls geometry and can
-    pack extra widgets into it (e.g. a toggle pinned to the right).
+    pack extra widgets into it (e.g. a toggle pinned to the right). Pass
+    ``fields`` to restrict the swatches shown — the Forge response dump only
+    ever carries DATA / SW1 / SW2, so it omits the request-only fields.
     """
     legend = ttk.Frame(parent)
     ttk.Label(legend, text="Fields:").pack(side="left", padx=(0, 4))
-    for field in LEGEND_ORDER:
+    for field in fields:
         # Force solid black text: the default label foreground is a low
         # contrast grey that is hard to read on these pale swatch colours.
         tk.Label(
