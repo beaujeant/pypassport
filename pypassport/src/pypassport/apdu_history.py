@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Callable, Optional
@@ -20,7 +21,7 @@ class APDUTransaction:
     # Metadata
     sm_active: bool
     sm_type: str   # "" | "3DES" | "AES"
-    source: str    # "tool" | "imported"
+    source: str    # {"tool", "forge", "imported", "replay"}
     timestamp: datetime = field(default_factory=datetime.now)
 
 
@@ -43,7 +44,7 @@ class APDUHistory:
             try:
                 cb(tx)
             except Exception:
-                pass
+                logging.exception("APDUHistory listener %r raised an exception", cb)
 
     def delete(self, index: int) -> None:
         del self._entries[index]

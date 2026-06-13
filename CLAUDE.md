@@ -34,7 +34,7 @@ git checkout -b dev origin/main   # or: git checkout dev if it exists remotely
 
 This is a Python monorepo for reading and researching electronic passports (ePassports / eMRTDs) per ICAO Doc 9303. It contains two packages:
 
-- **`pypassport/`** — core library implementing the BAC, PACE (partial), Secure Messaging, Passive Authentication, and Active Authentication protocol stack, plus a security research module (`attacks/`)
+- **`pypassport/`** — core library implementing the BAC, PACE, Secure Messaging, Passive Authentication, and Active Authentication protocol stack, plus a security research module (`attacks/`)
 - **`ePassportViewer/`** — Tkinter desktop GUI that wraps `pypassport` for interactive passport reading and vulnerability testing
 
 `pypassport` has no dependency on `ePassportViewer`. `ePassportViewer` depends on `pypassport`.
@@ -55,24 +55,29 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 │   │   ├── iso19794.py            # ISO 19794-5 biometric image parsing
 │   │   ├── doc9303/               # ICAO 9303 protocol implementations
 │   │   │   ├── bac.py             # Basic Access Control
-│   │   │   ├── pace.py            # PACE (ECDH / Brainpool) — PARTIAL, not production-ready
-│   │   │   ├── securemessaging.py # Secure Messaging layer
-│   │   │   ├── activeauthentication.py
-│   │   │   ├── passiveauthentication.py
-│   │   │   ├── datagroup.py       # Data Group / Elementary File reading
+│   │   │   ├── pace.py            # PACE (ECDH / Brainpool)
+│   │   │   ├── secure_messaging.py      # 3DES Secure Messaging layer
+│   │   │   ├── aes_secure_messaging.py  # AES Secure Messaging layer
+│   │   │   ├── access_control.py        # BAC / PACE access-control selection
+│   │   │   ├── active_authentication.py
+│   │   │   ├── passive_authentication.py
+│   │   │   ├── card_access.py           # EF.CardAccess parsing
+│   │   │   ├── security_info.py         # SecurityInfo / PACEInfo ASN.1
+│   │   │   ├── data_group.py      # Data Group / Elementary File reading
 │   │   │   ├── mrz.py             # MRZ parsing and check-digit validation
 │   │   │   ├── converter.py       # DG tag / name conversion tables
-│   │   │   └── tagconverter.py    # LDS tag name mappings
+│   │   │   └── tag_converter.py   # LDS tag name mappings
 │   │   ├── attacks/               # Security research modules
 │   │   │   ├── brute_force.py
 │   │   │   ├── mac_traceability.py
-│   │   │   ├── aa_traceability.py
+│   │   │   ├── active_authentication_traceability.py
 │   │   │   ├── error_fingerprinting.py
 │   │   │   └── sign_everything.py
 │   │   ├── fingerprint.py         # Full passport vulnerability analysis
 │   │   ├── ca_manager.py          # CSCA certificate directory management
 │   │   ├── der_object_identifier.py # OID registry
-│   │   ├── hex_functions.py       # Hex/bin conversion utilities
+│   │   ├── hex_utils.py           # Hex/bin conversion utilities
+│   │   ├── apdu_history.py        # APDU transaction log and listener registry
 │   │   ├── logger.py              # Callback-based logger (Logger base class)
 │   │   ├── openssl.py             # OpenSSL subprocess wrapper
 │   │   ├── pki.py                 # X.509 / Distinguished Name helpers
@@ -82,13 +87,15 @@ This is a Python monorepo for reading and researching electronic passports (ePas
 │   │   └── utils.py               # Shared helpers (toHexString, toBytes, parseTLV, PACE utils)
 │   └── tests/
 │
-├── ePassportViewer/
+├── epassportviewer/
 │   ├── pyproject.toml
 │   └── src/epassportviewer/
 │       ├── app.py                 # Main window
 │       ├── viewer.py              # View tab
 │       ├── attacks.py             # Attacks tab
 │       ├── custom.py              # Custom APDU / crypto tab
+│       ├── forge.py               # APDU forge tab
+│       ├── traffic.py             # Traffic / replay tab
 │       ├── log.py                 # Log pane
 │       └── menu.py                # Menu bar
 │
@@ -135,21 +142,20 @@ uv run mypy pypassport/src ePassportViewer/src
 
 ### PACE (pace.py)
 
-PACE is **partially implemented**. The following is complete:
+PACE is **fully implemented**. `performPACE()` executes the complete GA1–GA4 flow:
 
-- `genKseed()` — MRZ-based key seed derivation
+- `genKseed()` — MRZ-based key seed derivation (SHA-1 of MRZ_information)
 - `getPACEInfo()` — parse OID and domain parameters from EF.CardAccess / DG14
-- `performPACE()` — sends MSE:Set AT and the first General Authenticate (GA1, encrypted nonce)
-- Brainpool P-256-r1 curve setup, key-agreement helpers (`__getX1`, `__getX2`, `__getSharedSecret`)
+- `performPACE()` — full PACE-ECDH-GM protocol: nonce decryption (GA1), ephemeral key
+  exchanges (GA2/GA3), session key derivation, auth-token verification (GA4), and
+  installation of AES Secure Messaging
+- Brainpool P-256-r1 curve setup, Generic Mapping helpers (`_get_x1`, `_get_x2`, `_get_shared_secret`)
 - AES encrypt/decrypt, CMAC, KDF utilities
 
 The following is **not yet implemented** (raises `NotImplementedError`):
 
-- `getSecurityObject()` — reading EF.CardAccess from the chip
-- `__sendGA4()` — final auth-token exchange
-- Full `performPACE()` loop — nonce decryption, ephemeral key exchange, session key derivation
-
-Do not rely on `performPACE()` producing a working secure channel until these gaps are closed.
+- `getSecurityObject()` — reading EF.CardAccess directly from the chip (callers should
+  read the file themselves and pass the bytes to `getPACEInfo()`)
 
 ---
 
@@ -159,7 +165,7 @@ Do not rely on `performPACE()` producing a working secure channel until these ga
 |----------|-------|
 | ICAO Doc 9303 Part 3 | MRZ format |
 | ICAO Doc 9303 Part 10 | Logical Data Structure, Data Groups |
-| ICAO Doc 9303 Part 11 | BAC, SM, PA, AA (PACE partial) |
+| ICAO Doc 9303 Part 11 | BAC, SM, PA, AA, PACE |
 | ISO/IEC 7816-4 | APDU commands |
 | ISO/IEC 9797-1 | MAC and padding |
 | ISO/IEC 19794-5 | Biometric facial images |

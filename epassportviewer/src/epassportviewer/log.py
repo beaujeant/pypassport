@@ -41,35 +41,6 @@ class LogPane:
         logging.getLogger().setLevel(selected_level)
         logging.info(f"Logging level set to {self.logging_level_var.get()}")
 
-    # Function to open the logs window and periodically refresh the content
-    def open_logs_window_2(self):
-        log_window = tk.Toplevel(self.root)
-        log_window.title("Logs")
-        log_window.geometry("400x300")
-
-        log_text = tk.Text(log_window, wrap="word", state="disabled")
-        log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Function to read and display the contents of the log file
-        def update_log_content():
-            try:
-                with open("ep.logs", "r") as log_file:
-                    content = log_file.read()
-                log_text.config(state="normal")
-                log_text.delete(1.0, tk.END)
-                log_text.insert(tk.END, content)
-                log_text.config(state="disabled")
-            except FileNotFoundError:
-                log_text.config(state="normal")
-                log_text.delete(1.0, tk.END)
-                log_text.insert(tk.END, "Log file not found.")
-                log_text.config(state="disabled")
-
-            # Schedule the update function to run every 1000 ms (1 second)
-            log_window.after(1000, update_log_content)
-
-        update_log_content()  # Initial call to load content
-
     def open_logs_window(self):
         log_window = tk.Toplevel(self.root)
         log_window.title("Logs")
