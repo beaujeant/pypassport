@@ -6,8 +6,18 @@ from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
 from pypassport.iso7816 import APDUCommand
+from pypassport.apdu_history import APDUHistory
 from pypassport.doc9303.data_group import _CLASS_MAP
 from pypassport.doc9303 import converter as dg_converter
+
+
+# Bump whenever the on-disk session layout changes. There is no backward
+# compatibility: a file written by another version simply fails to load.
+SESSION_VERSION = 3
+# Panes that may stash free-form scratch state in a saved session. Each, when
+# present, exposes get_scratch()/load_scratch(); both are optional so a session
+# round-trips cleanly whether or not the pane is built or has state.
+_SCRATCH_PANES = ("comparer", "sequencer")
 
 
 # Row 1: file-system / meta EFs in logical access order
@@ -398,9 +408,15 @@ class ViewerPane:
     # ------------------------------------------------------------------ #
 
     def get_snapshot(self) -> dict:
-        """Return a JSON-serialisable dict of raw EF bytes for save/load."""
-        return {
-            "version": 2,
+        """Return a JSON-serialisable dict capturing the whole research session.
+
+        Beyond the raw EF bytes shown in the View tab this includes the MRZ/CAN
+        credentials, the full APDU history (cleartext + wire bytes + annotations
+        + source + timestamps) and any Comparer/Sequencer scratch, so a session
+        can be reopened later and explored entirely offline.
+        """
+        snapshot = {
+            "version": SESSION_VERSION,
             "mrz": {
                 "doc_number": self.parent.doc_number.get(),
                 "dob": self.parent.dob.get(),
@@ -409,10 +425,27 @@ class ViewerPane:
             },
             "ef_raw": dict(self._ef_raw),
             "mf_ef_raw": dict(self._mf_ef_raw),
+            "apdu_history": APDUHistory.get().to_list(),
         }
 
+        scratch = {}
+        for name in _SCRATCH_PANES:
+            pane = getattr(self.root, f"{name}_pane", None)
+            if pane is not None and hasattr(pane, "get_scratch"):
+                try:
+                    state = pane.get_scratch()
+                except Exception:
+                    logging.exception("Could not capture %s scratch", name)
+                    continue
+                if state:
+                    scratch[name] = state
+        if scratch:
+            snapshot["scratch"] = scratch
+
+        return snapshot
+
     def load_snapshot(self, data: dict) -> None:
-        """Restore viewer state by re-parsing saved raw EF bytes."""
+        """Restore a saved research session (View, Traffic and scratch)."""
         self._validate_snapshot(data)
 
         mrz = data["mrz"]
@@ -435,31 +468,33 @@ class ViewerPane:
 
         mf_ef_raw = {k: v for k, v in data.get("mf_ef_raw", {}).items() if v}
 
-        dg1 = ef_dict.get("DG1")
-        if dg1 is None:
-            raise ValueError("Saved file does not contain DG1 data.")
+        self._reset_ef_tabs()
+        self._ef_raw = {k: v for k, v in data.get("ef_raw", {}).items() if v}
+        self._mf_ef_raw = dict(mf_ef_raw)
 
         for key in self.fields:
             self.fields[key].configure(text="None")
 
-        try:
-            self.fields["type"].configure(text=dg1["5F1F"]["5F03"].replace("<", " ").strip())
-            self.fields["country"].configure(text=dg1["5F1F"]["5F28"].replace("<", " ").strip())
-            name = dg1["5F1F"]["5F5B"].split("<<")
-            self.fields["surname"].configure(text=name[0].replace("<", " ").strip())
-            self.fields["name"].configure(text=name[1].replace("<", " ").strip() if len(name) > 1 else "")
-            self.fields["number"].configure(text=dg1["5F1F"]["5A"].replace("<", " ").strip())
-            self.fields["nationality"].configure(text=dg1["5F1F"]["5F2C"].replace("<", " ").strip())
-            self.fields["dob"].configure(text=dg1["5F1F"]["5F57"].replace("<", " ").strip())
-            self.fields["sex"].configure(text=dg1["5F1F"]["5F35"].replace("<", " ").strip())
-            self.fields["expiry"].configure(text=dg1["5F1F"]["59"].replace("<", " ").strip())
-            self.fields["optional"].configure(text=dg1["5F1F"]["53"].replace("<", " ").strip())
-        except (KeyError, AttributeError) as e:
-            raise ValueError(f"Could not parse DG1 fields from saved data: {e}")
-
-        self._reset_ef_tabs()
-        self._ef_raw = {k: v for k, v in data.get("ef_raw", {}).items() if v}
-        self._mf_ef_raw = dict(mf_ef_raw)
+        # DG1 carries the printed-page fields shown at the top of the View tab.
+        # A session may legitimately have none (e.g. a captured failed handshake
+        # with no readable EFs), so its absence is not fatal — the Traffic and
+        # scratch state below still restore.
+        dg1 = ef_dict.get("DG1")
+        if dg1 is not None:
+            try:
+                self.fields["type"].configure(text=dg1["5F1F"]["5F03"].replace("<", " ").strip())
+                self.fields["country"].configure(text=dg1["5F1F"]["5F28"].replace("<", " ").strip())
+                name = dg1["5F1F"]["5F5B"].split("<<")
+                self.fields["surname"].configure(text=name[0].replace("<", " ").strip())
+                self.fields["name"].configure(text=name[1].replace("<", " ").strip() if len(name) > 1 else "")
+                self.fields["number"].configure(text=dg1["5F1F"]["5A"].replace("<", " ").strip())
+                self.fields["nationality"].configure(text=dg1["5F1F"]["5F2C"].replace("<", " ").strip())
+                self.fields["dob"].configure(text=dg1["5F1F"]["5F57"].replace("<", " ").strip())
+                self.fields["sex"].configure(text=dg1["5F1F"]["5F35"].replace("<", " ").strip())
+                self.fields["expiry"].configure(text=dg1["5F1F"]["59"].replace("<", " ").strip())
+                self.fields["optional"].configure(text=dg1["5F1F"]["53"].replace("<", " ").strip())
+            except (KeyError, AttributeError) as e:
+                raise ValueError(f"Could not parse DG1 fields from saved data: {e}")
 
         dg2 = ef_dict.get("DG2")
         if dg2 is not None:
@@ -500,6 +535,24 @@ class ViewerPane:
         if "DG1" in self._ef_contents and self._ef_contents["DG1"] is not None:
             self._select_ef("DG1")
 
+        # Restore the APDU history and tell the Traffic tab to repaint. Imported
+        # transactions are relabelled source="imported" so they're distinct from
+        # anything captured live in this run, and they replay into Forge offline.
+        APDUHistory.get().from_list(data.get("apdu_history", []), source="imported")
+        traffic_pane = getattr(self.root, "traffic_pane", None)
+        if traffic_pane is not None:
+            traffic_pane.reload()
+
+        # Restore per-pane scratch (Comparer/Sequencer) when both the saved
+        # state and a pane able to consume it are present.
+        for name, state in data.get("scratch", {}).items():
+            pane = getattr(self.root, f"{name}_pane", None)
+            if pane is not None and hasattr(pane, "load_scratch"):
+                try:
+                    pane.load_scratch(state)
+                except Exception:
+                    logging.exception("Could not restore %s scratch", name)
+
     def _display_photo(self, img_bytes: bytes) -> None:
         image = Image.open(io.BytesIO(img_bytes))
         max_width = 200
@@ -513,10 +566,12 @@ class ViewerPane:
     @classmethod
     def _validate_snapshot(cls, data: dict) -> None:
         if not isinstance(data, dict):
-            raise ValueError("Snapshot must be a JSON object.")
-        if data.get("version") != 2:
-            raise ValueError(f"Unsupported snapshot version: {data.get('version')!r}")
+            raise ValueError("Session must be a JSON object.")
+        if data.get("version") != SESSION_VERSION:
+            raise ValueError(f"Unsupported session version: {data.get('version')!r}")
         if not isinstance(data.get("mrz"), dict):
-            raise ValueError("Snapshot missing or invalid 'mrz' section.")
+            raise ValueError("Session missing or invalid 'mrz' section.")
         if not isinstance(data.get("ef_raw"), dict):
-            raise ValueError("Snapshot missing or invalid 'ef_raw' section.")
+            raise ValueError("Session missing or invalid 'ef_raw' section.")
+        if not isinstance(data.get("apdu_history", []), list):
+            raise ValueError("Session has an invalid 'apdu_history' section.")

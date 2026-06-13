@@ -133,6 +133,7 @@ class TrafficPane:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
+        self.root.traffic_pane = self
         self._history = APDUHistory.get()
         self._history.add_listener(self._on_new_transaction)
 
@@ -275,6 +276,17 @@ class TrafficPane:
         for idx, tx in enumerate(self._history):
             self._append_transaction(idx, tx)
         self._clear_dump()
+
+    def reload(self):
+        """Redraw the list after the history was replaced wholesale.
+
+        Loading a session swaps the singleton's entries out from under us
+        without firing the per-transaction listener, so the Traffic tab has to
+        be told to repaint. Also reset the source filter to 'All sources' so
+        freshly imported rows aren't hidden by a stale selection.
+        """
+        self._source_filter.set(_SOURCE_ANY)
+        self._rebuild_tree()
 
     def _on_new_transaction(self, tx):
         # Called from the pypassport thread — schedule on the Tk main thread.

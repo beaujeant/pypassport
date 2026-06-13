@@ -181,6 +181,31 @@ class ComparerPane:
         self._set_text("a", b, cap_b)
         self._set_text("b", a, cap_a)
 
+    # ── session scratch (save / restore) ──────────────────────────────────────
+    def get_scratch(self):
+        """Capture the two blob editors for a saved session.
+
+        Returns None when both boxes are empty so an untouched Comparer adds
+        nothing to the session file.
+        """
+        a = self._get_text("a").strip()
+        b = self._get_text("b").strip()
+        if not a and not b:
+            return None
+        return {
+            "a": a,
+            "b": b,
+            "caption_a": self._caption_a.get(),
+            "caption_b": self._caption_b.get(),
+        }
+
+    def load_scratch(self, state):
+        """Restore the two blob editors from saved-session scratch."""
+        if not isinstance(state, dict):
+            return
+        self._set_text("a", state.get("a", ""), state.get("caption_a", ""))
+        self._set_text("b", state.get("b", ""), state.get("caption_b", ""))
+
     # ── external entry points ─────────────────────────────────────────────────
     def load_transactions(self, txs):
         """Load one or more APDU transactions (Traffic / Forge → Comparer).

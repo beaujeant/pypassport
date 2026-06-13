@@ -215,6 +215,42 @@ class SequencerPane:
             stats["total"], stats["unique"], stats["duplicates"], stats["overall_entropy"],
         )
 
+    # ── session scratch (save / restore) ──────────────────────────────────────
+    def get_scratch(self):
+        """Capture the collected nonces and N for a saved session.
+
+        Returns None when nothing has been collected so an unused Sequencer
+        adds nothing to the session file.
+        """
+        if not self._challenges:
+            return None
+        return {
+            "n": self._n_var.get(),
+            "challenges": [c.hex().upper() for c in self._challenges],
+        }
+
+    def load_scratch(self, state):
+        """Restore collected nonces from saved-session scratch and re-report."""
+        if not isinstance(state, dict):
+            return
+        if state.get("n"):
+            self._n_var.set(str(state["n"]))
+        challenges = []
+        for hex_str in state.get("challenges", []):
+            try:
+                challenges.append(bytes.fromhex(hex_str))
+            except (ValueError, TypeError):
+                continue
+        self._challenges = challenges
+        if not challenges:
+            return
+        stats = randomness_stats(challenges)
+        self._set_report(format_report(stats))
+        self._save_btn.configure(state="normal")
+        self._status.set(
+            f"Restored — {stats['total']} nonces, {stats['duplicates']} duplicate(s)."
+        )
+
     # ── save ────────────────────────────────────────────────────────────────────
     def _save(self):
         if not self._challenges:

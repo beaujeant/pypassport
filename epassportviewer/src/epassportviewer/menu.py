@@ -10,8 +10,8 @@ class MenuBar:
         self.root.menu_bar_instance = self
 
         file_menu = tk.Menu(self.root.menu_bar, tearoff=0)
-        file_menu.add_command(label="Open", command=self.open_file)
-        file_menu.add_command(label="Save", command=self.save_file)
+        file_menu.add_command(label="Open session", command=self.open_file)
+        file_menu.add_command(label="Save session", command=self.save_file)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
@@ -39,8 +39,8 @@ class MenuBar:
 
     def open_file(self):
         file_path = filedialog.askopenfilename(
-            filetypes=[("ePassport data", "*.epd"), ("All files", "*.*")],
-            title="Open passport data",
+            filetypes=[("ePassport session", "*.eps"), ("All files", "*.*")],
+            title="Open session",
         )
         if not file_path:
             return
@@ -54,20 +54,25 @@ class MenuBar:
         try:
             self.parent.viewer_pane.load_snapshot(data)
         except ValueError as e:
-            messagebox.showerror("Open failed", f"Invalid passport data file:\n{e}")
+            messagebox.showerror("Open failed", f"Invalid session file:\n{e}")
         except Exception as e:
-            messagebox.showerror("Open failed", f"Could not restore passport data:\n{e}")
+            messagebox.showerror("Open failed", f"Could not restore session:\n{e}")
 
     def save_file(self):
         viewer = self.parent.viewer_pane
         snapshot = viewer.get_snapshot()
-        if not snapshot.get("ef_raw", {}).get("DG1"):
-            messagebox.showwarning("Nothing to save", "Read a passport first before saving.")
+        # Worth saving if anything was captured — a passport read or any APDU
+        # traffic. Only an entirely empty session is rejected.
+        if not snapshot.get("ef_raw") and not snapshot.get("apdu_history"):
+            messagebox.showwarning(
+                "Nothing to save",
+                "Read a passport or capture some APDU traffic before saving a session.",
+            )
             return
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".epd",
-            filetypes=[("ePassport data", "*.epd"), ("All files", "*.*")],
-            title="Save passport data",
+            defaultextension=".eps",
+            filetypes=[("ePassport session", "*.eps"), ("All files", "*.*")],
+            title="Save session",
         )
         if not file_path:
             return

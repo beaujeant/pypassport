@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, fields as dataclass_fields
 from datetime import datetime
 from typing import List, Callable, Optional
 
@@ -60,6 +60,50 @@ class APDUHistory:
 
     def clear(self) -> None:
         self._entries.clear()
+
+    def to_list(self) -> List[dict]:
+        """Serialise every recorded transaction to JSON-friendly dicts.
+
+        Each transaction is dumped via ``dataclasses.asdict`` with its
+        ``timestamp`` rendered as an ISO-8601 string so the result round-trips
+        through ``json.dump`` and back through :meth:`from_list`.
+        """
+        out: List[dict] = []
+        for tx in self._entries:
+            d = asdict(tx)
+            d["timestamp"] = tx.timestamp.isoformat()
+            out.append(d)
+        return out
+
+    def from_list(self, items, source: Optional[str] = "imported") -> None:
+        """Replace the history with transactions rebuilt from :meth:`to_list`.
+
+        ``timestamp`` strings are parsed back into ``datetime`` objects; an
+        absent or malformed timestamp falls back to now. Unknown keys are
+        ignored so a record saved by a newer format never breaks the load. When
+        ``source`` is given (the default ``"imported"``) every restored
+        transaction is relabelled with it, marking them as not-from-this-card;
+        pass ``source=None`` to preserve each record's saved source.
+        """
+        valid = {f.name for f in dataclass_fields(APDUTransaction)}
+        entries: List[APDUTransaction] = []
+        for item in items:
+            kwargs = {k: v for k, v in item.items() if k in valid}
+            ts = kwargs.get("timestamp")
+            if isinstance(ts, str):
+                try:
+                    kwargs["timestamp"] = datetime.fromisoformat(ts)
+                except ValueError:
+                    kwargs["timestamp"] = datetime.now()
+            elif not isinstance(ts, datetime):
+                kwargs.pop("timestamp", None)
+            if source is not None:
+                kwargs["source"] = source
+            try:
+                entries.append(APDUTransaction(**kwargs))
+            except TypeError:
+                logging.warning("Skipping malformed APDU transaction record: %r", item)
+        self._entries = entries
 
     def add_listener(self, cb: Callable) -> None:
         self._listeners.append(cb)
