@@ -16,7 +16,7 @@ from .hexdump import HexDumpView, build_legend
 from .apdu_format import parse_apdu, assemble_apdu
 
 
-# Common request templates, mirroring the buttons under Custom > Requests.
+# Common request templates for frequently-issued ISO 7816-4 commands.
 # Selecting one fills the request header fields below; any field a preset
 # omits falls back to _PRESET_DEFAULTS.
 _PRESET_PLACEHOLDER = "Common requests…"

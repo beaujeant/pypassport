@@ -255,7 +255,7 @@ class ViewerPane:
             logging.info(f"Access control: {result.mechanism}")
             # Publish this session's iso7816 (carrying the BAC/PACE Secure
             # Messaging context and its live SSC counter) as the shared one so
-            # the Forge and Custom tabs operate on the same channel.
+            # the Forge, Sequencer and other tabs operate on the same channel.
             self.parent.iso7816 = ep.iso7816
         except EPassportException as e:
             logging.error(f"Could not initialize ePassport session: {e}")
