@@ -1,3 +1,4 @@
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -6,63 +7,75 @@ class MenuBar:
     def __init__(self, main):
         self.parent = main
         self.root = main.root
+        self.root.menu_bar_instance = self
+
         file_menu = tk.Menu(self.root.menu_bar, tearoff=0)
         file_menu.add_command(label="Open", command=self.open_file)
         file_menu.add_command(label="Save", command=self.save_file)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
-        configure_menu = tk.Menu(self.root.menu_bar, tearoff=0)
-        history_menu = tk.Menu(configure_menu, tearoff=0)
+        self.configure_menu = tk.Menu(self.root.menu_bar, tearoff=0)
+        self.history_menu = tk.Menu(self.configure_menu, tearoff=0)
+        self._populate_history_menu()
 
-        for line in main.history:
-            line = line.strip()
-            history_menu.add_command(label=line, command=lambda mrz=line: self.setMRZ(mrz))
-
-        if main.history:
-            self.setMRZ(main.history[-1])
-
-        configure_menu.add_cascade(label="History", menu=history_menu)
-        configure_menu.add_command(label="Settings", command=self.open_settings)
+        self.configure_menu.add_cascade(label="History", menu=self.history_menu)
+        self.configure_menu.add_command(label="Settings", command=self.open_settings)
 
         help_menu = tk.Menu(self.root.menu_bar, tearoff=0)
         help_menu.add_command(label="About", command=self.show_about)
 
         self.root.menu_bar.add_cascade(label="File", menu=file_menu)
-        self.root.menu_bar.add_cascade(label="Configure", menu=configure_menu)
+        self.root.menu_bar.add_cascade(label="Configure", menu=self.configure_menu)
         self.root.menu_bar.add_cascade(label="Help", menu=help_menu)
+
+    def _populate_history_menu(self):
+        self.history_menu.delete(0, "end")
+        for entry in self.parent.history:
+            self.history_menu.add_command(label=entry, command=lambda mrz=entry: self.setMRZ(mrz))
+
+    def rebuild_history_menu(self):
+        self._populate_history_menu()
 
     def open_file(self):
         file_path = filedialog.askopenfilename(
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            title="Open MRZ file",
+            filetypes=[("ePassport data", "*.epd"), ("All files", "*.*")],
+            title="Open passport data",
         )
-        if file_path:
-            try:
-                with open(file_path, "r") as f:
-                    content = f.read().strip()
-                self.setMRZ(content)
-            except Exception as e:
-                messagebox.showerror("Open failed", str(e))
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showerror("Open failed", f"Could not read file:\n{e}")
+            return
+        try:
+            self.parent.viewer_pane.load_snapshot(data)
+        except ValueError as e:
+            messagebox.showerror("Open failed", f"Invalid passport data file:\n{e}")
+        except Exception as e:
+            messagebox.showerror("Open failed", f"Could not restore passport data:\n{e}")
 
     def save_file(self):
-        doc = self.parent.doc_number.get()
-        dob = self.parent.dob.get()
-        expiry = self.parent.expiry.get()
-        if not (doc and dob and expiry):
-            messagebox.showwarning("Nothing to save", "Fill in the MRZ fields before saving.")
+        viewer = self.parent.viewer_pane
+        snapshot = viewer.get_snapshot()
+        if not snapshot.get("ef_raw", {}).get("DG1"):
+            messagebox.showwarning("Nothing to save", "Read a passport first before saving.")
             return
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            title="Save MRZ",
+            defaultextension=".epd",
+            filetypes=[("ePassport data", "*.epd"), ("All files", "*.*")],
+            title="Save passport data",
         )
-        if file_path:
-            try:
-                with open(file_path, "w") as f:
-                    f.write(f"{doc} {dob} {expiry}\n")
-            except Exception as e:
-                messagebox.showerror("Save failed", str(e))
+        if not file_path:
+            return
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+        except OSError as e:
+            messagebox.showerror("Save failed", str(e))
 
     def open_settings(self):
         messagebox.showinfo("Settings", "No configurable settings at this time.")

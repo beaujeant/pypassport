@@ -309,7 +309,12 @@ class EPassport(dict):
 
     def readPassport(self):
         """
-        Read every file in the passport (COM, DG1..DG15, SOD).
+        Read every file in the passport (COM, DG1..DG16, SOD).
+
+        Reads EFs in two passes:
+        1. All data groups declared in EF.COM (the authoritative list).
+        2. Any DG1–DG16 not listed in COM, probed individually — some chips
+           omit entries from COM for optional or access-controlled groups.
 
         @return: This EPassport instance (dict populated with all DGs).
         """
@@ -317,6 +322,17 @@ class EPassport(dict):
         self.readCom()
         self.readDataGroups()
         self.readSod()
+
+        com_tags = {tag.upper() for tag in self["Common"]["5C"]}
+        for i in range(1, 17):
+            dg_name = f"DG{i}"
+            tag = converter.toTAG(dg_name)
+            if tag.upper() not in com_tags:
+                try:
+                    self[dg_name]
+                except Exception:
+                    self.iso7816.rstConnection()
+
         return self
 
     # Dict overwriting
@@ -324,9 +340,10 @@ class EPassport(dict):
         """
         Return the data group object for the given tag, reading it if necessary.
 
-        If a 'Security Status Not Satisfied' error is returned and secure
-        messaging is not yet active, BAC is performed automatically and the
-        read is retried.
+        If a 'Security Status Not Satisfied' error (SW 6982) is returned and
+        secure messaging is not yet active, BAC is performed automatically and
+        the read is retried.  Once SM is established it is never bypassed —
+        per ICAO 9303, all post-BAC/PACE communication must remain under SM.
 
         @param tag: A tag string such as "DG1", "Common", "SecurityData", etc.
         @return: The parsed data group object, or None if it could not be read.
@@ -342,6 +359,7 @@ class EPassport(dict):
             try:
                 dg = readElementaryFile(tag, self.iso7816)
             except ISO7816Exception as e:
+                sw_str = f"SW={e.sw1:02X}{e.sw2:02X}" if e.sw1 is not None else ""
                 if not self.iso7816.ciphering and e.sw1 == 0x69 and e.sw2 == 0x82:
                     # BAC failures are converted to EPassportException by
                     # doBasicAccessControl and intentionally propagate so the
@@ -350,16 +368,17 @@ class EPassport(dict):
                     try:
                         dg = readElementaryFile(tag, self.iso7816)
                     except ISO7816Exception as e2:
-                        logging.error(f"Could not read the DG after BAC ({e2.data})")
+                        sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
+                        logging.error(f"Could not read the DG after BAC: chip returned {sw2_str} ({e2.data})")
                         dg = None
                 else:
-                    logging.error(f"Could not read the DG ({e.data})")
+                    logging.error(f"Could not read the DG: chip returned {sw_str} ({e.data})")
                     dg = None
             except EPassportException:
                 raise
             except Exception as msg:
                 logging.exception(msg)
-            if dg:
+            if dg is not None:
                 self.__setitem__(dg.tag, dg)
                 return dg
             else:

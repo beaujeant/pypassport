@@ -1,6 +1,8 @@
 import logging
 from pypassport import reader
-from pypassport.utils import toHexString, toBytes, toList
+from pypassport.apdu_history import APDUHistory, APDUTransaction
+from pypassport.interceptor import Interceptor
+from pypassport.utils import toHexString, toList
 
 
 class APDUCommand():
@@ -183,11 +185,22 @@ class APDUResponse():
         self.data = data
         self.sw1 = sw1
         self.sw2 = sw2
+        self.status = self.describe(sw1, sw2)
 
-        try:
-            self.status = self.Status[sw1][sw2]
-        except KeyError:
-            self.status = "Unknown error"
+    @classmethod
+    def describe(cls, sw1, sw2):
+        """Translate a status word into a human-readable string.
+
+        Handles both shapes of the Status table: a dict keyed by sw2, and a
+        single string that covers every sw2 for that sw1. Returns
+        "Unknown error" when the status word is not listed.
+        """
+        entry = cls.Status.get(sw1)
+        if isinstance(entry, dict):
+            return entry.get(sw2, "Unknown error")
+        if isinstance(entry, str):
+            return entry
+        return "Unknown error"
 
     def raw(self):
         return bytes(list(self.data) + [self.sw1] + [self.sw2])
@@ -207,18 +220,31 @@ class ISO7816Exception(Exception):
         self.sw2 = sw2
 
 
+class APDUDroppedException(ISO7816Exception):
+    """Raised when the interceptor drops a command APDU before it is sent.
+
+    The card is never contacted and Secure Messaging state (the SSC) is left
+    untouched, so subsequent transmits stay in sync with the chip.
+    """
+
+    def __init__(self, apdu):
+        super().__init__(f"APDU dropped by interceptor: {repr(apdu)}")
+        self.apdu = apdu
+
+
 class ISO7816():
 
     def __init__(self, reader):
         self._reader = reader
         self.ciphering = False
 
-    def transmit(self, toSend, logMsg=None, full=False):
+    def transmit(self, toSend, logMsg=None, full=False, source="tool"):
         """
         @param toSend: The command to transmit.
         @type toSend: An APDUCommand object.
         @param logMsg: A log message associated to the transmit.
         @type logMsg: A string.
+        @param source: Origin label recorded in APDU history ("tool" or "imported").
         @return: The result field of the responseAPDU object
 
         The P1 and P2 fields are checked after each transmit.
@@ -227,23 +253,85 @@ class ISO7816():
         The ISO7816Exception is composed of three fields: ('error message', p1, p2)
         """
 
+        # Capture cleartext command before any SM wrapping
+        cleartext_cmd = toSend
+
         log_enc = ""
         if logMsg:
             logging.debug(f"Transmit APDU: {logMsg}")
 
-        if self.ciphering:
+        # Intercept the cleartext command BEFORE Secure Messaging wrapping, so
+        # edits change exactly what the chip authenticates/decrypts. A None
+        # result means "drop": short-circuit without touching the card and
+        # without advancing the SSC (protect() is never called), keeping the
+        # secure channel in sync for later traffic. The history then records the
+        # command as the chip actually received it (post-edit).
+        intercepted = Interceptor().intercept(cleartext_cmd)
+        if intercepted is None:
+            logging.debug(f"APDU dropped by interceptor: {repr(cleartext_cmd)}")
+            APDUHistory.get().record(APDUTransaction(
+                request_cla=cleartext_cmd.cla,
+                request_ins=cleartext_cmd.ins,
+                request_p1=cleartext_cmd.p1,
+                request_p2=cleartext_cmd.p2,
+                request_lc=cleartext_cmd.lc,
+                request_data=cleartext_cmd.data,
+                request_le=cleartext_cmd.le,
+                response_data="",
+                response_sw1=0,
+                response_sw2=0,
+                sm_active=bool(self.ciphering),
+                sm_type="",
+                source=source,
+                comment="Dropped by interceptor",
+            ))
+            raise APDUDroppedException(cleartext_cmd)
+        toSend = cleartext_cmd = intercepted
+
+        sm_active = bool(self.ciphering)
+        sm_type = ""
+        if sm_active:
+            cls_name = type(self.ciphering).__name__
+            sm_type = "AES" if "Aes" in cls_name else "3DES"
             log_enc = "Encrypted "
             toSend = self.ciphering.protect(toSend)
 
         logging.debug(f"> {log_enc}{repr(toSend)}")
 
-        data, sw1, sw2 = self._reader.transmit(toSend.raw())
-        response = APDUResponse(data, sw1, sw2)
+        # Wire request: the bytes actually transmitted (SM-protected when SM is
+        # on, otherwise identical to the cleartext command).
+        wire_request_hex = toHexString(toSend.raw())
 
+        data, sw1, sw2 = self._reader.transmit(toSend.raw())
+
+        # Wire response: the raw data + SW exactly as received, captured before
+        # unprotect so the protected DOs are preserved in the history.
+        wire_response = APDUResponse(data, sw1, sw2)
+        wire_response_hex = toHexString(wire_response.raw())
+
+        response = wire_response
         if self.ciphering:
             response = self.ciphering.unprotect(response)
 
         logging.debug(f"< {log_enc}{repr(response)})")
+
+        APDUHistory.get().record(APDUTransaction(
+            request_cla=cleartext_cmd.cla,
+            request_ins=cleartext_cmd.ins,
+            request_p1=cleartext_cmd.p1,
+            request_p2=cleartext_cmd.p2,
+            request_lc=cleartext_cmd.lc,
+            request_data=cleartext_cmd.data,
+            request_le=cleartext_cmd.le,
+            response_data=toHexString(response.data) if response.data else "",
+            response_sw1=response.sw1,
+            response_sw2=response.sw2,
+            sm_active=sm_active,
+            sm_type=sm_type,
+            source=source,
+            wire_request_hex=wire_request_hex,
+            wire_response_hex=wire_response_hex,
+        ))
 
         if full:
             return response

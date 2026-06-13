@@ -6,6 +6,8 @@ from PIL import Image, ImageTk
 from tkinter import messagebox
 from pypassport.epassport import EPassport, EPassportException
 from pypassport.iso7816 import APDUCommand
+from pypassport.doc9303.data_group import _CLASS_MAP
+from pypassport.doc9303 import converter as dg_converter
 
 
 # Row 1: file-system / meta EFs in logical access order
@@ -108,11 +110,15 @@ class ViewerPane:
 
         self._ef_buttons = {}
         self._ef_contents = {}   # ef_name -> str content or None
+        self._ef_inaccessible = set()  # EFs advertised in EF.COM but unreadable
         self._selected_ef = None
+        self._photo_bytes = None  # raw image bytes from DG2, kept for Save
 
         style = ttk.Style()
         style.configure("EFTab.TButton", font=("", 8), padding=(4, 2))
         style.configure("EFTabActive.TButton", font=("", 8, "bold"), padding=(4, 2))
+        style.configure("EFTabInaccessible.TButton", font=("", 8, "italic"), padding=(4, 2))
+        style.configure("EFTabInaccessibleActive.TButton", font=("", 8, "bold italic"), padding=(4, 2))
 
         for row_index, row_efs in enumerate((_ROW1, _ROW2, _ROW3)):
             row_frame = ttk.Frame(tab_bar)
@@ -149,22 +155,35 @@ class ViewerPane:
         self._ef_text.configure(state="disabled")
         for name, btn in self._ef_buttons.items():
             if self._ef_contents.get(name) is not None:
-                btn.configure(style="EFTabActive.TButton" if name == ef else "EFTab.TButton")
+                inaccessible = name in self._ef_inaccessible
+                if name == ef:
+                    btn.configure(style="EFTabInaccessibleActive.TButton" if inaccessible else "EFTabActive.TButton")
+                else:
+                    btn.configure(style="EFTabInaccessible.TButton" if inaccessible else "EFTab.TButton")
 
     def _reset_ef_tabs(self):
         self._selected_ef = None
         self._ef_contents = {ef: None for ef in _EF_NAMES}
+        self._ef_inaccessible = set()
+        self._photo_bytes = None
+        self._ef_raw = {}
+        self._mf_ef_raw = {}
         for btn in self._ef_buttons.values():
             btn.configure(state="disabled", style="EFTab.TButton")
         self._ef_text.configure(state="normal")
         self._ef_text.delete("1.0", "end")
         self._ef_text.configure(state="disabled")
 
-    def _set_ef_content(self, ef, content):
+    def _set_ef_content(self, ef, content, inaccessible=False):
         self._ef_contents[ef] = content
+        if inaccessible:
+            self._ef_inaccessible.add(ef)
+        else:
+            self._ef_inaccessible.discard(ef)
         btn = self._ef_buttons[ef]
         if content is not None:
-            btn.configure(state="normal", style="EFTab.TButton")
+            style = "EFTabInaccessible.TButton" if inaccessible else "EFTab.TButton"
+            btn.configure(state="normal", style=style)
             if self._selected_ef == ef:
                 self._select_ef(ef)
         else:
@@ -234,6 +253,10 @@ class ViewerPane:
             }
             result = ep.open(can=can)
             logging.info(f"Access control: {result.mechanism}")
+            # Publish this session's iso7816 (carrying the BAC/PACE Secure
+            # Messaging context and its live SSC counter) as the shared one so
+            # the Forge and Custom tabs operate on the same channel.
+            self.parent.iso7816 = ep.iso7816
         except EPassportException as e:
             logging.error(f"Could not initialize ePassport session: {e}")
             messagebox.showerror("Passport read failed", str(e))
@@ -287,21 +310,20 @@ class ViewerPane:
             )
             return
 
+        if doc_number and dob and expiry:
+            self.parent.add_to_history(doc_number, dob, expiry)
+
+        # Populate EF tabs
+        self._reset_ef_tabs()
+        self._mf_ef_raw = {k: v for k, v in mf_ef_raw.items() if v is not None}
+        self._ef_raw["DG1"] = dg1.file.hex()
+
         try:
             dg2 = ep["DG2"]
             if dg2 is None:
                 raise EPassportException("DG2 could not be read from the chip.")
-            image_stream = io.BytesIO(dg2["7F61"][0]["7F60"]["5F2E"])
-            image = Image.open(image_stream)
-
-            max_width = 200
-            width, height = image.size
-            new_height = int(max_width * height / width)
-            image = image.resize((max_width, new_height), Image.LANCZOS)
-
-            tk_image = ImageTk.PhotoImage(image)
-            self.passport_photo.configure(image=tk_image, width=max_width, height=new_height)
-            self.passport_photo.image = tk_image
+            self._photo_bytes = bytes(dg2["7F61"][0]["7F60"]["5F2E"])
+            self._display_photo(self._photo_bytes)
         except EPassportException as e:
             logging.error(f"Could not read DG2: {e}")
             messagebox.showerror("Passport photo unavailable", str(e))
@@ -311,9 +333,6 @@ class ViewerPane:
                 "Passport photo unavailable",
                 f"Could not load the passport photo: {e}",
             )
-
-        # Populate EF tabs
-        self._reset_ef_tabs()
         for ef in _EF_NAMES:
             # DG1 is guaranteed readable — use the already-parsed local variable
             # so a failed re-read attempt never clears the tab.
@@ -337,6 +356,8 @@ class ViewerPane:
                 logging.warning(f"{ef} returned None (chip read or parsing failed)")
                 self._set_ef_content(ef, None)
                 continue
+            if hasattr(data, "file"):
+                self._ef_raw[ef] = data.file.hex()
             try:
                 content = self._ef_to_str(ef, data)
             except Exception as e:
@@ -361,12 +382,141 @@ class ViewerPane:
             if ef_name in self._ef_buttons and self._ef_contents.get(ef_name) is None:
                 self._set_ef_content(
                     ef_name,
-                    f"({ef_name} is listed in EF.COM but could not be read — "
+                    f"{ef_name} is listed in EF.COM but could not be read — "
                     f"the chip may require Active Authentication or another "
-                    f"access condition before granting access.)",
+                    f"access condition before granting access.",
+                    inaccessible=True,
                 )
 
         self._select_ef("DG1")
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)
+
+    # ------------------------------------------------------------------ #
+    # Snapshot: save / restore all read data without touching the chip     #
+    # ------------------------------------------------------------------ #
+
+    def get_snapshot(self) -> dict:
+        """Return a JSON-serialisable dict of raw EF bytes for save/load."""
+        return {
+            "version": 2,
+            "mrz": {
+                "doc_number": self.parent.doc_number.get(),
+                "dob": self.parent.dob.get(),
+                "expiry": self.parent.expiry.get(),
+                "can": self.parent.can.get(),
+            },
+            "ef_raw": dict(self._ef_raw),
+            "mf_ef_raw": dict(self._mf_ef_raw),
+        }
+
+    def load_snapshot(self, data: dict) -> None:
+        """Restore viewer state by re-parsing saved raw EF bytes."""
+        self._validate_snapshot(data)
+
+        mrz = data["mrz"]
+        self.parent.doc_number.set(str(mrz.get("doc_number", "")))
+        self.parent.dob.set(str(mrz.get("dob", "")))
+        self.parent.expiry.set(str(mrz.get("expiry", "")))
+        self.parent.can.set(str(mrz.get("can", "")))
+
+        ef_dict = {}
+        for ef_name, hex_str in data.get("ef_raw", {}).items():
+            if not hex_str:
+                continue
+            try:
+                raw = bytes.fromhex(hex_str)
+                tag = dg_converter.toTAG(ef_name)
+                cls_name = dg_converter.toClass(tag)
+                ef_dict[ef_name] = _CLASS_MAP[cls_name](file=raw)
+            except Exception as e:
+                logging.warning(f"Could not parse {ef_name} from saved bytes: {e}")
+
+        mf_ef_raw = {k: v for k, v in data.get("mf_ef_raw", {}).items() if v}
+
+        dg1 = ef_dict.get("DG1")
+        if dg1 is None:
+            raise ValueError("Saved file does not contain DG1 data.")
+
+        for key in self.fields:
+            self.fields[key].configure(text="None")
+
+        try:
+            self.fields["type"].configure(text=dg1["5F1F"]["5F03"].replace("<", " ").strip())
+            self.fields["country"].configure(text=dg1["5F1F"]["5F28"].replace("<", " ").strip())
+            name = dg1["5F1F"]["5F5B"].split("<<")
+            self.fields["surname"].configure(text=name[0].replace("<", " ").strip())
+            self.fields["name"].configure(text=name[1].replace("<", " ").strip() if len(name) > 1 else "")
+            self.fields["number"].configure(text=dg1["5F1F"]["5A"].replace("<", " ").strip())
+            self.fields["nationality"].configure(text=dg1["5F1F"]["5F2C"].replace("<", " ").strip())
+            self.fields["dob"].configure(text=dg1["5F1F"]["5F57"].replace("<", " ").strip())
+            self.fields["sex"].configure(text=dg1["5F1F"]["5F35"].replace("<", " ").strip())
+            self.fields["expiry"].configure(text=dg1["5F1F"]["59"].replace("<", " ").strip())
+            self.fields["optional"].configure(text=dg1["5F1F"]["53"].replace("<", " ").strip())
+        except (KeyError, AttributeError) as e:
+            raise ValueError(f"Could not parse DG1 fields from saved data: {e}")
+
+        self._reset_ef_tabs()
+        self._ef_raw = {k: v for k, v in data.get("ef_raw", {}).items() if v}
+        self._mf_ef_raw = dict(mf_ef_raw)
+
+        dg2 = ef_dict.get("DG2")
+        if dg2 is not None:
+            try:
+                self._photo_bytes = bytes(dg2["7F61"][0]["7F60"]["5F2E"])
+                self._display_photo(self._photo_bytes)
+            except Exception as e:
+                logging.warning(f"Could not restore passport photo: {e}")
+
+        for ef in _EF_NAMES:
+            if ef in mf_ef_raw:
+                self._set_ef_content(ef, mf_ef_raw[ef])
+                continue
+            ef_obj = ef_dict.get(ef)
+            if ef_obj is not None:
+                self._set_ef_content(ef, self._ef_to_str(ef, ef_obj))
+
+        try:
+            com = ef_dict.get("COM")
+            advertised_tags = com.get("5C", []) if com else []
+        except Exception:
+            advertised_tags = []
+        for tag_hex in advertised_tags:
+            try:
+                from pypassport.doc9303.converter import toDG
+                ef_name = toDG(tag_hex)
+            except Exception:
+                continue
+            if ef_name in self._ef_buttons and self._ef_contents.get(ef_name) is None:
+                self._set_ef_content(
+                    ef_name,
+                    f"{ef_name} is listed in EF.COM but could not be read — "
+                    f"the chip may require Active Authentication or another "
+                    f"access condition before granting access.",
+                    inaccessible=True,
+                )
+
+        if "DG1" in self._ef_contents and self._ef_contents["DG1"] is not None:
+            self._select_ef("DG1")
+
+    def _display_photo(self, img_bytes: bytes) -> None:
+        image = Image.open(io.BytesIO(img_bytes))
+        max_width = 200
+        width, height = image.size
+        new_height = int(max_width * height / width)
+        image = image.resize((max_width, new_height), Image.LANCZOS)
+        tk_image = ImageTk.PhotoImage(image)
+        self.passport_photo.configure(image=tk_image, width=max_width, height=new_height, text="")
+        self.passport_photo.image = tk_image
+
+    @classmethod
+    def _validate_snapshot(cls, data: dict) -> None:
+        if not isinstance(data, dict):
+            raise ValueError("Snapshot must be a JSON object.")
+        if data.get("version") != 2:
+            raise ValueError(f"Unsupported snapshot version: {data.get('version')!r}")
+        if not isinstance(data.get("mrz"), dict):
+            raise ValueError("Snapshot missing or invalid 'mrz' section.")
+        if not isinstance(data.get("ef_raw"), dict):
+            raise ValueError("Snapshot missing or invalid 'ef_raw' section.")

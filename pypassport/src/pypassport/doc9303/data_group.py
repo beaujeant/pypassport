@@ -201,10 +201,11 @@ tagToName = {
 def readElementaryFile(tag, iso7816, maxSize=0xDF):
     try:
         tag = converter.toTAG(tag)
-        logging.info(f"Reading {tag}...")
+        fid = converter.toFID(tag)
+        logging.info(f"Reading {tag} (FID {fid})...")
         offset = 0
 
-        iso7816.selectElementaryFile(converter.toFID(tag))
+        iso7816.selectElementaryFile(fid)
 
         # Read DG header (to know the body size)
         headerRaw = iso7816.readBinary(offset, 4)
@@ -234,7 +235,9 @@ def readElementaryFile(tag, iso7816, maxSize=0xDF):
             raise ElementaryFileException(f"Unknown class for tag {tag}: {class_name}")
         return _CLASS_MAP[class_name](file=file)
     except ISO7816Exception as e:
-        raise e
+        sw_str = f"SW={e.sw1:02X}{e.sw2:02X}" if e.sw1 is not None else ""
+        logging.debug(f"ISO7816 error reading tag {tag} (FID {fid}): {sw_str} — {e.data}")
+        raise
 
 
 class ElementaryFileException(Exception):
@@ -374,7 +377,7 @@ class ElementaryFile(dict):
                     extra = f" ({tagToName[key]})"
                 except KeyError:
                     extra = ""
-                output += f"{nl}{tab}[{key}]{extra}: "
+                output += f"{nl if output else ''}{tab}[{key}]{extra}: "
                 output = self.print_any(value, output, level+1)
         if isinstance(node, list):
             index = 0
@@ -386,7 +389,7 @@ class ElementaryFile(dict):
                         name_hint = f" ({tagToName[value.upper()]})"
                     except KeyError:
                         pass
-                output += f"{nl}{tab}[{index}]{name_hint}: "
+                output += f"{nl if output else ''}{tab}[{index}]{name_hint}: "
                 output = self.print_any(value, output, level+1)
                 index += 1
         if isinstance(node, int):

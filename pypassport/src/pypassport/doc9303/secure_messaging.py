@@ -25,6 +25,13 @@ class SecureMessaging():
         self._ksmac = ksmac
         self._ssc = ssc
 
+    @property
+    def ssc(self):
+        return self._ssc
+
+    @ssc.setter
+    def ssc(self, value):
+        self._ssc = bytes(value)
 
     def protect(self, apdu):
         """

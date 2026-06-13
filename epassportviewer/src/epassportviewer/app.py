@@ -1,4 +1,6 @@
 import logging
+import os
+import sys
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
@@ -7,10 +9,22 @@ from smartcard.Exceptions import CardConnectionException, NoCardException
 from pypassport import reader
 from .menu import MenuBar
 from .viewer import ViewerPane
-from .attacks import AttacksPane
-from .custom import CustomPane
+from .decoder import DecoderPane
+from .traffic import TrafficPane
+from .forge import ForgePane
+from .intercept import InterceptPane
 from .log import LogPane
 from .resources.gadgets.placeholder import PlaceholderEntry
+
+
+def _app_data_dir() -> Path:
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home()))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return base / "epassportviewer"
 
 
 class LoggingHandler(logging.Handler):
@@ -38,22 +52,22 @@ class EPassportViewer:
         ## Initialize the main window
         self.root = tk.Tk()
         self.root.title("ePassportViewer")
-        self.root.geometry("915x775")
-        self.root.minsize(915, 775)
+        self.root.geometry("1120x820")
+        self.root.minsize(1120, 820)
         self.root.log_handler = log_handler
 
         ## History
-        HISTORY_FILE_NAME = "history"
-        APP_FOLDER = Path(__file__).parent
-        HISTORY_FILE_PATH = APP_FOLDER / HISTORY_FILE_NAME
+        app_dir = _app_data_dir()
+        app_dir.mkdir(parents=True, exist_ok=True)
+        self.history_file_path = app_dir / "history"
 
-        if not HISTORY_FILE_PATH.exists():
+        if not self.history_file_path.exists():
             logging.info("History file not found. Creating a new one...")
-            HISTORY_FILE_PATH.touch()
+            self.history_file_path.touch()
 
         self.history = []
-        with HISTORY_FILE_PATH.open("r") as file:
-            self.history = file.readlines()
+        with self.history_file_path.open("r") as file:
+            self.history = [line.strip() for line in file if line.strip()]
 
         ## Set environment variables
         self.reader = None
@@ -110,28 +124,42 @@ class EPassportViewer:
         image_button.image = photo
         image_button.pack(side="right", padx=10)
 
-        ### Reader info
-        self.root.reader_info_label = ttk.Label(mrz_frame, text="No reader found...")
-        self.root.reader_info_label.pack(side="right")
+        ### Reader dropdown
+        self._reader_var = tk.StringVar()
+        self.root.reader_combo = ttk.Combobox(
+            mrz_frame, textvariable=self._reader_var,
+            state="readonly", width=30,
+        )
+        self.root.reader_combo.pack(side="right", padx=(10, 0))
+        self.root.reader_combo.bind("<<ComboboxSelected>>", self._on_reader_selected)
 
-        ## Create the notebook (tabbed pane) for View, Attacks, Custom
+        ## Create the notebook (tabbed pane) for View, Traffic, Forge, Decoder
         notebook = ttk.Notebook(main_frame)
+        self.root.main_notebook = notebook
         view_tab = ttk.Frame(notebook)
         self.root.view_tab = view_tab
-        attacks_tab = ttk.Frame(notebook)
-        self.root.attacks_tab = attacks_tab
-        custom_tab = ttk.Frame(notebook)
-        self.root.custom_tab = custom_tab
+        traffic_tab = ttk.Frame(notebook)
+        self.root.traffic_tab = traffic_tab
+        forge_tab = ttk.Frame(notebook)
+        self.root.forge_tab = forge_tab
+        decoder_tab = ttk.Frame(notebook)
+        self.root.decoder_tab = decoder_tab
+        intercept_tab = ttk.Frame(notebook)
+        self.root.intercept_tab = intercept_tab
 
         notebook.add(view_tab, text="View")
-        notebook.add(attacks_tab, text="Attacks")
-        notebook.add(custom_tab, text="Custom")
+        notebook.add(traffic_tab, text="Traffic")
+        notebook.add(forge_tab, text="Forge")
+        notebook.add(decoder_tab, text="Decoder")
+        notebook.add(intercept_tab, text="Intercept")
         notebook.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        ### Setting up the View tab content for the passport display
-        ViewerPane(self)
-        AttacksPane(self)
-        CustomPane(self)
+        ### Setting up tab content
+        self.viewer_pane = ViewerPane(self)
+        TrafficPane(self)
+        ForgePane(self)
+        DecoderPane(self)
+        InterceptPane(self)
 
         ## Footer pane with "Verbose" dropdown, "Logs" button, and version info
         footer_frame = ttk.Frame(main_frame)
@@ -144,10 +172,44 @@ class EPassportViewer:
         # RUN THE APPLICATION
         self.root.mainloop()
 
+    def add_to_history(self, doc: str, dob: str, expiry: str):
+        entry = f"{doc} {dob} {expiry}"
+        if entry in self.history:
+            return
+        self.history.append(entry)
+        if len(self.history) > 20:
+            self.history = self.history[-20:]
+        with self.history_file_path.open("w") as f:
+            f.write("\n".join(self.history) + "\n")
+        self.root.menu_bar_instance.rebuild_history_menu()
+
     def get_reader(self):
-        self.reader = reader.getReader()
+        list_readers = reader.listReaders()
+        combo = self.root.reader_combo
+        if not list_readers:
+            combo.configure(values=[], state="disabled")
+            self._reader_var.set("No reader found...")
+            self.reader = None
+            self.root.read_button["state"] = "disabled"
+            return
+
+        names = [str(r) for r in list_readers]
+        combo.configure(values=names, state="readonly")
+
+        # Keep current selection if still valid, otherwise default to first.
+        current = self._reader_var.get()
+        if current not in names:
+            self._reader_var.set(names[0])
+
+        self._connect_selected_reader()
+
+    def _on_reader_selected(self, _event=None):
+        self._connect_selected_reader()
+
+    def _connect_selected_reader(self):
+        name = self._reader_var.get()
+        self.reader = reader.getReader(name)
         if not self.reader:
-            self.root.reader_info_label["text"] = "No reader found..."
             self.root.read_button["state"] = "disabled"
             return
 
@@ -156,16 +218,13 @@ class EPassportViewer:
             self.reader.connect()
         except NoCardException:
             logging.warning(f"Reader '{reader_name}' found, but no card is inserted.")
-            self.root.reader_info_label["text"] = f"Reader: {reader_name} (no card)"
             self.root.read_button["state"] = "normal"
             return
         except CardConnectionException as e:
             logging.error(f"Could not connect to card on reader '{reader_name}': {e}")
-            self.root.reader_info_label["text"] = f"Reader: {reader_name} (connection error)"
             self.root.read_button["state"] = "normal"
             return
 
-        self.root.reader_info_label["text"] = f"Reader found: {reader_name}"
         self.root.read_button["state"] = "normal"
 
 
