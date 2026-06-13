@@ -17,7 +17,7 @@ SESSION_VERSION = 3
 # Panes that may stash free-form scratch state in a saved session. Each, when
 # present, exposes get_scratch()/load_scratch(); both are optional so a session
 # round-trips cleanly whether or not the pane is built or has state.
-_SCRATCH_PANES = ("comparer", "sequencer")
+_SCRATCH_PANES = ("sequencer",)
 
 
 # Row 1: file-system / meta EFs in logical access order
@@ -412,7 +412,7 @@ class ViewerPane:
 
         Beyond the raw EF bytes shown in the View tab this includes the MRZ/CAN
         credentials, the full APDU history (cleartext + wire bytes + annotations
-        + source + timestamps) and any Comparer/Sequencer scratch, so a session
+        + source + timestamps) and any per-pane scratch, so a session
         can be reopened later and explored entirely offline.
         """
         snapshot = {
@@ -543,7 +543,7 @@ class ViewerPane:
         if traffic_pane is not None:
             traffic_pane.reload()
 
-        # Restore per-pane scratch (Comparer/Sequencer) when both the saved
+        # Restore per-pane scratch when both the saved
         # state and a pane able to consume it are present.
         for name, state in data.get("scratch", {}).items():
             pane = getattr(self.root, f"{name}_pane", None)

@@ -415,8 +415,6 @@ class TrafficPane:
     def _build_context_menu(self):
         menu = tk.Menu(self._tree, tearoff=0)
         menu.add_command(label="Send to Forge", command=self._send_to_forge)
-        menu.add_command(label="Send to Decoder", command=self._send_to_decoder)
-        menu.add_command(label="Send to Comparer", command=self._send_to_comparer)
         menu.add_separator()
         menu.add_command(label="Copy as hex", command=self._copy_as_hex)
         menu.add_command(label="Copy as Python (APDUCommand(...))",
@@ -441,9 +439,6 @@ class TrafficPane:
         if row not in self._tree.selection():
             self._tree.selection_set(row)
         self._tree.focus(row)
-        # Comparer only becomes available once its pane is built (a later step).
-        comparer_state = "normal" if hasattr(self.root, "comparer_pane") else "disabled"
-        self._menu.entryconfigure("Send to Comparer", state=comparer_state)
         try:
             self._menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -502,23 +497,6 @@ class TrafficPane:
         self._tree.set(req_iid, "comment", tx.comment)
 
     # ── Send / copy actions ───────────────────────────────────────────────────────
-    def _send_to_decoder(self):
-        idx = self._annotate_index()
-        if idx is None or not hasattr(self.root, "decoder_pane"):
-            return
-        tx = self._history[idx]
-        self.root.decoder_pane.load_fields(_command_hex(tx), _response_hex(tx))
-
-    def _send_to_comparer(self):
-        indices = self._selected_indices()
-        if not indices or not hasattr(self.root, "comparer_pane"):
-            return
-        self.root.comparer_pane.load_transactions(
-            [self._history[i] for i in indices]
-        )
-        notebook = self.root.main_notebook
-        notebook.select(notebook.index(self.root.comparer_tab))
-
     def _copy_to_clipboard(self, text):
         if not text:
             return

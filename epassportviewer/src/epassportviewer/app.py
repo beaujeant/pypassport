@@ -9,11 +9,9 @@ from smartcard.Exceptions import CardConnectionException, NoCardException
 from pypassport import reader
 from .menu import MenuBar
 from .viewer import ViewerPane
-from .decoder import DecoderPane
 from .traffic import TrafficPane
 from .forge import ForgePane
 from .intercept import InterceptPane
-from .comparer import ComparerPane
 from .sequencer import SequencerPane
 from .analyze import AnalyzePane
 from .log import LogPane, LOG_FORMAT
@@ -126,7 +124,7 @@ class EPassportViewer:
         self.root.reader_combo.pack(side="right", padx=(10, 0))
         self.root.reader_combo.bind("<<ComboboxSelected>>", self._on_reader_selected)
 
-        ## Create the notebook (tabbed pane) for View, Traffic, Forge, Decoder
+        ## Create the notebook (tabbed pane) for the View and research tabs
         notebook = ttk.Notebook(main_frame)
         self.root.main_notebook = notebook
         view_tab = ttk.Frame(notebook)
@@ -135,12 +133,8 @@ class EPassportViewer:
         self.root.traffic_tab = traffic_tab
         forge_tab = ttk.Frame(notebook)
         self.root.forge_tab = forge_tab
-        decoder_tab = ttk.Frame(notebook)
-        self.root.decoder_tab = decoder_tab
         intercept_tab = ttk.Frame(notebook)
         self.root.intercept_tab = intercept_tab
-        comparer_tab = ttk.Frame(notebook)
-        self.root.comparer_tab = comparer_tab
         sequencer_tab = ttk.Frame(notebook)
         self.root.sequencer_tab = sequencer_tab
         analyze_tab = ttk.Frame(notebook)
@@ -149,9 +143,7 @@ class EPassportViewer:
         notebook.add(view_tab, text="View")
         notebook.add(traffic_tab, text="Traffic")
         notebook.add(forge_tab, text="Forge")
-        notebook.add(decoder_tab, text="Decoder")
         notebook.add(intercept_tab, text="Intercept")
-        notebook.add(comparer_tab, text="Comparer")
         notebook.add(sequencer_tab, text="Sequencer")
         notebook.add(analyze_tab, text="Analyze")
         notebook.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -160,9 +152,7 @@ class EPassportViewer:
         self.viewer_pane = ViewerPane(self)
         TrafficPane(self)
         ForgePane(self)
-        DecoderPane(self)
         InterceptPane(self)
-        ComparerPane(self)
         SequencerPane(self)
         AnalyzePane(self)
 

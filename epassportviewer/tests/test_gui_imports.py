@@ -14,11 +14,9 @@ import pytest
 PANE_MODULES = [
     "epassportviewer.app",
     "epassportviewer.viewer",
-    "epassportviewer.decoder",
     "epassportviewer.traffic",
     "epassportviewer.forge",
     "epassportviewer.intercept",
-    "epassportviewer.comparer",
     "epassportviewer.sequencer",
     "epassportviewer.analyze",
     "epassportviewer.log",

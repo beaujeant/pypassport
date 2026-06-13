@@ -2,7 +2,6 @@ import logging
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pypassport.iso7816 import ISO7816, APDUCommand, APDUResponse
-from pypassport.apdu_history import APDUHistory
 from pypassport.utils import toHexString
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.access_control import (
@@ -60,9 +59,6 @@ class _ForgeRequest:
         self.resp_sw1 = None
         self.resp_sw2 = None
         self.resp_status = _RESP_STATUS_HINT
-        # The APDUTransaction recorded for the last send, used by "Send to
-        # Comparer". None until the tab has been sent at least once.
-        self.last_tx = None
 
 
 class ForgePane:
@@ -222,12 +218,6 @@ class ForgePane:
         # swatches (CLA/INS/P1/P2/LC/LE) and keep just DATA/SW1/SW2.
         legend = build_legend(dump_head, fields=("DATA", "SW1", "SW2"))
         legend.pack(side="left")
-        # "Send to Comparer" stays disabled until a Comparer pane exists and the
-        # tab has a response to send — mirroring the Traffic tab's guard.
-        self._comparer_btn = ttk.Button(
-            dump_head, text="Send to Comparer", command=self._send_to_comparer, state="disabled",
-        )
-        self._comparer_btn.pack(side="right", padx=4)
 
         self._resp_dump = HexDumpView(resp_frame, height=8)
         self._resp_dump.pack(fill="both", expand=True)
@@ -303,7 +293,6 @@ class ForgePane:
         self._resp_sw2.set("" if req.resp_sw2 is None else "%02X" % req.resp_sw2)
         self._resp_status.set(req.resp_status)
         self._render_response_dump(req)
-        self._update_comparer_button(req)
 
     def _select_request(self, idx):
         if idx == self._active:
@@ -366,7 +355,7 @@ class ForgePane:
         """True if the tab has no request fields filled and was never sent."""
         return (
             not any((req.cla, req.ins, req.p1, req.p2, req.lc, req.data, req.le))
-            and req.last_tx is None
+            and req.resp_sw1 is None
             and not req.resp_data
         )
 
@@ -513,19 +502,6 @@ class ForgePane:
         else:
             self._resp_dump.clear(_RESP_DUMP_HINT)
 
-    def _update_comparer_button(self, req):
-        has_comparer = hasattr(self.root, "comparer_pane")
-        ready = has_comparer and req.last_tx is not None
-        self._comparer_btn.configure(state="normal" if ready else "disabled")
-
-    def _send_to_comparer(self):
-        req = self._requests[self._active]
-        if req.last_tx is None or not hasattr(self.root, "comparer_pane"):
-            return
-        self.root.comparer_pane.load_transactions([req.last_tx])
-        notebook = self.root.main_notebook
-        notebook.select(notebook.index(self.root.comparer_tab))
-
     # ── Secure messaging session (reset / re-establish) ───────────────────────
     def _reset_card(self):
         """Reconnect to the card and drop any Secure Messaging channel."""
@@ -663,15 +639,12 @@ class ForgePane:
             req.resp_sw1 = resp.sw1
             req.resp_sw2 = resp.sw2
             req.resp_status = f"{APDUResponse.describe(resp.sw1, resp.sw2)} ({resp.sw1:02X}{resp.sw2:02X})"
-            history = APDUHistory.get()
-            req.last_tx = history[-1] if len(history) else None
 
             self._resp_data.set(req.resp_data)
             self._resp_sw1.set("%02X" % resp.sw1)
             self._resp_sw2.set("%02X" % resp.sw2)
             self._resp_status.set(req.resp_status)
             self._render_response_dump(req)
-            self._update_comparer_button(req)
 
             sm_used = "none" if force_none or not saved_ciphering else self._active_sm_label()
             logging.info(
