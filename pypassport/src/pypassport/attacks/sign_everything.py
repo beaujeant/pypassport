@@ -23,7 +23,7 @@ from pypassport.iso7816 import ISO7816
 from pypassport.doc9303 import mrz, bac
 from pypassport.doc9303.data_group import readElementaryFile
 from pypassport.doc9303.secure_messaging import SecureMessaging
-from pypassport.openssl import OpenSSL
+from pypassport import pa_crypto
 from pypassport.utils import toHexString, toBytes
 
 class SignEverythingException(Exception):
@@ -44,7 +44,6 @@ class SignEverything():
         self._iso7816.rstConnection()
 
         self._bac = bac.BAC(iso7816)
-        self._openssl = OpenSSL()
 
     def sign(self, message_to_sign="1122334455667788", mrz_value=None):
         """
@@ -72,7 +71,7 @@ class SignEverything():
 
         if mrz_value:
             logging.info("Check if the signature is correct regarding the public key:")
-            data = self._openssl.retrieveSignedData(public_key, signature)
+            data = pa_crypto.raw_rsa(public_key, signature)
             data_hex = toHexString(data)
             header = data_hex[:2]
             logging.info("\tHeader: {0}".format(header))

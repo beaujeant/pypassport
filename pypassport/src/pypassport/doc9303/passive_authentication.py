@@ -6,7 +6,7 @@ from pypassport.doc9303 import converter
 from pypassport.doc9303 import data_group
 from pypassport.der_object_identifier import OID, OIDException
 from pypassport.ca_manager import CAManager
-from pypassport.openssl import OpenSSL
+from pypassport import pa_crypto
 from pypassport import asn1
 
 
@@ -34,13 +34,9 @@ class PassiveAuthentication:
     Even if the Certificate validation failed, it does not mean that the data could not be retrieved from the LDS.
     """
 
-    def __init__(self, openssl=None):
+    def __init__(self):
         self._content = None
         self._data = None
-        if not openssl:
-            self._openSSL = OpenSSL()
-        else:
-            self._openSSL = openssl
 
     def verifySODandCDS(self, sodObj, CSCADirectory):
         """
@@ -63,7 +59,6 @@ class PassiveAuthentication:
         @raise PassiveAuthenticationException: I{sodObj must be a sod object}: the sodObj parameter must be a sod object.
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
         @raise PassiveAuthenticationException: I{CSCADirectory is not set}
-        @raise openSSLException: See the openssl documentation
         """
 
         if CSCADirectory is None:
@@ -99,7 +94,6 @@ class PassiveAuthentication:
         @return: The dictionary is indexed with the DataGroup name (DG1...DG15) and the value is a boolean: True if the check is ok.
         @raise PassiveAuthenticationException: I{sodObj must be a sod object}: the sodObj parameter must be a sod object.
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
-        @raise openSSLException: See the openssl documentation
         """
 
         if self._data is None:
@@ -121,7 +115,6 @@ class PassiveAuthentication:
         @return: The data (a binary string) if the verification is ok, else an PassiveAuthentication is raised.
         @raise PassiveAuthenticationException: I{sodObj must be a sod object}: the sodObj parameter must be a sod object.
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
-        @raise openSSLException: See the openssl documentation
         """
         logging.debug("Verify SOD by using Document Signer Public Key (KPuDS))")
 
@@ -131,7 +124,7 @@ class PassiveAuthentication:
         if sodObj.body is None:
             raise PassiveAuthenticationException("sodObj object is not initialized")
 
-        return self._openSSL.getPkcs7SignatureContent(sodObj.body)
+        return pa_crypto.extract_eContent(sodObj.body)
 
 
     def verifyDSC(self, CDS, CSCADirectory):
@@ -140,12 +133,11 @@ class PassiveAuthentication:
 
         @param CDS: The document signer certificate
         @type CDS: A string formated in PEM
-        @param CSCADirectory: The complete path to the directory where the CSCA are. The certificates must first be renamed with the corresponding hash. (See the CAManager.py)
+        @param CSCADirectory: The complete path to the directory holding the trusted CSCA certificates (DER or PEM).
         @type CSCADirectory: A string
         @return: True if the verification is ok
         @raise PassiveAuthenticationException: I{The CDS is not set}: The CDS parameter must be a non-empty string.
         @raise PassiveAuthenticationException: I{The CA is not set}: The CSCADirectory parameter must be a non-empty string.
-        @raise openSSLException: See the openssl documentation
         """
 
         logging.debug("Verify CDS by using the Country Signing CA Public Key (KPuCSCA). ")
@@ -156,7 +148,10 @@ class PassiveAuthentication:
         if not CSCADirectory:
             raise PassiveAuthenticationException("The CA is not set")
 
-        return self._openSSL.verifyX509Certificate(CDS, CSCADirectory)
+        try:
+            return pa_crypto.verify_certificate_chain(pa_crypto._pem_or_der_to_der(CDS), CSCADirectory)
+        except pa_crypto.ChainVerificationError as msg:
+            raise PassiveAuthenticationException(str(msg))
 
     def getCertificate(self, sodObj):
         """
@@ -164,7 +159,6 @@ class PassiveAuthentication:
         @return: A PEM representation of the certificate or None if not present.
         @raise PassiveAuthenticationException: I{sodObj must be a sod object}: the sodObj parameter must be a sod object.
         @raise PassiveAuthenticationException: I{sodObj object is not initialized}: the sodObj parameter is a sod object, but is not initialized.
-        @raise openSSLException: See the openssl documentation
         """
         if not isinstance(sodObj, data_group.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
@@ -172,7 +166,10 @@ class PassiveAuthentication:
         if sodObj.body is None:
             raise PassiveAuthenticationException("sodObj object is not initialized")
 
-        return self._openSSL.retrievePkcs7Certificate(sodObj.body)
+        der = pa_crypto.extract_dsc_der(sodObj.body)
+        if der is None:
+            return None
+        return pa_crypto.dsc_der_to_pem(der)
 
     def _readDGfromLDS(self, data):
         """

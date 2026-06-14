@@ -1,12 +1,11 @@
 import os
 import time
 import logging
-import subprocess
-import tempfile
 
 from pypassport.iso7816 import ISO7816Exception, APDUCommand
 from pypassport.doc9303 import passive_authentication
 from pypassport import ca_manager
+from pypassport import pa_crypto
 from pypassport import hex_utils
 from pypassport.doc9303 import converter
 from pypassport.attacks import mac_traceability
@@ -162,17 +161,10 @@ class Fingerprint(object):
             self.callback.put((None, 'fp', 45))
 
         if sod is not None:
-            with tempfile.NamedTemporaryFile(suffix='.der', delete=False) as fd:
-                sod_path = fd.name
-                fd.write(sod.body)
             try:
-                result = subprocess.run(
-                    ["openssl", "asn1parse", "-in", sod_path, "-inform", "DER", "-i"],
-                    capture_output=True, text=True
-                )
-                res["SOD"] = result.stdout.strip()
-            finally:
-                os.remove(sod_path)
+                res["SOD"] = pa_crypto.asn1_dump(sod.body)
+            except Exception:
+                logging.error("Could not parse the SOD structure")
 
             #Verify SOD body
             if self.callback:
@@ -238,26 +230,10 @@ class Fingerprint(object):
         try:
             certif = self._doc.getCertificate()
             if certif:
-                res["DSCertificate"] = self._doc.getCertificate()
-
-                with tempfile.NamedTemporaryFile(suffix='.cer', delete=False, mode='w') as f:
-                    cer_path = f.name
-                    f.write(certif.decode())
-
-                try:
-                    result = subprocess.run(
-                        ["openssl", "x509", "-in", cer_path, "-noout", "-serial"],
-                        capture_output=True, text=True
-                    )
-                    res["certSerialNumber"] = result.stdout.strip()
-
-                    result = subprocess.run(
-                        ["openssl", "x509", "-in", cer_path, "-noout", "-fingerprint"],
-                        capture_output=True, text=True
-                    )
-                    res["certFingerprint"] = result.stdout.strip()
-                finally:
-                    os.remove(cer_path)
+                res["DSCertificate"] = certif
+                dsc_der = pa_crypto._pem_or_der_to_der(certif)
+                res["certSerialNumber"] = pa_crypto.cert_serial(dsc_der)
+                res["certFingerprint"] = pa_crypto.cert_sha1_fingerprint(dsc_der)
         except Exception:
             logging.error("Could not get certificate")
             self._doc.iso7816.rstConnection()

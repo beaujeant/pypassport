@@ -6,7 +6,7 @@ import logging
 from pypassport.asn1 import SubjectPublicKeyInfo
 from pypassport import hex_utils
 from pypassport.der_object_identifier import OID
-from pypassport.openssl import OpenSSL
+from pypassport import pa_crypto
 from pypassport.doc9303 import data_group
 from pypassport.utils import toHexString
 
@@ -18,16 +18,12 @@ class ActiveAuthentication():
     This class implements the Active Authentication protocol.
     The main method is I{executeAA} that returns True if the verification is ok or False.
     """
-    def __init__(self, iso7816, openssl=None):
+    def __init__(self, iso7816):
         """
         @param iso7816: a valid iso7816 object
         @type iso7816: doc9303
         """
         self._iso7816 = iso7816
-        if not openssl:
-            self._openssl = OpenSSL()
-        else:
-            self._openssl = openssl
 
         self.RND_IFD = None
         self.F = None
@@ -51,7 +47,6 @@ class ActiveAuthentication():
         @rtype: Boolean
         @raise ActiveAuthenticationException: If the Active Authentication is not supported (The DG15 is not found or the hash algo is not supported).
         @raise ActiveAuthenticationException: If the parameter is not set or is invalid.
-        @raise ActiveAuthenticationException: If OpenSSL is not installed.
         @raise ActiveAuthenticationException: If the public key cannot be recovered from the DG15.
         @raise ActiveAuthenticationException: If the DG15 is invalid and the signature cannot be verified.
         """
@@ -90,16 +85,16 @@ class ActiveAuthentication():
         @return: A PEM representation of the public key
         @rtype: A string
         @raise ActiveAuthenticationException: I{The parameter type is not valid, must be a dataGroup15 object}: The parameter dg15 is not set or is invalid.
-        @raise ActiveAuthenticationException: I{The public key could not be recovered from the DG15}: Is open SSL installed?
+        @raise ActiveAuthenticationException: I{The public key could not be recovered from the DG15}.
         """
 
         if not isinstance(dg15, data_group.DataGroup15):
             raise ActiveAuthenticationException("The parameter type is not valid, must be a dataGroup15 object")
 
-        return self._openssl.retrieveRsaPubKey(dg15.body)
+        return pa_crypto.rsa_pubkey_to_pem(dg15.body)
 
     def _decryptSignature(self, pubK, signature):
-        data = self._openssl.retrieveSignedData(pubK, signature)
+        data = pa_crypto.raw_rsa(pubK, signature)
         logging.debug("Decrypt the signature with the public key")
         logging.debug("\tF: " + hex_utils.binToHexRep(data))
 

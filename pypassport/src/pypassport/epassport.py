@@ -15,7 +15,6 @@ from pypassport.doc9303.access_control import (
 )
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport import ca_manager
-from pypassport.openssl import OpenSSL, OpenSSLException
 from smartcard.Exceptions import NoCardException
 
 
@@ -68,9 +67,8 @@ class EPassport(dict):
         self.iso7816 = ISO7816(reader)
         self._bac = BAC(self.iso7816)
         self._pace = PACE(self.iso7816, self._mrz)
-        self._openSSL = OpenSSL()
-        self._aa = ActiveAuthentication(self.iso7816, self._openSSL)
-        self._pa = PassiveAuthentication(self._openSSL)
+        self._aa = ActiveAuthentication(self.iso7816)
+        self._pa = PassiveAuthentication()
         self._CSCADirectory = None
         self._access_control = None
 
@@ -130,14 +128,6 @@ class EPassport(dict):
         return result
 
     @property
-    def openSsl(self):
-        return self._openSSL.location
-
-    @openSsl.setter
-    def openSsl(self, value):
-        self._openSSL.location = value
-
-    @property
     def CSCADirectory(self):
         return self._CSCADirectory
 
@@ -189,7 +179,6 @@ class EPassport(dict):
 
         @return: True if authentication succeeds.
         @raise DataGroupException: If DG15 cannot be read.
-        @raise OpenSSLException: On OpenSSL errors.
         @raise ActiveAuthenticationException: On other AA failures.
         """
         logging.info("Active Authentication")
@@ -202,9 +191,6 @@ class EPassport(dict):
         except ElementaryFileException as msg:
             res = msg
             raise DataGroupException(msg)
-        except OpenSSLException as msg:
-            res = msg
-            raise OpenSSLException(str(msg)) from msg
         except Exception as msg:
             res = msg
             raise ActiveAuthenticationException(msg)
@@ -217,7 +203,6 @@ class EPassport(dict):
 
         @raise ElementaryFileException: If the SOD cannot be read.
         @raise PassiveAuthenticationException: On PA configuration errors.
-        @raise OpenSSLException: On OpenSSL errors.
         """
         res = ""
         try:
@@ -230,9 +215,6 @@ class EPassport(dict):
         except PassiveAuthenticationException as msg:
             res = msg
             raise PassiveAuthenticationException(msg)
-        except OpenSSLException as msg:
-            res = msg
-            raise OpenSSLException(msg)
         finally:
             logging.debug("Document Signer Certificate verification: " + str(res))
 
@@ -242,7 +224,6 @@ class EPassport(dict):
 
         @raise ElementaryFileException: If a data group cannot be read.
         @raise PassiveAuthenticationException: On PA configuration errors.
-        @raise OpenSSLException: On OpenSSL errors.
         """
         res = None
         try:
@@ -257,9 +238,6 @@ class EPassport(dict):
         except PassiveAuthenticationException as msg:
             res = msg
             raise PassiveAuthenticationException(msg)
-        except OpenSSLException as msg:
-            res = msg
-            raise OpenSSLException(msg)
         except Exception as msg:
             res = msg
             logging.error("Data group integrity verification failed: " + str(msg))

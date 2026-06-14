@@ -50,6 +50,7 @@ mypy_path = "pypassport/src:epassportviewer/src"
 module = [
     "smartcard.*",
     "pyasn1.*",
+    "pyasn1_modules.*",
     "ecdsa.*",
     "Crypto.*",
 ]
