@@ -1,0 +1,352 @@
+from __future__ import annotations
+
+import logging
+from hashlib import sha1
+from Crypto import Random
+from Crypto.Cipher import DES3
+from pypassport.doc9303.mrz import MRZ
+from pypassport.utils import to_hex_string
+from pypassport.iso9797 import mac, pad
+from pypassport.iso7816 import ISO7816, ISO7816Exception
+
+_DEBUG_CRYPTO = False
+
+
+class BACException(Exception):
+    pass
+
+
+class BAC:
+    """
+    This class performs the Basic Acces Control.
+    The main method is I{authentication_and_establishment_of_session_keys}, it will execute the whole protocol and return the set of keys.
+    """
+
+    KENC = b"\x00\x00\x00\x01"
+    KMAC = b"\x00\x00\x00\x02"
+
+    def __init__(self, iso7816):
+        """
+        @param iso7816: A valid iso7816 object connected to a reader.
+        @type iso7816: A iso7816 object
+        """
+        self._iso7816 = iso7816
+        self._ksenc: bytes | None = None
+        self._ksmac: bytes | None = None
+        self._kifd: bytes | None = None
+        self._rnd_icc: bytes | None = None
+        self._rnd_ifd: bytes | None = None
+
+    def authentication_and_establishment_of_session_keys(self, mrz):
+        """
+        Execute the complete BAC process:
+            - Derivation of the document basic access keys
+            - Mutual authentication
+            - Derivation of the session keys
+
+        @param mrz: The machine readable zone of the passport
+        @type mrz: an MRZ object
+        @return: A set composed of (KSenc, KSmac, ssc)
+
+        @raise MRZException: I{The mrz length is invalid}: The mrz parameter is not valid.
+        @raise BACException: I{Wrong parameter, mrz must be an MRZ object}: The parameter is invalid.
+        @raise BACException: I{The mrz has not been checked}: Call the I{check_mrz} before this method call.
+        @raise BACException: I{The sublayer iso7816 is not available}: Check the object init parameter, it takes an iso7816 object
+        """
+
+        if not isinstance(mrz, MRZ):
+            raise BACException("Wrong parameter, mrz must be an MRZ object instead of {}".format(type(mrz)))
+
+        if not mrz.checked:
+            mrz.check_mrz()
+
+        if not isinstance(self._iso7816, ISO7816):
+            raise BACException("The sublayer iso7816 is not available")
+
+        # Status words returned by various chips when BAC mutual
+        # authentication fails (typically because the derived keys, and
+        # therefore the MRZ, are incorrect). The ICAO 9303 spec says 6300,
+        # but real-world chips also return 6982, 6A80, 6A86, 6A88.
+        _BAC_FAILURE_SWS = {
+            (0x63, 0x00),
+            (0x69, 0x82),
+            (0x69, 0x88),
+            (0x6A, 0x80),
+            (0x6A, 0x86),
+            (0x6A, 0x88),
+        }
+
+        try:
+            self.derivation_of_document_basic_access_keys(mrz)
+            logging.debug("Request an 8 byte random number from the MRTD's chip")
+            rnd_icc = self._iso7816.get_challenge()
+            eifd_mifd = self.authentication(rnd_icc)
+            hex_eifd_mifd = to_hex_string(eifd_mifd)
+            logging.debug("Send Mutual Authentication")
+            eicc_micc = self._iso7816.mutual_authentication(hex_eifd_mifd)
+            return self.session_keys(eicc_micc, rnd_icc)
+        except ISO7816Exception as e:
+            if (e.sw1, e.sw2) in _BAC_FAILURE_SWS:
+                logging.error(
+                    f"BAC mutual authentication rejected by the chip "
+                    f"(SW={e.sw1:02X}{e.sw2:02X} - {e.data}). "
+                    f"The MRZ is most likely incorrect."
+                )
+                raise BACException(
+                    "Authentication failed: the MRZ is most likely incorrect "
+                    f"(chip returned {e.sw1:02X}{e.sw2:02X} - {e.data})."
+                ) from e
+            raise BACException(f"BAC failed: chip returned {e.sw1:02X}{e.sw2:02X} ({e.data}).") from e
+        except BACException:
+            raise
+        except Exception as msg:
+            raise BACException(msg) from msg
+
+    def _compute_keys_from_kseed(self, Kseed):
+        """
+        This function is used during the Derivation of Document Basic Acces Keys.
+
+        @param Kseed: A 16 bytes random value
+        @type Kseed: Binary
+        @return: A set of two 8 bytes encryption keys
+        """
+
+        if _DEBUG_CRYPTO:
+            logging.debug("\tKseed: " + to_hex_string(Kseed))
+            logging.debug("Compute Encryption key (Kenc) (c:" + to_hex_string(BAC.KENC) + ")")
+        kenc = self.key_derivation(Kseed, BAC.KENC)
+
+        if _DEBUG_CRYPTO:
+            logging.debug("Compute MAC Computation key (Kmac) (c:" + to_hex_string(BAC.KMAC) + ")")
+        kmac = self.key_derivation(Kseed, BAC.KMAC)
+
+        return (kenc, kmac)
+
+    def derivation_of_document_basic_access_keys(self, mrz):
+        """
+        Take the MRZ object, construct the mrz_information out of the MRZ (kmrz),
+        generate the Kseed and compute the kenc and Kmac keys from the Kseed.
+
+        @param mrz: The machine readable zone of the passport.
+        @type mrz: an MRZ object
+        @return: A set of two 8 bytes encryption keys (Kenc, Kmac)
+        """
+        logging.debug("MRZ: " + str(mrz))
+
+        kmrz = self.mrz_information(mrz)
+        kseed = self._gen_kseed(kmrz)
+
+        logging.debug("Calculate the Basic Acces Keys (Kenc and Kmac) using Appendix 5.1")
+        (kenc, kmac) = self._compute_keys_from_kseed(kseed)
+
+        self._ksenc = kenc
+        self._ksmac = kmac
+
+        return (kenc, kmac)
+
+    def authentication(self, rnd_icc, rnd_ifd=None, kifd=None):
+        """
+        Construct the command data for the mutual authentication.
+            - Request an 8 byte random number from the MRTD's chip (rnd.icc)
+            - Generate an 8 byte random (rnd.ifd) and a 16 byte random (kifd)
+            - Concatenate rnd.ifd, rnd.icc and kifd (s = rnd.ifd + rnd.icc + kifd)
+            - Encrypt it with TDES and the Kenc key (eifd = TDES(s, Kenc))
+            - Compute the MAC over eifd with TDES and the Kmax key (mifd = mac(pad(eifd))
+            - Construct the APDU data for the mutualAuthenticate command (cmd_data = eifd + mifd)
+
+        @param rnd_icc: The challenge received from the ICC.
+        @type rnd_icc: A 8 bytes binary string
+        @return: The APDU binary data for the mutual authenticate command
+        """
+        if _DEBUG_CRYPTO:
+            logging.debug("\tRND.ICC: " + to_hex_string(rnd_icc))
+
+        ksenc, ksmac = self._require_document_keys()
+        if rnd_ifd is None:
+            rnd_ifd = Random.get_random_bytes(8)
+        if kifd is None:
+            kifd = Random.get_random_bytes(16)
+
+        if _DEBUG_CRYPTO:
+            logging.debug("Generate an 8 byte random and a 16 byte random")
+            logging.debug("\tRND.IFD: " + to_hex_string(rnd_ifd))
+            logging.debug("\tRND.Kifd: " + to_hex_string(kifd))
+
+        s = rnd_ifd + rnd_icc + kifd
+        if _DEBUG_CRYPTO:
+            logging.debug("Concatenate RND.IFD, RND.ICC and Kifd")
+            logging.debug("\tS: " + to_hex_string(s))
+
+        tdes = DES3.new(ksenc, DES3.MODE_CBC, b"\x00\x00\x00\x00\x00\x00\x00\x00")
+        eifd = tdes.encrypt(s)
+        if _DEBUG_CRYPTO:
+            logging.debug("Encrypt S with TDES key Kenc as calculated in Appendix 5.2")
+            logging.debug("\tEifd: " + to_hex_string(eifd))
+
+        mifd = mac(ksmac, pad(eifd))
+        if _DEBUG_CRYPTO:
+            logging.debug("Compute MAC over eifd with TDES key Kmac as calculated in-Appendix 5.2")
+            logging.debug("\tMifd: " + to_hex_string(mifd))
+
+        cmd_data = eifd + mifd
+
+        self._rnd_ifd = rnd_ifd
+        self._kifd = kifd
+
+        return cmd_data
+
+    def session_keys(self, data, rnd_icc):
+        """
+        Calculate the session keys (KSenc, KSmac) and the SSC from the data
+        received by the mutual authenticate command.
+
+        @param data: the data received from the mutual authenticate command sent to the chip.
+        @type data: a binary string
+        @return: A set of two 16 bytes keys (KSenc, KSmac) and the SSC
+        """
+
+        if _DEBUG_CRYPTO:
+            logging.debug("Decrypt and verify received data and compare received RND.IFD with generated RND.IFD")
+        ksenc, ksmac = self._require_document_keys()
+        if self._kifd is None or self._rnd_ifd is None:
+            raise BACException("BAC authentication material is not initialized")
+        if mac(ksmac, pad(data[0:32])) != data[32:]:
+            raise Exception("The MAC value is not correct")
+
+        tdes = DES3.new(ksenc, DES3.MODE_CBC, b"\x00\x00\x00\x00\x00\x00\x00\x00")
+        response = tdes.decrypt(data[0:32])
+        response_kicc = response[16:32]
+        Kseed = self._xor(self._kifd, response_kicc)
+        if _DEBUG_CRYPTO:
+            logging.debug("Calculate XOR of Kifd and Kicc")
+            logging.debug("\tKseed: " + to_hex_string(Kseed))
+
+        KSenc = self.key_derivation(Kseed, BAC.KENC)
+        KSmac = self.key_derivation(Kseed, BAC.KMAC)
+        if _DEBUG_CRYPTO:
+            logging.debug("Calculate Session Keys (KSenc and KSmac) using Appendix 5.1")
+            logging.debug("\tKSenc: " + to_hex_string(KSenc))
+            logging.debug("\tKSmac: " + to_hex_string(KSmac))
+
+        ssc = rnd_icc[-4:] + self._rnd_ifd[-4:]
+        if _DEBUG_CRYPTO:
+            logging.debug("Calculate Send Sequence Counter")
+            logging.debug("\tSSC: " + to_hex_string(ssc))
+
+        return (KSenc, KSmac, ssc)
+
+    def _require_document_keys(self) -> tuple[bytes, bytes]:
+        if self._ksenc is None or self._ksmac is None:
+            raise BACException("BAC document keys are not initialized")
+        return self._ksenc, self._ksmac
+
+    def _xor(self, kifd, response_kicc):
+        return bytes(a ^ b for a, b in zip(kifd, response_kicc))
+
+    def mrz_information(self, mrz):
+        """
+        Take an MRZ object and construct the MRZ information out of the MRZ extracted informations:
+            - The Document number + Check digit
+            - The Date of Birth + CD
+            - The Data of Expirity + CD
+
+        @param mrz: An MRZ object
+        @type mrz: MRZ object
+        @return: the mrz information used for the key derivation
+        """
+        if not isinstance(mrz, MRZ):
+            raise BACException("Bad parameter, must be an MRZ object (" + str(type(mrz)) + ")")
+
+        kmrz = (
+            mrz.doc_number[0]
+            + mrz.doc_number[1]
+            + mrz.date_of_birth[0]
+            + mrz.date_of_birth[1]
+            + mrz.date_of_expiry[0]
+            + mrz.date_of_expiry[1]
+        )
+
+        logging.debug("Construct the 'MRZ_information' out of the MRZ")
+        logging.debug("\tDocument number: " + mrz.doc_number[0] + "\tCheck digit: " + mrz.doc_number[1])
+        logging.debug("\tDate of birth: " + mrz.date_of_birth[0] + "\t\tCheck digit: " + mrz.date_of_birth[1])
+        logging.debug("\tDate of expiry: " + mrz.date_of_expiry[0] + "\t\tCheck digit: " + mrz.date_of_expiry[1])
+        logging.debug("\tMRZ_information: " + kmrz)
+
+        return kmrz
+
+    def _gen_kseed(self, kmrz):
+        """
+        Calculate the kseed from the kmrz:
+            - Calculate a SHA-1 hash of the kmrz
+            - Take the most significant 16 bytes to form the Kseed.
+
+        @param kmrz: The MRZ information
+        @type kmrz: a string
+        @return: a 16 bytes string
+        """
+
+        if _DEBUG_CRYPTO:
+            logging.debug("Calculate the SHA-1 hash of MRZ_information")
+
+        kseedhash = sha1(kmrz.encode("utf-8"))
+        kseed = kseedhash.digest()
+
+        if _DEBUG_CRYPTO:
+            logging.debug("\tHsha1(MRZ_information): " + to_hex_string(kseed))
+            logging.debug("Take the most significant 16 bytes to form the Kseed")
+            logging.debug("\tKseed: " + to_hex_string(kseed[:16]))
+
+        return kseed[:16]
+
+    def key_derivation(self, kseed, c):
+        """
+        Key derivation from the kseed:
+            - Concatenate Kseed and c (c=0 for KENC or c=1 for KMAC)
+            - Calculate the hash of the concatenation of kseed and c (h = (sha1(kseed + c)))
+            - Adjust the parity bits
+            - return the key (The first 8 bytes are Ka and the next 8 bytes are Kb)
+
+        @param kseed: The Kseed
+        @type kseed: a 16 bytes string
+        @param c: specify if it derives KENC (c=0) of KMAC (c=1)
+        @type c: a byte
+        @return: Return a 16 bytes key
+        """
+
+        if c not in (BAC.KENC, BAC.KMAC):
+            raise BACException("Bad parameter (c=0 or c=1)")
+
+        d = kseed + c
+        if _DEBUG_CRYPTO:
+            logging.debug("\tConcatenate Kseed and c")
+            logging.debug("\t\tD: " + to_hex_string(d))
+
+        h = sha1(d).digest()
+        if _DEBUG_CRYPTO:
+            logging.debug("\tCalculate the SHA-1 hash of D")
+            logging.debug("\t\tHsha1(D): " + to_hex_string(h))
+
+        Ka = h[:8]
+        Kb = h[8:16]
+
+        if _DEBUG_CRYPTO:
+            logging.debug("\tExctract Ka and Kb")
+            logging.debug("\t\tKa: " + to_hex_string(Ka))
+            logging.debug("\t\tKb: " + to_hex_string(Kb))
+
+        Ka = self.des_parity(Ka)
+        Kb = self.des_parity(Kb)
+
+        if _DEBUG_CRYPTO:
+            logging.debug("\tAdjust parity bits")
+            logging.debug("\t\tKa: " + to_hex_string(Ka))
+            logging.debug("\t\tKb: " + to_hex_string(Kb))
+            logging.debug("\t\tKey: " + to_hex_string(Ka) + to_hex_string(Kb))
+
+        return Ka + Kb
+
+    def des_parity(self, key):
+        adjusted_key = bytearray(key)
+        for i in range(len(adjusted_key)):
+            adjusted_key[i] = adjusted_key[i] & 0xFE | (bin(adjusted_key[i]).count("1") + 1) % 2
+        return bytes(adjusted_key)

@@ -1,0 +1,47 @@
+# Root pyproject.toml — uv virtual workspace root + monorepo-level tooling.
+# No [project] table here — this is a "virtual workspace root" in uv terms.
+#
+# uv commands (run from this directory):
+#   uv sync                              # install all workspace members + deps
+#   uv sync --package pypassport        # install only pypassport
+#   uv run python -m epassportviewer    # launch the GUI
+#   uv run pytest                       # run tests
+
+[tool.uv.workspace]
+members = ["pypassport", "epassportviewer"]
+
+# Dev tooling. Pytest, Ruff, and Mypy are current quality gates.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10,<2",
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "pypassport/tests",
+    "epassportviewer/tests",
+]
+
+[tool.ruff]
+line-length = 120
+src = ["pypassport/src", "epassportviewer/src"]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.9"
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "pypassport/src:epassportviewer/src"
+
+[[tool.mypy.overrides]]
+module = ["pyasn1", "pyasn1.*", "pyasn1_modules", "pyasn1_modules.*", "ecdsa", "ecdsa.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["pypassport/src", "epassportviewer/src"]
