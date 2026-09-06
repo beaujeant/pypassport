@@ -73,6 +73,31 @@ STATE_CHANGING_INS = {
     0xDA,  # ERASE BINARY
     0xDC,  # UPDATE / ERASE RECORDS
     0xE2,  # APPEND RECORD
+    0xD0,  # WRITE BINARY
+    0xD2,  # WRITE RECORD
+    0xDB,  # PUT DATA
+    0xDD,  # UPDATE / ERASE RECORDS (odd instruction)
+    0x46,  # GENERATE ASYMMETRIC KEY PAIR
+    0xE0,  # CREATE FILE
+    0xE4,  # DELETE FILE
+    0xE6,  # TERMINATE DF
+    0xFE,  # TERMINATE CARD USAGE / proprietary lifecycle operation
+}
+
+# Positive allowlist used for INS mutations under the safe fuzz profile.
+# Unknown proprietary instructions cannot be assumed to be read-only.
+SAFE_INS = {
+    0x70,  # MANAGE CHANNEL (transient)
+    0x84,  # GET CHALLENGE
+    0x88,  # INTERNAL AUTHENTICATE
+    0xA4,  # SELECT
+    0xB0,  # READ BINARY
+    0xB1,  # READ BINARY (odd instruction)
+    0xB2,  # READ RECORD
+    0xB3,  # READ RECORD (odd instruction)
+    0xC0,  # GET RESPONSE
+    0xCA,  # GET DATA
+    0xCB,  # GET DATA (odd instruction)
 }
 
 _BYTE_BOUNDARIES = (0x00, 0x01, 0x02, 0x7F, 0x80, 0xFE, 0xFF)
@@ -123,6 +148,9 @@ class FuzzResult:
     classification: str = ""
     error: str = ""
     interesting: bool = False
+    divergent: bool = False
+    security_signal: str = ""
+    response_authenticated: bool | None = None
 
     @property
     def status_word(self) -> str:
@@ -148,6 +176,9 @@ class FuzzResult:
             "classification": self.classification,
             "error": self.error,
             "interesting": self.interesting,
+            "divergent": self.divergent,
+            "security_signal": self.security_signal,
+            "response_authenticated": self.response_authenticated,
         }
 
 
@@ -197,7 +228,7 @@ def generate_fuzz_cases(
     if STRATEGY_HEADER_BOUNDARY in selected:
         for field in ("cla", "ins", "p1", "p2"):
             for value in _BYTE_BOUNDARIES:
-                if field == "ins" and not include_state_changing and value in STATE_CHANGING_INS:
+                if field == "ins" and not include_state_changing and value not in SAFE_INS:
                     continue
                 if not add(STRATEGY_HEADER_BOUNDARY, f"{field.upper()}={value:02X}", **{field: f"{value:02X}"}):
                     return cases
@@ -211,7 +242,7 @@ def generate_fuzz_cases(
         if strategy not in selected:
             continue
         for value in range(256):
-            if field == "ins" and not include_state_changing and value in STATE_CHANGING_INS:
+            if field == "ins" and not include_state_changing and value not in SAFE_INS:
                 continue
             if not add(strategy, f"{field.upper()}={value:02X}", **{field: f"{value:02X}"}):
                 return cases
@@ -392,6 +423,8 @@ def summarize_fuzz_results(results: Iterable[FuzzResult]) -> dict[str, Any]:
         "classification_counts": dict(Counter(item.classification for item in items)),
         "error_count": sum(1 for item in items if item.error),
         "interesting_count": sum(1 for item in items if item.interesting),
+        "divergent_count": sum(1 for item in items if item.divergent),
+        "security_signal_counts": dict(Counter(item.security_signal for item in items if item.security_signal)),
         "timing_ms": {
             "min": round(min(timings), 3),
             "median": round(statistics.median(timings), 3),
@@ -467,12 +500,15 @@ def _execute_case(iso7816: Any, case: FuzzCase, repeat_index: int, *, channel: s
         iso7816.ciphering = None
     started = time.perf_counter()
     try:
-        response = iso7816.transmit(
-            case.to_command(),
-            f"Fuzz {case.family}: {case.mutation}",
-            full=True,
-            source=source,
-        )
+        if channel == "wire":
+            response = iso7816.transmit_raw(case.raw_hex, source=source)
+        else:
+            response = iso7816.transmit(
+                case.to_command(),
+                f"Fuzz {case.family}: {case.mutation}",
+                full=True,
+                source=source,
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000
         data = to_hex_string(response.data) if response.data else ""
         return FuzzResult(
@@ -484,6 +520,7 @@ def _execute_case(iso7816: Any, case: FuzzCase, repeat_index: int, *, channel: s
             sw2=response.sw2,
             status=APDUResponse.describe(response.sw1, response.sw2),
             classification=classify_response(response.sw1, response.sw2),
+            response_authenticated=getattr(response, "authenticated", None),
         )
     except ISO7816Exception as exc:
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -523,8 +560,19 @@ def _mark_interesting(results: list[FuzzResult]) -> None:
     slow_threshold = max(median * 3, median + 50.0)
     for item in results:
         signature = (item.status_word, item.response_data, item.error)
-        item.interesting = bool(
-            item.error
-            or signature != baseline_signature
-            or item.elapsed_ms >= slow_threshold
-        )
+        item.divergent = signature != baseline_signature
+        if item.error:
+            item.security_signal = "transport-failure"
+        elif item.response_data and not baseline.response_data:
+            item.security_signal = "unexpected-data"
+        elif item.status_word == "9000" and baseline.status_word != "9000":
+            item.security_signal = "access-control-bypass"
+        elif item.response_authenticated is False and item.response_data:
+            item.security_signal = "unauthenticated-data"
+        elif baseline.status_word == "9000" and item.status_word != "9000":
+            item.security_signal = "semantic-differential"
+        elif item.elapsed_ms >= slow_threshold:
+            item.security_signal = "timing-outlier"
+        else:
+            item.security_signal = ""
+        item.interesting = bool(item.security_signal)

@@ -26,6 +26,7 @@ import queue
 import threading
 import tkinter as tk
 from collections.abc import Callable
+from contextlib import nullcontext
 from tkinter import ttk, filedialog
 
 from pypassport.doc9303.mrz import MRZ
@@ -450,7 +451,9 @@ class AnalysePane:
 
         def worker():
             try:
-                job(iso)
+                context = self.parent.card_operation(f"GUI: {label}") if needs_card else nullcontext()
+                with context:
+                    job(iso)
             except Exception as e:
                 self.write(f"✗ {label} failed: {e}")
             finally:

@@ -4,6 +4,7 @@ import sys
 
 from mcp import Client, StdioServerParameters
 
+from epassportmcp.bridge import ViewerMCPHost
 from epassportmcp.server import mcp
 
 
@@ -20,7 +21,20 @@ def test_mcp_advertises_only_three_lazy_front_door_tools():
     assert "enum" not in tools["epassport_call"]["properties"]["action"]
 
 
-def test_stdio_entrypoint_serves_lazy_catalog_end_to_end():
+def test_stdio_entrypoint_serves_lazy_catalog_end_to_end(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPASSPORT_VIEWER_SOCKET", str(tmp_path / "viewer.sock"))
+
+    class Viewer:
+        reader = None
+        iso7816 = None
+        ep = None
+        _reader_name = ""
+        _mcp_mrz = None
+        _mcp_can = None
+
+    host = ViewerMCPHost(Viewer())
+    host.start()
+
     async def inspect_server():
         parameters = StdioServerParameters(
             command=sys.executable,
@@ -39,7 +53,10 @@ def test_stdio_entrypoint_serves_lazy_catalog_end_to_end():
             )
             return tools, catalog, executed
 
-    tools, catalog, executed = asyncio.run(inspect_server())
+    try:
+        tools, catalog, executed = asyncio.run(inspect_server())
+    finally:
+        host.stop()
 
     assert {tool.name for tool in tools.tools} == {
         "epassport_list_tools",

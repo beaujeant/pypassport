@@ -15,6 +15,7 @@ from epassportviewer.settings import Settings
 def test_defaults_when_file_missing(tmp_path):
     s = Settings(tmp_path / "settings.json")
     assert s.csca_dir == ""
+    assert s.mcp_enabled is False
     # Reading a default must not create the file.
     assert not (tmp_path / "settings.json").exists()
 
@@ -36,6 +37,15 @@ def test_clearing_value(tmp_path):
     s.csca_dir = ""
     assert s.csca_dir == ""
     assert Settings(path).csca_dir == ""
+
+
+def test_mcp_bridge_requires_and_persists_explicit_opt_in(tmp_path):
+    path = tmp_path / "settings.json"
+    settings = Settings(path)
+    settings.mcp_enabled = True
+
+    assert Settings(path).mcp_enabled is True
+    assert json.loads(path.read_text()) == {"mcp_enabled": True}
 
 
 @pytest.mark.parametrize("garbage", ["{ not json", "", "[1, 2, 3]", "42"])

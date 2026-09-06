@@ -37,7 +37,7 @@ FILES = (
     FileReference("CardSecurity", "EF.CardSecurity", MF, "011D", 0x1D, "77", "CardSecurity"),
     FileReference("DIR", "EF.DIR", MF, "2F00", 0x1E, "61", "DIR"),
     FileReference("ATR/INFO", "EF.ATR/INFO", MF, "2F01", 0x1D, None, "ATR"),
-    FileReference("CVCA", "EF.CVCA", EMRTD, "011C", 0x1C, None, "CVCA"),
+    FileReference("CVCA", "EF.CVCA", EMRTD, "011C", 0x1C, "42", "CVCA"),
 )
 
 

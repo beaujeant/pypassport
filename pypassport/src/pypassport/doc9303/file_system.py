@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from pypassport.doc9303.file_context import EMRTD, MF, FileReference, enumerate_files
+from pypassport.doc9303.file_context import EMRTD, MF, FileReference, enumerate_files, resolve_file
 from pypassport.iso7816 import ISO7816Exception
 from pypassport.utils import parse_tlv
 
@@ -105,13 +105,19 @@ class FileSystemExplorer:
             raise ValueError("FID must contain exactly four hexadecimal characters")
         from pypassport.doc9303.data_group import read_elementary_file
 
-        reference = FileReference(
-            f"{str(application).upper()}:{fid}",
-            f"EF.{fid}",
-            str(application).upper(),
-            fid,
-            sfi,
-            None,
-            "ElementaryFile",
-        )
+        application = str(application).upper()
+        try:
+            reference = resolve_file(fid, application=application)
+            if sfi is not None:
+                reference = replace(reference, sfi=int(sfi))
+        except KeyError:
+            reference = FileReference(
+                f"{application}:{fid}",
+                f"EF.{fid}",
+                application,
+                fid,
+                sfi,
+                None,
+                "ElementaryFile",
+            )
         return read_elementary_file(reference, self.iso7816, max_file_size=maximum)

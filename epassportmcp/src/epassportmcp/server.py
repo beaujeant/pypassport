@@ -8,15 +8,15 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-from .controller import ActionError, PassportController
+from .bridge import ViewerMCPClient, ViewerUnavailable
 from .stdio import run_stdio
 
-controller = PassportController()
+bridge = ViewerMCPClient()
 mcp = MCPServer(
     "ePassportViewer",
     instructions=(
-        "AI-assisted ePassport acquisition and security research. Start with epassport_recommend_tools for a goal "
-        "or epassport_list_tools for a compact catalog, then execute lazy actions through epassport_call."
+        "Bridge to a running ePassportViewer for user-visible ePassport acquisition and security research. Start "
+        "with epassport_recommend_tools or epassport_list_tools, then execute actions through epassport_call."
     ),
 )
 
@@ -26,16 +26,19 @@ async def epassport_list_tools(group: str = "", query: str = "", detail: bool = 
     """List lazy ePassport action groups or matching actions; schemas are optional."""
 
     try:
-        return controller.list_actions(group=group, query=query, detail=detail)
-    except ActionError as exc:
-        return controller.error_payload("epassport_list_tools", exc)
+        return await asyncio.to_thread(bridge.request, "list", {"group": group, "query": query, "detail": detail})
+    except ViewerUnavailable as exc:
+        return _unavailable(str(exc))
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 async def epassport_recommend_tools(goal: str, max_actions: int = 8) -> dict[str, Any]:
     """Return a short state-aware workflow and only its required action schemas."""
 
-    return controller.recommend(goal, max_actions=max_actions)
+    try:
+        return await asyncio.to_thread(bridge.request, "recommend", {"goal": goal, "max_actions": max_actions})
+    except ViewerUnavailable as exc:
+        return _unavailable(str(exc))
 
 
 @mcp.tool(
@@ -47,9 +50,20 @@ async def epassport_call(action: str, arguments: dict[str, Any] | None = None) -
     """Execute one action discovered through the list or recommendation tool."""
 
     try:
-        return await asyncio.to_thread(controller.execute, action, arguments)
-    except ActionError as exc:
-        return controller.error_payload(action, exc)
+        return await asyncio.to_thread(
+            bridge.request, "action", {"action": action, "arguments": dict(arguments or {})}
+        )
+    except ViewerUnavailable as exc:
+        return _unavailable(str(exc), action=action)
+
+
+def _unavailable(message: str, *, action: str = "") -> dict[str, Any]:
+    return {
+        "ok": False,
+        "action": action,
+        "error": {"code": "viewer_unavailable", "message": message},
+        "session": {"connected": False, "owner": "ePassportViewer"},
+    }
 
 
 def main() -> None:

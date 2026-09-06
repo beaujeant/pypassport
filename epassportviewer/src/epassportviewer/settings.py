@@ -46,3 +46,14 @@ class Settings:
     def csca_dir(self, value):
         self._data["csca_dir"] = (value or "").strip()
         self.save()
+
+    @property
+    def mcp_enabled(self):
+        """Whether the viewer accepts local MCP bridge connections."""
+
+        return bool(self._data.get("mcp_enabled", False))
+
+    @mcp_enabled.setter
+    def mcp_enabled(self, value):
+        self._data["mcp_enabled"] = bool(value)
+        self.save()

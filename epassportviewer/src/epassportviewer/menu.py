@@ -16,7 +16,7 @@ class MenuBar:
         file_menu.add_command(label="Open session...", command=self.open_session)
         file_menu.add_command(label="Save session...", command=self.save_session)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit)
+        file_menu.add_command(label="Exit", command=self.parent.close)
 
         self.configure_menu = tk.Menu(self.root.menu_bar, tearoff=0)
         self.history_menu = tk.Menu(self.configure_menu, tearoff=0)
@@ -135,10 +135,38 @@ class MenuBar:
 
         ttk.Button(frame, text="Browse...", command=browse).grid(row=2, column=1, sticky="e")
 
+        ttk.Separator(frame).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 12))
+        ttk.Label(frame, text="MCP", style="Caption.TLabel").grid(
+            row=4, column=0, columnspan=2, sticky="w"
+        )
+        mcp_var = tk.BooleanVar(value=settings.mcp_enabled)
+        ttk.Checkbutton(frame, text="Enable MCP", variable=mcp_var).grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(4, 2)
+        )
+        ttk.Label(
+            frame,
+            wraplength=460,
+            justify="left",
+            style="Muted.TLabel",
+            text=(
+                "Allow local MCP clients such as Codex and Claude to use this "
+                "viewer, its current passport session, and its selected reader."
+            ),
+        ).grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Label(frame, textvariable=self.parent._mcp_status_var, style="Muted.TLabel").grid(
+            row=7, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(16, 0))
+        buttons.grid(row=8, column=0, columnspan=2, sticky="e", pady=(16, 0))
 
         def save_and_close():
+            try:
+                self.parent.set_mcp_enabled(mcp_var.get())
+            except RuntimeError as exc:
+                mcp_var.set(False)
+                messagebox.showerror("MCP unavailable", str(exc), parent=dialog)
+                return
             settings.csca_dir = path_var.get()
             dialog.destroy()
 

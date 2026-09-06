@@ -1,6 +1,6 @@
 import json
 
-from pypassport.doc9303.data_group import DataGroup2, DataGroup11, DataGroup16
+from pypassport.doc9303.data_group import CVCA, DataGroup2, DataGroup11, DataGroup16
 
 
 def _length(value: bytes) -> bytes:
@@ -45,6 +45,12 @@ def _fac_record(*images: bytes) -> bytes:
     blocks = b"".join(_face_block(image) for image in images)
     record_length = 14 + len(blocks)
     return b"FAC\x00" + b"010\x00" + record_length.to_bytes(4, "big") + len(images).to_bytes(2, "big") + blocks
+
+
+def test_ef_cvca_retains_current_reference_without_cardaccess_parser_confusion():
+    ef = CVCA(file=_tlv("42", b"BENCVCA00005"))
+
+    assert ef["current_reference"] == "BENCVCA00005"
 
 
 def test_dg2_parses_all_fac_images_and_renders_json():

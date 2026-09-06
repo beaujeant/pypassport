@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import sys
+import threading
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from PIL import Image, ImageTk
 from pypassport import reader
+from pypassport.doc9303.mrz import MRZ
 from pypassport.epassport import EPassport
 from pypassport.iso7816 import ISO7816
+from epassportmcp.bridge import ViewerMCPHost
 from . import theme
 from .menu import MenuBar
+from .operation import OperationCoordinator
 from .viewer import ViewerPane
 from .traffic import TrafficPane
 from .forge import ForgePane
@@ -127,6 +132,14 @@ class EPassportViewer:
         # can be rebuilt when the credentials change. See get_passport().
         self.ep = None
         self._ep_signature = None
+        self._reader_name = ""
+        self._mcp_mrz = None
+        self._mcp_can = None
+        self._mcp_events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self._mcp_connected = False
+        self._card_busy = ""
+        self._mcp_status_var = tk.StringVar(value="MCP: disabled")
+        self.card_operations = OperationCoordinator(self.publish_mcp_event)
 
         ## Create a canvas with vertical scrollbar
         canvas = tk.Canvas(self.root, bg=theme.BACKGROUND, highlightthickness=0)
@@ -243,9 +256,98 @@ class EPassportViewer:
             variable.trace_add("write", self._on_credentials_changed)
         self._update_credential_state()
         self.get_reader()
+        self.mcp_host = ViewerMCPHost(self)
+        if self.settings.mcp_enabled:
+            try:
+                self.mcp_host.start()
+                self._mcp_status_var.set("MCP: enabled")
+            except RuntimeError as exc:
+                self.settings.mcp_enabled = False
+                self._mcp_status_var.set("MCP: unavailable")
+                message = str(exc)
+                self.root.after_idle(
+                    lambda: messagebox.showerror("MCP unavailable", message, parent=self.root)
+                )
+        self.root.after(100, self._drain_mcp_events)
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         # RUN THE APPLICATION
         self.root.mainloop()
+
+    def close(self):
+        """Stop the ephemeral local MCP endpoint and close the window."""
+
+        self.mcp_host.stop()
+        self.root.destroy()
+
+    def card_operation(self, owner: str):
+        return self.card_operations.operation(owner)
+
+    def publish_mcp_event(self, kind: str, value: object) -> None:
+        self._mcp_events.put((kind, value))
+
+    def approve_mcp_action(self, action: str, effect: str) -> bool:
+        request = {"action": action, "effect": effect, "event": threading.Event(), "allowed": False}
+        self.publish_mcp_event("approval", request)
+        return bool(request["event"].wait(300) and request["allowed"])
+
+    def _drain_mcp_events(self):
+        while True:
+            try:
+                kind, value = self._mcp_events.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "connected":
+                self._mcp_connected = bool(value)
+            elif kind == "busy":
+                self._card_busy = str(value)
+            elif kind == "approval" and isinstance(value, dict):
+                value["allowed"] = messagebox.askyesno(
+                    "MCP request",
+                    f"Allow MCP action {value['action']}?\n\nCard effect: {value['effect']}",
+                    parent=self.root,
+                )
+                value["event"].set()
+            elif kind == "action" and isinstance(value, str):
+                if value == "session.authenticate" and self._mcp_mrz is not None:
+                    mrz = self._mcp_mrz
+                    self.doc_number.set(mrz.doc_number[0])
+                    self.dob.set(mrz.date_of_birth[0])
+                    self.expiry.set(mrz.date_of_expiry[0])
+                    if self._mcp_can is not None:
+                        self.can.set(self._mcp_can)
+                if value.startswith("passport.") or value.startswith("security."):
+                    self.viewer_pane.refresh_from_passport()
+                if value in {"apdu.clear_history", "case.import_snapshot"}:
+                    self.traffic_pane.reload()
+                self._update_read_button_state()
+        if self._card_busy:
+            self._mcp_status_var.set(f"MCP: card busy ({self._card_busy})")
+        elif self._mcp_connected:
+            self._mcp_status_var.set("MCP: connected")
+        elif self.settings.mcp_enabled and self.mcp_host.is_running:
+            self._mcp_status_var.set("MCP: enabled")
+        else:
+            self._mcp_status_var.set("MCP: disabled")
+        self.root.after(100, self._drain_mcp_events)
+
+    def set_mcp_enabled(self, enabled: bool) -> None:
+        """Apply and persist the MCP listener setting."""
+
+        if enabled:
+            try:
+                self.mcp_host.start()
+            except RuntimeError:
+                self.settings.mcp_enabled = False
+                self._mcp_status_var.set("MCP: unavailable")
+                raise
+            self.settings.mcp_enabled = True
+            self._mcp_status_var.set("MCP: enabled")
+        else:
+            self.mcp_host.stop()
+            self._mcp_connected = False
+            self.settings.mcp_enabled = False
+            self._mcp_status_var.set("MCP: disabled")
 
     def add_to_history(self, doc: str, dob: str, expiry: str):
         entry = f"{doc} {dob} {expiry}"
@@ -262,6 +364,13 @@ class EPassportViewer:
         self._update_credential_state()
 
     def _update_credential_state(self) -> None:
+        self._mcp_can = self.can.get().strip() or None
+        try:
+            self._mcp_mrz = MRZ((self.doc_number.get().strip(), self.dob.get().strip(), self.expiry.get().strip()))
+            if not self._mcp_mrz.check_mrz():
+                self._mcp_mrz = None
+        except Exception:
+            self._mcp_mrz = None
         ready, missing_mrz_fields = _credential_state(
             self.doc_number.get(),
             self.dob.get(),
@@ -280,6 +389,16 @@ class EPassportViewer:
         self.root.read_button.configure(state="normal" if enabled else "disabled")
 
     def get_reader(self):
+        try:
+            with self.card_operation("GUI: refresh readers"):
+                return self._get_reader_unlocked()
+        except Exception as exc:
+            if type(exc).__name__ != "CardBusy":
+                raise
+            logging.warning("Could not refresh readers: %s", exc)
+            messagebox.showwarning("Card busy", str(exc), parent=self.root)
+
+    def _get_reader_unlocked(self):
         try:
             list_readers = reader.list_readers()
         except reader.ReaderException as exc:
@@ -307,12 +426,24 @@ class EPassportViewer:
         self._connect_selected_reader()
 
     def _connect_selected_reader(self):
+        try:
+            with self.card_operation("GUI: connect reader"):
+                return self._connect_selected_reader_unlocked()
+        except Exception as exc:
+            if type(exc).__name__ != "CardBusy":
+                raise
+            logging.warning("Could not switch reader: %s", exc)
+            messagebox.showwarning("Card busy", str(exc), parent=self.root)
+
+    def _connect_selected_reader_unlocked(self):
         name = self._reader_var.get()
         self.reader = reader.get_reader(name)
         # (Re)connecting a reader resets the card, so any shared passport
         # session and its Secure Messaging channel are no longer valid.
         self.ep = None
         self._ep_signature = None
+        self.iso7816 = None
+        self._reader_name = name
         if not self.reader:
             self._update_read_button_state()
             return
@@ -331,6 +462,7 @@ class EPassportViewer:
             return
 
         self._update_read_button_state()
+        self.iso7816 = ISO7816(self.reader)
 
     def get_passport(self, mrz, can, *, force_new=False):
         """Return the shared L{EPassport} session, (re)building it when needed.

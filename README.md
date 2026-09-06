@@ -8,7 +8,7 @@ This repository contains two complementary projects:
 |---------|-------------|
 | [`pypassport/`](./pypassport/) | Core Python library — parses ICAO 9303 LDS files, performs BAC / supported PACE / authentication flows, and communicates with ePassports over RFID/NFC via a PC/SC reader |
 | [`epassportviewer/`](./epassportviewer/) | Desktop GUI — reads and displays passport data and provides APDU traffic, forge, intercept, security-report, fuzzing, and attack workflows on top of `pypassport` |
-| [`epassportmcp/`](./epassportmcp/) | Headless MCP server — gives external AIs lazy-discovery access to the same reader, analysis, raw APDU, reset, authentication, fuzzing, and research workflows |
+| [`epassportmcp/`](./epassportmcp/) | Local MCP bridge — forwards lazy workflows to the running ePassportViewer process and its reader/session |
 
 `pypassport` is the standalone library. `ePassportViewer` is an optional GUI that depends on it, and
 `epassportviewer-mcp` is the optional local MCP integration for external AIs.
@@ -177,16 +177,26 @@ epassportviewer
 ### Running the MCP server
 
 ```bash
-uv sync --package epassportviewer-mcp --extra reader
-uv run --package epassportviewer-mcp --extra reader epassportviewer-mcp
+uv sync
+uv run epassportviewer
+
+# This bridge command is normally launched by Codex/Claude, not manually:
+uv run --package epassportviewer-mcp epassportviewer-mcp
 ```
 
-Omit `--extra reader` when the MCP only needs offline snapshot analysis.
+Run ePassportViewer first; it hosts the physical reader/session. The second
+command is only the stdio bridge launched by the AI client and does not open
+PC/SC itself. Tick **Enable MCP** under **Configure > Settings** in the running viewer to opt in. The viewer
+shows connection/card-operation status, asks before high-risk live actions, and
+serialises GUI and MCP card workflows on the same Secure Messaging session.
 
-Configure the command as a local stdio MCP. It advertises only catalog,
-recommendation, and generic-call tools; the external AI retrieves detailed
-passport action schemas lazily. See [`epassportmcp/README.md`](./epassportmcp/README.md)
-for configuration and the raw/protected APDU channel model.
+The local MCP lets Codex or Claude assist the running GUI and operate the library's
+PACE/BAC, LDS acquisition, authenticity verification, EAC, access-matrix,
+hidden-file discovery, traffic, bounded fuzzing, and attack-analysis workflows.
+It exposes a small lazy catalog and returns exact status evidence without
+putting whole binary data groups in the conversation. See
+[`epassportmcp/README.md`](./epassportmcp/README.md) for the Codex and Claude
+installation subchapter and the raw/protected APDU channel model.
 
 ### Verifying authenticity (View tab)
 

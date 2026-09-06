@@ -46,6 +46,7 @@ _FILES = (
     _FileIdentifier("DIR", "EF.DIR", "2F00", "DIR", "DIR", "DIR"),
     _FileIdentifier("CardAccess", "EF.CardAccess", "011C", "42", "CardAccess", "CardAccess"),
     _FileIdentifier("CardSecurity", "EF.CardSecurity", "011D", "77", "CardSecurity", "CardSecurity"),
+    _FileIdentifier("CVCA", "EF.CVCA", "011C", "42", "CVCA", "CVCA"),
 )
 
 

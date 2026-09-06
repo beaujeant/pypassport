@@ -749,7 +749,8 @@ class ForgePane:
         if not self._get_ready():
             return
         try:
-            self.parent.iso7816.rst_connection_raw()
+            with self.parent.card_operation("GUI: reset card"):
+                self.parent.iso7816.rst_connection_raw()
             logging.info("Forge: reset card connection; secure messaging cleared.")
         except Exception as e:
             logging.exception("Forge: card reset failed")
@@ -801,8 +802,9 @@ class ForgePane:
             # Start from a clean card so a stale SSC can't poison the new
             # handshake, then run the chosen mechanism. The negotiator installs
             # the fresh SM channel on iso7816 and selects the eMRTD application.
-            iso.rst_connection_raw()
-            result = AccessControlNegotiator(iso).open(build_mrz, mode=mode, can=can)
+            with self.parent.card_operation(f"GUI: establish {mode}"):
+                iso.rst_connection_raw()
+                result = AccessControlNegotiator(iso).open(build_mrz, mode=mode, can=can)
             logging.info(f"Forge: re-established secure messaging via {result.mechanism}.")
             messagebox.showinfo(
                 "Secure messaging",
@@ -861,18 +863,19 @@ class ForgePane:
 
             cmd = APDUCommand(cla, ins, p1, p2, lc, data, le)
 
-            iso = self.parent.iso7816
-            saved_ciphering = iso.ciphering
-            force_none = self._sm_var.get() == "None"
-            if force_none and saved_ciphering is not None:
-                # Bypass SM for this one APDU only — the SSC is left untouched.
-                iso.ciphering = None
-            try:
-                resp = iso.transmit(cmd, "Forge APDU", full=True, source="forge")
-            finally:
-                # Restore the shared SM channel so its SSC counter survives a
-                # one-off plaintext send and the View tab keeps working.
-                iso.ciphering = saved_ciphering
+            with self.parent.card_operation("GUI: Forge APDU"):
+                iso = self.parent.iso7816
+                saved_ciphering = iso.ciphering
+                force_none = self._sm_var.get() == "None"
+                if force_none and saved_ciphering is not None:
+                    # Bypass SM for this one APDU only — the SSC is left untouched.
+                    iso.ciphering = None
+                try:
+                    resp = iso.transmit(cmd, "Forge APDU", full=True, source="forge")
+                finally:
+                    # Restore the shared SM channel so its SSC counter survives a
+                    # one-off plaintext send and the View tab keeps working.
+                    iso.ciphering = saved_ciphering
 
             # Record the response on the active tab so it survives tab switches.
             req = self._requests[self._active]

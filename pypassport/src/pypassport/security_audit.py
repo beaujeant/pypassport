@@ -583,6 +583,15 @@ def _add_authentication_findings(
             "The live challenge response did not verify against DG15.",
             "Preserve the transaction trace and investigate a clone, corruption, or implementation defect.",
         )
+    elif dg15 is not None and checks.get("active_authentication") is None and checks.get("active_authentication_error"):
+        _add(
+            findings,
+            "info",
+            "coverage",
+            "Active Authentication result is inconclusive",
+            str(checks["active_authentication_error"]),
+            "Add the advertised signature profile to the verifier, then repeat one bounded challenge.",
+        )
     if checks.get("chip_authentication") is False:
         _add(
             findings, "high", "anti-cloning", "Chip Authentication failed",
@@ -595,7 +604,12 @@ def _add_authentication_findings(
             "info",
             "coverage",
             "Chip Authentication was advertised but not tested",
-            "DG14/EF.CardSecurity contains a CA protocol and public key, but no successful live CA result is attached.",
+            str(
+                checks.get(
+                    "chip_authentication_error",
+                    "DG14/EF.CardSecurity contains a CA protocol and public key, but no successful live CA result is attached.",
+                )
+            ),
             "Authenticate the key source, run CA, and require an authenticated response under the fresh keys.",
         )
     terminal = protocols["terminal_authentication"]

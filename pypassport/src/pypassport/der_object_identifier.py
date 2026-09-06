@@ -24,4 +24,12 @@ OID = {
     "1.2.840.10045.4.3.2": "ecdsa-with-SHA256",
     "1.2.840.10045.4.3.3": "ecdsa-with-SHA384",
     "1.2.840.10045.4.3.4": "ecdsa-with-SHA512",
+    # BSI TR-03111 plain-format ECDSA signatures.  European travel documents
+    # commonly use these instead of the X9.62 DER signature OIDs above.
+    "0.4.0.127.0.7.1.1.4.1.1": "ecdsa-plain-SHA1",
+    "0.4.0.127.0.7.1.1.4.1.2": "ecdsa-plain-SHA224",
+    "0.4.0.127.0.7.1.1.4.1.3": "ecdsa-plain-SHA256",
+    "0.4.0.127.0.7.1.1.4.1.4": "ecdsa-plain-SHA384",
+    "0.4.0.127.0.7.1.1.4.1.5": "ecdsa-plain-SHA512",
+    "0.4.0.127.0.7.1.1.4.1.6": "ecdsa-plain-RIPEMD160",
 }

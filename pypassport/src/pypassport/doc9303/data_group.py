@@ -1555,6 +1555,17 @@ class CardSecurity(ElementaryFile):
         return True
 
 
+class CVCA(ElementaryFile):
+    """EF.CVCA cardholder-verification authority reference."""
+
+    def init_parse(self):
+        value = self.body
+        try:
+            self["current_reference"] = value.decode("ascii")
+        except UnicodeDecodeError:
+            self["raw"] = value
+
+
 _CLASS_MAP = {
     "ElementaryFile": ElementaryFile,
     "Common": Common,
@@ -1579,6 +1590,7 @@ _CLASS_MAP = {
     "DIR": DIR,
     "CardAccess": CardAccess,
     "CardSecurity": CardSecurity,
+    "CVCA": CVCA,
 }
 
 

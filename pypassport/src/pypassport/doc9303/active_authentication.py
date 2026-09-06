@@ -19,6 +19,10 @@ from pypassport.utils import to_hex_string
 # id-icao-mrtd-security-aaProtocolObject (ActiveAuthenticationInfo, DG14).
 _AA_INFO_OID = "2.23.136.1.1.5"
 
+
+def _ripemd160(data=b""):
+    return hashlib.new("ripemd160", data)
+
 # ecdsa-with-SHA* signature OIDs -> hashlib constructor, used to pick the AA
 # hash from DG14's ActiveAuthenticationInfo.
 _AA_SIG_OID_HASHES = {
@@ -27,6 +31,12 @@ _AA_SIG_OID_HASHES = {
     "1.2.840.10045.4.3.2": hashlib.sha256,
     "1.2.840.10045.4.3.3": hashlib.sha384,
     "1.2.840.10045.4.3.4": hashlib.sha512,
+    "0.4.0.127.0.7.1.1.4.1.1": hashlib.sha1,
+    "0.4.0.127.0.7.1.1.4.1.2": hashlib.sha224,
+    "0.4.0.127.0.7.1.1.4.1.3": hashlib.sha256,
+    "0.4.0.127.0.7.1.1.4.1.4": hashlib.sha384,
+    "0.4.0.127.0.7.1.1.4.1.5": hashlib.sha512,
+    "0.4.0.127.0.7.1.1.4.1.6": _ripemd160,
 }
 
 
@@ -127,6 +137,23 @@ class ActiveAuthentication:
         challenge = bytes(self.RND_IFD)
         signature = bytes(self.signature)
 
+        return self.verify_ecdsa_signature(ec_key, dg14, challenge, signature, strict=strict)
+
+    def verify_ecdsa_signature(self, ec_key, dg14, challenge, signature, *, strict=True):
+        """Verify a captured ECDSA AA response for an explicit challenge.
+
+        This is deliberately public enough for protocol workbenches: it lets a
+        caller test several distinct, chosen challenges without asking the AA
+        helper to generate them.  No private-key operation is attempted.
+        """
+        if not isinstance(ec_key, VerifyingKey):
+            loaded = self._load_ec_public_key(ec_key.body if hasattr(ec_key, "body") else ec_key)
+            if loaded is None:
+                raise ActiveAuthenticationException("DG15 does not contain an ECDSA public key")
+            ec_key = loaded
+        challenge = bytes(challenge)
+        signature = bytes(signature)
+
         logging.debug("Active Authentication (ECDSA) on curve %s", ec_key.curve.name)
         advertised_hash = self._aa_hash_from_dg14(dg14)
         if strict and advertised_hash is None:
@@ -147,6 +174,16 @@ class ActiveAuthentication:
                     continue
         logging.debug("ECDSA AA: signature did not verify")
         return False
+
+    @staticmethod
+    def ecdsa_signature_components(ec_key, signature):
+        """Return integer ``(r, s)`` from a plain AA signature."""
+
+        size = (ec_key.curve.order.bit_length() + 7) // 8
+        signature = bytes(signature)
+        if len(signature) != 2 * size:
+            raise ActiveAuthenticationException("ECDSA AA signature is not plain r||s")
+        return int.from_bytes(signature[:size], "big"), int.from_bytes(signature[size:], "big")
 
     @staticmethod
     def _load_ec_public_key(spki_der):

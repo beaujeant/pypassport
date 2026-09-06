@@ -717,7 +717,8 @@ class SecurityPane:
 
         def worker():
             try:
-                result = operation()
+                with self.parent.card_operation(f"GUI: {label}"):
+                    result = operation()
                 error = None
             except Exception as exc:
                 logging.warning("%s failed: %s", label, exc)

@@ -147,6 +147,13 @@ def test_execute_aa_ecdsa_hash_from_dg14(monkeypatch):
     assert aa.execute_aa(dg15, dg14) is True
 
 
+def test_execute_aa_ecdsa_bsi_plain_sha512_from_dg14(monkeypatch):
+    rnd = b"\x10\x20\x30\x40\x50\x60\x70\x80"
+    aa, dg15 = _setup_ecdsa(monkeypatch, BRAINPOOLP256r1, rnd, rnd, hashfunc=hashlib.sha512)
+    dg14 = _FakeDG15(_dg14_with_aa_sig_oid("0.4.0.127.0.7.1.1.4.1.5"))
+    assert aa.execute_aa(dg15, dg14, strict=True) is True
+
+
 def _dg14_with_aa_sig_oid(sig_oid):
     """Build a minimal DG14 SecurityInfos body with one ActiveAuthenticationInfo.
 

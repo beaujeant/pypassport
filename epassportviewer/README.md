@@ -14,6 +14,16 @@ live for **Forge**, **Intercept** and **Security** instead of re-running
 BAC/PACE per action. The MRZ (Number / DoB / Expiry) and optional CAN entered
 at the top of the window feed every tab.
 
+The application also hosts the optional MCP endpoint. A small
+Codex/Claude stdio bridge forwards MCP actions to this running process, so the
+GUI remains the sole owner of the reader/session and every MCP-triggered APDU is
+visible immediately in the in-memory Traffic tab. No passport traffic is
+persisted merely because MCP is enabled. Open **Configure > Settings** and tick
+**Enable MCP** to opt in; connection/card-operation status is shown there and the
+viewer confirms raw APDUs, fuzzing, EAC, resets, authentication changes, and
+live attack workflows before they run. The UI and MCP share a single operation
+lock to protect stateful Secure Messaging exchanges from interleaving.
+
 ### View tab
 
 Reads and displays the passport holder's data directly from the chip:
@@ -94,7 +104,7 @@ source .venv/bin/activate     # Linux / macOS
 # .venv\Scripts\activate      # Windows
 
 python -m pip install --upgrade pip
-python -m pip install -e "./pypassport[reader]" -e ./epassportviewer
+python -m pip install -e "./pypassport[reader]" -e ./epassportmcp -e ./epassportviewer
 ```
 
 ---

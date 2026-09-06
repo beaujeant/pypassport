@@ -8,7 +8,7 @@ import logging
 import threading
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Iterable, Mapping, cast
 
 from pypassport import reader
 from pypassport.apdu_history import APDUHistory
@@ -19,10 +19,12 @@ from pypassport.attacks.sign_everything import SignEverything
 from pypassport.conformance import ConformanceProfile, ConformanceRunner
 from pypassport.doc9303 import converter, data_group
 from pypassport.doc9303.access_control import NegotiationResult
+from pypassport.doc9303.file_context import EMRTD, FILES, MF, FileReference, resolve_file
 from pypassport.doc9303.mrz import MRZ
 from pypassport.epassport import EPassport
 from pypassport.fuzzing import (
     DEFAULT_STRATEGIES,
+    SAFE_INS,
     STRATEGY_LABELS,
     generate_fuzz_cases,
     run_fuzz_campaign,
@@ -46,7 +48,7 @@ class ActionError(RuntimeError):
 
 
 class PassportController:
-    """Own one reader connection, protocol channel, cache, and research case.
+    """Serialize operations on one viewer-owned reader and research case.
 
     PC/SC connections and Secure Messaging state are sequential resources.
     MCP clients may issue concurrent requests, so every action is serialized by
@@ -68,7 +70,14 @@ class PassportController:
         self._integrity: dict[str, bool | None] = {}
         self._sod_verification: dict[str, Any] | None = None
         self._acquisition_errors: dict[str, str] = {}
+        self._acquisition_evidence: dict[str, dict[str, Any]] = {}
         self._last_fuzz_results: list[Any] = []
+        self._viewer_bound = False
+
+    def bind_to_viewer(self) -> None:
+        """Forbid direct reader replacement when hosted inside the GUI."""
+
+        self._viewer_bound = True
 
     # ----------------------------- public front door -----------------------------
 
@@ -114,7 +123,17 @@ class PassportController:
         """Recommend only the action schemas needed for a stated analysis goal."""
 
         words = set(goal.lower().replace("/", " ").replace("-", " ").split())
-        if words & {"fuzz", "fuzzing", "mutation", "mutate"}:
+        if words & {"dg3", "dg4", "protected", "bypass", "matrix", "without", "plaintext"}:
+            recipe = [
+                "reader.list", "session.connect", "session.authenticate", "passport.capture",
+                "security.access_matrix", "security.chip_authentication", "security.discover_files",
+                "security.aa_analysis",
+            ]
+            rationale = (
+                "Measure the same object through isolated access states before interpreting an error as a biometric "
+                "bypass."
+            )
+        elif words & {"fuzz", "fuzzing", "mutation", "mutate"}:
             recipe = [
                 "reader.list",
                 "session.connect",
@@ -145,6 +164,7 @@ class PassportController:
                 "session.connect",
                 "session.authenticate",
                 "passport.filesystem",
+                "security.discover_files",
                 "passport.read_file",
                 "apdu.history",
             ]
@@ -263,7 +283,7 @@ class PassportController:
                 raise ActionError(
                     "pcsc_unavailable",
                     str(exc),
-                    details={"install": "epassportviewer-mcp[reader]"},
+                    details={"install": "epassportviewer"},
                 ) from exc
             except ISO7816Exception as exc:
                 sw = f"{exc.sw1:02X}{exc.sw2:02X}" if exc.sw1 is not None and exc.sw2 is not None else ""
@@ -280,6 +300,12 @@ class PassportController:
         return {"readers": [{"index": index, "name": str(item)} for index, item in enumerate(available)]}
 
     def _action_session_connect(self, args: dict[str, Any]) -> dict[str, Any]:
+        if self._viewer_bound:
+            iso = self._require_iso()
+            requested = str(args.get("reader", "")).strip()
+            if requested and requested not in (self.reader_name, "0"):
+                raise ActionError("viewer_owns_reader", "Select the requested reader in ePassportViewer")
+            return {"reader": self.reader_name, "atr_hex": iso.get_atr().hex().upper(), "owner": "ePassportViewer"}
         selector = args.get("reader")
         self._disconnect_live()
         connection = reader.get_reader(selector)
@@ -323,7 +349,9 @@ class PassportController:
             self._access_control = None
         passport = self.passport
         identity_changed = (
-            passport is None or str(mrz or "") != str(self._mrz or "") or (can or "") != (self._can or "")
+            passport is None
+            or str(mrz or "") != str(getattr(passport, "_mrz", None) or "")
+            or (can or "") != (getattr(passport, "_can", None) or "")
         )
         if identity_changed:
             passport = EPassport(iso, mrz, select_aid=False)
@@ -456,7 +484,14 @@ class PassportController:
                 continue
             self._capture_one(name, bool(args.get("refresh")))
         rows = [row for row in self._inventory_rows() if row["name"] in requested]
-        return {"requested": requested, "captured": rows, "errors": dict(self._acquisition_errors)}
+        return {
+            "requested": requested,
+            "captured": rows,
+            "errors": dict(self._acquisition_errors),
+            "evidence": {
+                name: self._acquisition_evidence[name] for name in requested if name in self._acquisition_evidence
+            },
+        }
 
     def _action_passport_read_file(self, args: dict[str, Any]) -> dict[str, Any]:
         name = self._normalise_file_name(args["name"])
@@ -469,7 +504,13 @@ class PassportController:
             self._capture_one(name, bool(args.get("refresh")))
             ef = self._cached_file(name)
         if ef is None:
-            raise ActionError("file_read_failed", self._acquisition_errors.get(name, f"Could not read {name}"))
+            evidence = self._acquisition_evidence.get(name)
+            outcome = (evidence or {}).get("outcome", "inconclusive")
+            raise ActionError(
+                "file_denied" if outcome == "denied" else "file_read_failed",
+                self._acquisition_errors.get(name, f"Could not read {name}"),
+                details=evidence,
+            )
         return self._file_payload(
             name,
             ef,
@@ -531,6 +572,72 @@ class PassportController:
             256,
         )
 
+    def _action_security_discover_files(self, args: dict[str, Any]) -> dict[str, Any]:
+        application = str(args.get("application", EMRTD)).upper()
+        maximum = int(args.get("max_probes", 512))
+        read_data = bool(args.get("read_data", True))
+        probe_bytes = int(args.get("probe_bytes", 16))
+        known = {ref.fid: ref for ref in FILES if ref.application == application}
+        com = self._cached_file("COM")
+        advertised = set()
+        if isinstance(com, Mapping):
+            for tag in com.get("5C", []):
+                try:
+                    advertised.add(converter.to_dg(tag))
+                except KeyError:
+                    pass
+        sod = self._cached_file("SOD")
+        hashed = {
+            f"DG{number}" for number in (sod.get("dg_hashes", {}) if isinstance(sod, Mapping) else {})
+        }
+        fids: list[str] = []
+        if args.get("fid_start") or args.get("fid_end"):
+            if not args.get("fid_start") or not args.get("fid_end"):
+                raise ActionError("invalid_fid_range", "fid_start and fid_end must be supplied together")
+            first, last = int(self._fid(args["fid_start"]), 16), int(self._fid(args["fid_end"]), 16)
+            if last < first:
+                raise ActionError("invalid_fid_range", "fid_end must be greater than or equal to fid_start")
+            fids.extend(f"{value:04X}" for value in range(first, min(last, first + maximum - 1) + 1))
+        else:
+            fids.extend(known)
+        results: list[dict[str, Any]] = []
+        remaining = maximum
+        for fid in dict.fromkeys(fids):
+            if remaining <= 0:
+                break
+            response = self._probe_reference(application, fid, None, "fid", probe_bytes, read_data=read_data)
+            response.update({"addressing": "fid", "fid": fid})
+            if fid in known:
+                response["logical_name"] = known[fid].name
+                if known[fid].name.startswith("DG"):
+                    response["advertised_in_com"] = known[fid].name in advertised
+                    response["hashed_in_sod"] = known[fid].name in hashed
+            results.append(response)
+            remaining -= 1
+        if args.get("probe_sfi", True):
+            known_sfi = {ref.sfi: ref for ref in FILES if ref.application == application and ref.sfi is not None}
+            for sfi in range(1, 32):
+                if remaining <= 0:
+                    break
+                response = self._probe_reference(application, "", sfi, "sfi", probe_bytes, read_data=True)
+                response.update({"addressing": "sfi", "sfi": sfi})
+                if sfi in known_sfi:
+                    response["logical_name"] = known_sfi[sfi].name
+                    if known_sfi[sfi].name.startswith("DG"):
+                        response["advertised_in_com"] = known_sfi[sfi].name in advertised
+                        response["hashed_in_sod"] = known_sfi[sfi].name in hashed
+                results.append(response)
+                remaining -= 1
+        candidates = [item for item in results if item["outcome"] not in {"absent", "rejected"}]
+        return {
+            "application": application,
+            "probe_count": len(results),
+            "truncated": remaining == 0
+            and len(dict.fromkeys(fids)) + (31 if args.get("probe_sfi", True) else 0) > maximum,
+            "candidates": candidates,
+            "status_histogram": self._status_histogram(results),
+        }
+
     def _action_passport_verify(self, args: dict[str, Any]) -> dict[str, Any]:
         passport = self._require_passport()
         results: dict[str, Any] = {}
@@ -538,11 +645,15 @@ class PassportController:
             try:
                 value = passport.do_active_authentication()
                 self._checks["active_authentication"] = bool(value)
-                results["active_authentication"] = {"ok": bool(value)}
+                self._checks.pop("active_authentication_error", None)
+                results["active_authentication"] = {
+                    "ok": bool(value),
+                    "outcome": "pass" if value else "fail",
+                }
             except Exception as exc:
-                self._checks["active_authentication"] = False
+                self._checks["active_authentication"] = None
                 self._checks["active_authentication_error"] = str(exc)
-                results["active_authentication"] = {"ok": False, "error": str(exc)}
+                results["active_authentication"] = {"ok": None, "outcome": "inconclusive", "error": str(exc)}
         if args.get("data_group_integrity", True):
             try:
                 integrity = passport.do_verify_dg_integrity()
@@ -550,42 +661,198 @@ class PassportController:
                     self._integrity = {str(key): value for key, value in integrity.items()}
                     results["data_group_integrity"] = {
                         "ok": all(value is not False for value in integrity.values()),
+                        "outcome": "pass" if all(value is not False for value in integrity.values()) else "fail",
                         "files": dict(integrity),
                     }
                 else:
-                    results["data_group_integrity"] = {"ok": False, "error": "No integrity result was returned"}
+                    results["data_group_integrity"] = {
+                        "ok": None,
+                        "outcome": "inconclusive",
+                        "error": "No integrity result was returned",
+                    }
             except Exception as exc:
-                results["data_group_integrity"] = {"ok": False, "error": str(exc)}
+                results["data_group_integrity"] = {"ok": None, "outcome": "inconclusive", "error": str(exc)}
         if args.get("sod_certificate", False):
             directory = args.get("csca_directory")
             if not directory:
                 raise ActionError("csca_required", "sod_certificate=true requires csca_directory")
             try:
-                passport.csca_directory = directory
+                self._configure_trust(passport, directory, args.get("master_list_signer_paths", []))
                 verified = bool(passport.do_verify_sod_certificate())
                 self._sod_verification = passport.sod_verification_info
                 self._checks["sod_signature_verified"] = verified
                 self._checks.pop("sod_signature_error", None)
-                results["sod_certificate"] = {"ok": verified, "details": self._sod_verification}
+                results["sod_certificate"] = {
+                    "ok": verified,
+                    "outcome": "pass" if verified else "fail",
+                    "details": self._sod_verification,
+                }
             except Exception as exc:
-                self._checks["sod_signature_verified"] = False
+                self._checks["sod_signature_verified"] = None
                 self._checks["sod_signature_error"] = str(exc)
-                results["sod_certificate"] = {"ok": False, "error": str(exc)}
+                results["sod_certificate"] = {"ok": None, "outcome": "inconclusive", "error": str(exc)}
         return results
 
     def _action_security_chip_authentication(self, args: dict[str, Any]) -> dict[str, Any]:
         passport = self._require_passport()
         if args.get("csca_directory"):
-            passport.csca_directory = args["csca_directory"]
+            self._configure_trust(passport, args["csca_directory"], args.get("master_list_signer_paths", []))
         try:
             result = passport.do_chip_authentication(source=args.get("source", "DG14"), key_id=args.get("key_id"))
         except Exception as exc:
-            self._checks["chip_authentication"] = False
+            self._checks["chip_authentication"] = None
             self._checks["chip_authentication_error"] = str(exc)
             raise
         self._checks["chip_authentication"] = True
         self._checks.pop("chip_authentication_error", None)
         return self._compact_value(result, 256)
+
+    def _action_security_access_matrix(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._require_iso()
+        states = list(args.get("states") or ["raw", "aid", "current"])
+        names = list(args.get("files") or [ref.name for ref in FILES])
+        paths = list(args.get("paths") or ["fid", "sfi", "odd_sfi", "plaintext_fid"])
+        probe_bytes, maximum = int(args.get("probe_bytes", 8)), int(args.get("max_probes", 256))
+        refs: list[FileReference] = []
+        for name in names:
+            try:
+                refs.append(resolve_file(name))
+            except KeyError as exc:
+                raise ActionError("unknown_file", str(exc)) from exc
+        cells: list[dict[str, Any]] = []
+        for state in states:
+            setup = self._setup_access_state(state, args)
+            if setup["outcome"] != "pass":
+                for ref in refs:
+                    if len(cells) >= maximum:
+                        break
+                    cells.append({"state": state, "file": ref.name, "path": "state_setup", **setup})
+                continue
+            restore_needed = False
+            for ref in refs:
+                for path in paths:
+                    if len(cells) >= maximum:
+                        break
+                    if path in {"sfi", "odd_sfi", "plaintext_sfi"} and ref.sfi is None:
+                        continue
+                    if restore_needed or path.startswith("plaintext_"):
+                        setup = self._setup_access_state(state, args)
+                        if setup["outcome"] != "pass":
+                            cells.append({"state": state, "file": ref.name, "path": path, **setup})
+                            continue
+                    effective = path.removeprefix("plaintext_")
+                    result = self._probe_reference(
+                        ref.application, ref.fid, ref.sfi, effective, probe_bytes,
+                        plaintext=path.startswith("plaintext_"), read_data=True, select_application=state != "raw",
+                    )
+                    cells.append({"state": state, "file": ref.name, "path": path, **result})
+                    restore_needed = path.startswith("plaintext_")
+                if len(cells) >= maximum:
+                    break
+            if len(cells) >= maximum:
+                break
+        restored: dict[str, Any] = {"outcome": "not_requested"}
+        if args.get("restore_after", True):
+            restored = self._setup_access_state("current", args)
+        signals = []
+        public = {"CardAccess", "CardSecurity", "DIR", "ATR/INFO", "CVCA"}
+        for cell in cells:
+            data = cell.get("data_length", 0)
+            if data and cell["file"] not in public and (
+                cell["state"] in {"raw", "aid", "none"} or cell["path"].startswith("plaintext_")
+            ):
+                signals.append({"type": "access_control_bypass", "cell": cell})
+            if data and cell["file"] in {"DG3", "DG4"} and cell["state"] != "pace_ca_ta":
+                signals.append({"type": "protected_biometric_exposed", "cell": cell})
+        return {
+            "cells": cells,
+            "outcomes": self._outcome_histogram(cells),
+            "security_signals": signals,
+            "truncated": len(cells) >= maximum,
+            "restored": restored,
+        }
+
+    def _action_security_aa_analysis(self, args: dict[str, Any]) -> dict[str, Any]:
+        passport = self._require_passport()
+        iso = self._require_iso()
+        try:
+            dg15, dg14 = passport["DG15"], passport["DG14"]
+        except Exception as exc:
+            raise ActionError("aa_evidence_required", f"DG15 and DG14 are required: {exc}") from exc
+        ec_key = passport._aa._load_ec_public_key(dg15.body)
+        pre: dict[str, Any] = {"outcome": "not_tested"}
+        if args.get("test_pre_access", True):
+            iso.rst_connection_raw()
+            try:
+                raw = APDUCommand("00", "88", "00", "00", data=b"\0" * 8, le="00").raw()
+                response = iso.transmit_raw(raw, source="mcp-aa-pre-access")
+                pre = {
+                    **self._response_payload(response),
+                    "outcome": "fail" if response.data else self._probe_outcome(response),
+                }
+                if response.data:
+                    pre["security_signal"] = "AA signing oracle is available before access control"
+            except Exception as exc:
+                pre = {"outcome": "inconclusive", "error": str(exc)}
+        setup = self._setup_access_state("current", args)
+        samples: list[dict[str, Any]] = []
+        rs: dict[int, int] = {}
+        rounds = int(args.get("rounds", 8))
+        if setup["outcome"] == "pass":
+            for index in range(rounds):
+                challenge = (index + 1).to_bytes(8, "big")
+                try:
+                    if ec_key is None:
+                        verified = passport.do_active_authentication(dg15=dg15, strict=True)
+                        signature = passport._aa.signature
+                    else:
+                        signature = iso.internal_authentication(challenge.hex())
+                        verified = passport._aa.verify_ecdsa_signature(ec_key, dg14, challenge, signature, strict=True)
+                    sample = {"challenge_index": index, "signature_length": len(signature), "outcome": "pass"}
+                    if ec_key is not None:
+                        sample["verified"] = verified
+                        r, _s = passport._aa.ecdsa_signature_components(ec_key, signature)
+                        r_bytes = r.to_bytes((r.bit_length() + 7) // 8, "big")
+                        sample["r_fingerprint"] = hashlib.sha256(r_bytes).hexdigest()[:16]
+                        if r in rs:
+                            sample["security_signal"] = f"ECDSA nonce reuse with challenge {rs[r]}"
+                        else:
+                            rs[r] = index
+                    else:
+                        sample["verified"] = bool(verified)
+                    samples.append(sample)
+                except Exception as exc:
+                    samples.append({"challenge_index": index, "outcome": "inconclusive", "error": str(exc)})
+                    break
+        restored = (
+            self._setup_access_state("current", args)
+            if args.get("restore_after", True)
+            else {"outcome": "not_requested"}
+        )
+        nonce_reuse = any("security_signal" in sample for sample in samples)
+        verification_failures = any(sample.get("verified") is False for sample in samples)
+        verification_complete = len(samples) == rounds and all(sample.get("verified") is True for sample in samples)
+        return {
+            "key_type": "ECDSA" if ec_key is not None else "RSA",
+            "pre_access": pre,
+            "post_access": samples,
+            "signature_verification": {
+                "outcome": "fail" if verification_failures else "pass" if verification_complete else "inconclusive"
+            },
+            "ecdsa_nonce_reuse": {
+                "outcome": "fail"
+                if nonce_reuse
+                else "pass"
+                if ec_key is not None and len(samples) == rounds
+                else "inconclusive"
+            },
+            "private_key_export": {
+                "outcome": "inconclusive",
+                "readable": False,
+                "evidence": "No export was observed; DG15 contains only public-key data and AA returned signatures",
+            },
+            "restored": restored,
+        }
 
     def _action_security_terminal_authentication(self, args: dict[str, Any]) -> dict[str, Any]:
         passport = self._require_passport()
@@ -607,7 +874,7 @@ class PassportController:
                 test_negative_rights=bool(args.get("test_negative_rights", True)),
             )
         except Exception as exc:
-            self._checks["terminal_authentication"] = False
+            self._checks["terminal_authentication"] = None
             self._checks["terminal_authentication_error"] = str(exc)
             raise
         self._checks["terminal_authentication"] = True
@@ -636,6 +903,7 @@ class PassportController:
                     "data_group_integrity": True,
                     "sod_certificate": bool(args.get("verify_sod_certificate")),
                     "csca_directory": args.get("csca_directory", ""),
+                    "master_list_signer_paths": args.get("master_list_signer_paths", []),
                 }
             )
         files = self._all_cached_files()
@@ -683,6 +951,21 @@ class PassportController:
     def _action_fuzz_run(self, args: dict[str, Any]) -> dict[str, Any]:
         iso = self._require_iso()
         seed = self._parse_short_apdu(self._clean_hex(args["seed_apdu_hex"]))
+        channel = args.get("channel", "current")
+        safety_profile = args.get("safety_profile", "read_only")
+        if safety_profile == "read_only" and channel == "wire":
+            raise ActionError(
+                "unsafe_wire_fuzz",
+                "wire mutation is opaque and requires safety_profile='research' plus reset_policy='before_each'",
+            )
+        if channel != "wire" and not args.get("include_state_changing", False) and int(seed.ins, 16) not in SAFE_INS:
+            raise ActionError(
+                "unsafe_seed",
+                f"INS {seed.ins} is outside the read-only fuzz allowlist",
+                details={"allowed_ins": [f"{value:02X}" for value in sorted(SAFE_INS)]},
+            )
+        if channel == "wire" and args.get("reset_policy") != "before_each":
+            raise ActionError("unsafe_wire_reset", "wire fuzzing requires reset_policy='before_each'")
         strategies = args.get("strategies", list(DEFAULT_STRATEGIES))
         unknown = sorted(set(strategies) - set(STRATEGY_LABELS))
         if unknown:
@@ -708,7 +991,7 @@ class PassportController:
         results = run_fuzz_campaign(
             iso,
             cases,
-            channel=args.get("channel", "current"),
+            channel=channel,
             repeat_each=int(args.get("repeat_each", 1)),
             delay_ms=int(args.get("delay_ms", 0)),
             reset_policy=args.get("reset_policy", "never"),
@@ -716,6 +999,13 @@ class PassportController:
             source="mcp-fuzz",
         )
         self._last_fuzz_results = results
+        recovery: dict[str, Any] = {"outcome": "not-requested"}
+        if args.get("recover_after", True):
+            kind = "reauth" if (self._mrz is not None or self._can is not None) else "raw"
+            try:
+                recovery = {"outcome": "pass", **self._action_session_reset({"kind": kind, "clear_cache": False})}
+            except Exception as exc:
+                recovery = {"outcome": "inconclusive", "error": str(exc)}
         interesting = [item.to_dict() for item in results if item.interesting]
         limit = int(args.get("interesting_limit", 20))
         return {
@@ -723,6 +1013,7 @@ class PassportController:
             "summary": summarize_fuzz_results(results),
             "interesting": interesting[:limit],
             "interesting_returned": min(len(interesting), limit),
+            "recovery": recovery,
             "next": "Use fuzz.results for additional stored results.",
         }
 
@@ -1001,12 +1292,181 @@ class PassportController:
         try:
             ef = passport[logical]
             if ef is None:
-                raise RuntimeError("chip returned no parsed data")
+                evidence = dict(getattr(passport, "read_errors", {}).get(logical, {}))
+                if not evidence:
+                    evidence = {
+                        "outcome": "inconclusive",
+                        "phase": "select_or_read",
+                        "message": "chip returned no parsed data",
+                        "status_word": "",
+                    }
+                self._acquisition_evidence[logical] = evidence
+                raise RuntimeError(self._format_failure_evidence(evidence))
             self._acquisition_errors.pop(logical, None)
+            history = APDUHistory.get()
+            last = history[-1] if history else None
+            self._acquisition_evidence[logical] = {
+                "outcome": "pass",
+                "phase": "read_and_parse",
+                "status_word": (
+                    f"{last.response_sw1:02X}{last.response_sw2:02X}" if last is not None else ""
+                ),
+                "response_authenticated": last.response_authenticated if last is not None else None,
+                "length": len(ef.file),
+            }
         except Exception as exc:
             self._acquisition_errors[logical] = str(exc)
+            self._acquisition_evidence.setdefault(
+                logical,
+                {"outcome": "inconclusive", "phase": "read_or_parse", "message": str(exc), "status_word": ""},
+            )
+
+    def _configure_trust(self, passport: EPassport, directory: Any, signer_paths: list[Any]) -> None:
+        signers = [self._credential_file(path, "Master List signer") for path in signer_paths]
+        passport.configure_trust_store(directory, master_list_signers=signers)
+
+    def _setup_access_state(self, state: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            if state == "raw":
+                self._require_iso().rst_connection_raw()
+                self._access_control = None
+                result = self._brief_status()
+            elif state in {"aid", "none"}:
+                result = self._action_session_reset({"kind": "emrtd", "clear_cache": False})
+            else:
+                mode = self._access_mode if state == "current" else "pace" if state.startswith("pace_") else state
+                result = self._action_session_reset({"kind": "reauth", "access_control": mode, "clear_cache": False})
+                if state in {"pace_ca", "pace_ca_ta"}:
+                    directory = args.get("csca_directory")
+                    if not directory:
+                        raise ActionError("csca_required", f"{state} requires csca_directory")
+                    passport = self._require_passport()
+                    self._configure_trust(passport, directory, list(args.get("master_list_signer_paths", [])))
+                    ca = passport.do_chip_authentication(source="DG14")
+                    result = {**result, "chip_authentication": self._compact_value(ca, 128)}
+                if state == "pace_ca_ta":
+                    chain_paths = list(args.get("terminal_chain_paths", []))
+                    key_path = args.get("terminal_private_key_path")
+                    anchor_paths = list(args.get("terminal_trust_anchor_paths", []))
+                    if not chain_paths or not key_path or not anchor_paths or not args.get("id_picc_hex"):
+                        raise ActionError(
+                            "ta_credentials_required", "pace_ca_ta requires terminal credentials and ID_PICC"
+                        )
+                    ta = passport.do_terminal_authentication(
+                        [self._credential_file(path, "terminal CVC") for path in chain_paths],
+                        self._credential_file(key_path, "terminal private key"),
+                        bytes.fromhex(self._clean_hex(args["id_picc_hex"])),
+                        trust_anchors=[self._credential_file(path, "CVCA trust anchor") for path in anchor_paths],
+                    )
+                    result = {**result, "terminal_authentication": self._compact_value(ta, 128)}
+            return {"outcome": "pass", "state_details": result}
+        except Exception as exc:
+            return {"outcome": "inconclusive", "phase": "state_setup", "error": str(exc)}
+
+    def _probe_reference(self, application: str, fid: str, sfi: int | None, path: str, probe_bytes: int,
+                         *, plaintext=False, read_data=True, select_application=True) -> dict[str, Any]:
+        iso = self._require_iso()
+        saved = iso.ciphering
+        if plaintext:
+            iso.ciphering = None
+
+        def exchange(command: APDUCommand, phase: str) -> tuple[APDUResponse | None, dict[str, Any] | None]:
+            try:
+                response = iso.transmit(command, full=True, source="mcp-access-matrix")
+                evidence = self._probe_evidence(response, phase)
+                return response, evidence
+            except Exception as exc:
+                return None, {"outcome": "inconclusive", "phase": phase, "error": str(exc)}
+
+        try:
+            if select_application:
+                app_command = (
+                    APDUCommand("00", "A4", "00", "0C", data="3F00")
+                    if application == MF
+                    else APDUCommand("00", "A4", "04", "0C", data=application)
+                )
+                selected, evidence = exchange(app_command, "select_application")
+                if selected is None or selected.sw1 not in (0x90, 0x62, 0x63):
+                    return cast(dict[str, Any], evidence)
+                iso.current_application = application
+            if path == "fid":
+                selected, evidence = exchange(APDUCommand("00", "A4", "02", "0C", data=fid), "select_file")
+                if selected is None or selected.sw1 not in (0x90, 0x62, 0x63) or not read_data:
+                    return cast(dict[str, Any], evidence)
+                command = APDUCommand("00", "B0", "00", "00", le=probe_bytes)
+            elif path == "sfi":
+                command = APDUCommand("00", "B0", f"{0x80 | int(sfi or 0):02X}", "00", le=probe_bytes)
+            elif path == "odd_sfi":
+                command = APDUCommand(
+                    "00", "B1", "00", "00", data=bytes([0x51, 1, int(sfi or 0), 0x54, 1, 0]), le=probe_bytes
+                )
+            else:
+                raise ActionError("invalid_probe_path", path)
+            _response, evidence = exchange(command, "read")
+            return cast(dict[str, Any], evidence)
+        finally:
+            if plaintext:
+                iso.ciphering = saved
+
+    @classmethod
+    def _probe_evidence(cls, response: APDUResponse, phase: str) -> dict[str, Any]:
+        data = bytes(response.data)
+        evidence: dict[str, Any] = {
+            "outcome": cls._probe_outcome(response),
+            "phase": phase,
+            "status_word": f"{response.sw1:02X}{response.sw2:02X}",
+            "response_authenticated": response.authenticated,
+            "data_length": len(data),
+        }
+        if data:
+            evidence["data_prefix_hex"] = data[:32].hex().upper()
+            evidence["data_sha256"] = hashlib.sha256(data).hexdigest()
+            if response.authenticated is False:
+                evidence["security_signal"] = "unauthenticated_data_under_secure_messaging"
+        return evidence
+
+    @staticmethod
+    def _probe_outcome(response: APDUResponse) -> str:
+        if response.data:
+            return "data"
+        sw = (response.sw1 << 8) | response.sw2
+        if response.sw1 in (0x90, 0x62, 0x63):
+            return "pass"
+        if sw in {0x6982, 0x6985, 0x6987, 0x6988}:
+            return "denied"
+        if sw in {0x6A82, 0x6A83, 0x6A88, 0x6B00}:
+            return "absent"
+        if sw in {0x6983, 0x6984, 0x6581}:
+            return "blocked"
+        return "rejected"
+
+    @staticmethod
+    def _status_histogram(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+        output: dict[str, int] = {}
+        for row in rows:
+            value = str(row.get("status_word") or row.get("outcome", "inconclusive"))
+            output[value] = output.get(value, 0) + 1
+        return output
+
+    @staticmethod
+    def _outcome_histogram(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+        output: dict[str, int] = {}
+        for row in rows:
+            value = str(row.get("outcome", "inconclusive"))
+            output[value] = output.get(value, 0) + 1
+        return output
+
+    @staticmethod
+    def _format_failure_evidence(evidence: Mapping[str, Any]) -> str:
+        message = str(evidence.get("message", "could not read file"))
+        status_word = str(evidence.get("status_word", ""))
+        return f"{message} (SW={status_word})" if status_word else message
 
     def _normalise_file_name(self, name: str) -> str:
+        try:
+            return resolve_file(name).name
+        except KeyError:
+            pass
         try:
             tag = converter.to_tag(name)
             return converter.to_dg(tag)
@@ -1096,6 +1556,7 @@ class PassportController:
         self._integrity = {}
         self._sod_verification = None
         self._acquisition_errors = {}
+        self._acquisition_evidence = {}
         self._last_fuzz_results = []
 
     def _invalidate_access_state(self) -> None:

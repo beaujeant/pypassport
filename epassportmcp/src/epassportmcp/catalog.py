@@ -101,6 +101,7 @@ FUZZ_STRATEGIES = (
     "tlv_length",
     "payload_length",
     "oversized_payload",
+    "extended_encoding",
     "sfi_sweep",
     "data_word_sweep",
 )
@@ -118,8 +119,9 @@ SPECS = (
     ActionSpec(
         "session.connect",
         "session",
-        "Connect one reader and create a shared low-level session.",
-        "Select by zero-based index or exact PC/SC name. The MCP process owns this connection until session.close.",
+        "Attach to ePassportViewer's selected reader.",
+        "The GUI owns the PC/SC connection; choose another reader in ePassportViewer rather than opening one "
+        "headlessly.",
         _object(
             {
                 "reader": {
@@ -129,7 +131,7 @@ SPECS = (
             }
         ),
         card_effect="connect/reset",
-        example={"reader": 0},
+        example={},
     ),
     ActionSpec(
         "session.status",
@@ -143,7 +145,8 @@ SPECS = (
         "session.authenticate",
         "session",
         "Establish BAC, PACE, automatic access control, or a plaintext eMRTD session.",
-        "Attaches high-level operations to the existing low-level connection. Credentials are retained only in process "
+        "Uses the existing viewer connection and defaults to the MRZ/CAN visible in the GUI. Credentials are retained "
+        "only in process "
         "memory for reset_kind=reauth and are never included in status or exported captures.",
         _object(
             {
@@ -153,7 +156,7 @@ SPECS = (
             }
         ),
         card_effect="authentication/reset",
-        example={"mrz": ["L898902C3", "740812", "120415"], "access_control": "auto"},
+        example={"access_control": "auto"},
     ),
     ActionSpec(
         "session.reset",
@@ -307,6 +310,31 @@ SPECS = (
         example={},
     ),
     ActionSpec(
+        "security.discover_files",
+        "security",
+        "Boundedly scan FIDs and SFIs for non-advertised files and applets.",
+        "Starts with EF.DIR/known ICAO files, adds caller-bounded FID ranges, and optionally sends direct short-file "
+        "reads. Results retain response status and data fingerprints without assuming that an unknown file is an "
+        "LDS DG.",
+        _object(
+            {
+                "application": _string("Application AID or MF.", default="A0000002471001"),
+                "fid_start": _string("First FID in an optional inclusive scan range."),
+                "fid_end": _string("Last FID in an optional inclusive scan range."),
+                "probe_sfi": _boolean("Probe direct READ BINARY for SFI 1..31.", True),
+                "read_data": _boolean(
+                    "For selected candidates, read a small prefix instead of selection evidence only.", True
+                ),
+                "probe_bytes": _integer(
+                    "Maximum bytes returned/read per candidate.", default=16, minimum=1, maximum=256
+                ),
+                "max_probes": _integer("Global bounded probe budget.", default=512, minimum=1, maximum=4096),
+            }
+        ),
+        card_effect="bounded SELECT and READ APDUs",
+        example={"application": "A0000002471001", "fid_start": "0100", "fid_end": "01FF"},
+    ),
+    ActionSpec(
         "passport.read_by_fid",
         "passport",
         "Read an explicit application-qualified FID.",
@@ -338,6 +366,7 @@ SPECS = (
                 "data_group_integrity": _boolean("Compare cached/read DG hashes with SOD.", True),
                 "sod_certificate": _boolean("Verify SOD signature and DSC-to-CSCA chain.", False),
                 "csca_directory": _string("Directory containing CSCA certificates."),
+                "master_list_signer_paths": {"type": "array", "maxItems": 16, "items": {"type": "string"}},
             }
         ),
         card_effect="read/authentication APDUs",
@@ -354,10 +383,63 @@ SPECS = (
                 "source": _string("Authenticated key source.", enum=("DG14", "CardSecurity"), default="DG14"),
                 "key_id": _integer("Optional CA key identifier.", minimum=0),
                 "csca_directory": _string("Trust store used for DG14/CardSecurity authentication."),
+                "master_list_signer_paths": {"type": "array", "maxItems": 16, "items": {"type": "string"}},
             }
         ),
         card_effect="Chip Authentication and SM re-key",
         example={"source": "DG14"},
+    ),
+    ActionSpec(
+        "security.access_matrix",
+        "security",
+        "Compare file access across access-control states and addressing paths.",
+        "Probes FID/SFI/odd-READ-BINARY under reset, current, PACE, BAC, and optionally CA states. "
+        "Each cell records select versus read status and pass/fail/inconclusive outcomes; plaintext probes are "
+        "by reauthentication.",
+        _object(
+            {
+                "states": {
+                    "type": "array", "maxItems": 8,
+                    "items": {
+                        "type": "string",
+                        "enum": ["raw", "aid", "none", "current", "pace", "bac", "pace_ca", "pace_ca_ta"],
+                    },
+                },
+                "files": {"type": "array", "maxItems": 32, "items": {"type": "string"}},
+                "paths": {
+                    "type": "array", "maxItems": 5,
+                    "items": {"type": "string", "enum": ["fid", "sfi", "odd_sfi", "plaintext_fid", "plaintext_sfi"]},
+                },
+                "probe_bytes": _integer("Maximum response prefix per cell.", default=8, minimum=1, maximum=256),
+                "max_probes": _integer("Global bounded cell budget.", default=256, minimum=1, maximum=1024),
+                "csca_directory": _string("Strict trust-store directory for pace_ca."),
+                "master_list_signer_paths": {"type": "array", "maxItems": 16, "items": {"type": "string"}},
+                "terminal_chain_paths": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
+                "terminal_private_key_path": _string("Terminal private key for pace_ca_ta."),
+                "terminal_trust_anchor_paths": {"type": "array", "maxItems": 4, "items": {"type": "string"}},
+                "id_picc_hex": _string("Document-derived ID_PICC for pace_ca_ta."),
+                "restore_after": _boolean("Restore the retained authenticated state afterward.", True),
+            }
+        ),
+        card_effect="reset/authentication and bounded read APDUs",
+        example={"states": ["raw", "aid", "current"], "files": ["DG1", "DG3"], "paths": ["fid", "plaintext_fid"]},
+    ),
+    ActionSpec(
+        "security.aa_analysis",
+        "security",
+        "Validate AA and check chosen-challenge nonce and pre-access behavior.",
+        "Uses DG15/DG14 to verify ECDSA responses, samples distinct challenges for repeated r values, and tests "
+        "whether "
+        "INTERNAL AUTHENTICATE is exposed before BAC/PACE. It does not and cannot export the chip private key.",
+        _object(
+            {
+                "rounds": _integer("Distinct post-access challenges.", default=8, minimum=2, maximum=256),
+                "test_pre_access": _boolean("Try INTERNAL AUTHENTICATE after a reset before access control.", True),
+                "restore_after": _boolean("Restore retained access control afterward.", True),
+            }
+        ),
+        card_effect="reset, INTERNAL AUTHENTICATE, and reauthentication APDUs",
+        example={"rounds": 8},
     ),
     ActionSpec(
         "security.terminal_authentication",
@@ -451,6 +533,7 @@ SPECS = (
                 "run_live_checks": _boolean("Run AA and DG integrity before reporting.", True),
                 "verify_sod_certificate": _boolean("Also validate SOD/DSC trust; requires csca_directory.", False),
                 "csca_directory": _string("Directory containing CSCA certificates."),
+                "master_list_signer_paths": {"type": "array", "maxItems": 16, "items": {"type": "string"}},
                 "probe_uid": _boolean("Try vendor GET UID; often unavailable for passports.", False),
                 "detail": _string(
                     "summary returns findings; full also returns protocol/file details.",
@@ -480,7 +563,16 @@ SPECS = (
                 "repeat_each": _integer("Executions per case.", default=1, minimum=1, maximum=100),
                 "delay_ms": _integer("Delay between executions.", default=0, minimum=0, maximum=60000),
                 "channel": _string(
-                    "current applies live SM; plaintext bypasses it.", enum=("current", "plaintext"), default="current"
+                    "current mutates the inner command under valid live SM; plaintext bypasses SM; wire mutates exact "
+                    "framing.",
+                    enum=("current", "plaintext", "wire"),
+                    default="current",
+                ),
+                "safety_profile": _string(
+                    "read_only accepts only known non-persistent inner instructions; research permits unknown/wire "
+                    "commands.",
+                    enum=("read_only", "research"),
+                    default="read_only",
                 ),
                 "reset_policy": _string(
                     "When to reset.", enum=("never", "before_campaign", "before_each", "on_error"), default="never"
@@ -489,6 +581,7 @@ SPECS = (
                     "raw reset or reset plus retained access control.", enum=("raw", "reauth"), default="raw"
                 ),
                 "include_state_changing": _boolean("Allow generated INS values such as VERIFY/UPDATE/ERASE.", False),
+                "recover_after": _boolean("Reset/re-authenticate after the campaign.", True),
                 "interesting_limit": _integer(
                     "Interesting cases included immediately.", default=20, minimum=0, maximum=100
                 ),

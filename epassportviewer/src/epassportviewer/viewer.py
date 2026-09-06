@@ -210,6 +210,8 @@ class ViewerPane:
         self._ef_inaccessible = set()  # EFs advertised in EF.COM but unreadable
         self._selected_ef = None
         self._photo_bytes = None  # raw image bytes from DG2, kept for Save
+        self._ef_raw = {}
+        self._mf_ef_raw = {}
 
         fam = theme.FONT_SMALL[0]
         sz = theme.FONT_SMALL[1]
@@ -563,8 +565,9 @@ class ViewerPane:
         def worker() -> None:
             error = None
             try:
-                ep.csca_directory = csca_dir
-                ep.do_verify_sod_certificate()
+                with self.parent.card_operation("GUI: passive authentication"):
+                    ep.csca_directory = csca_dir
+                    ep.do_verify_sod_certificate()
                 verified = True
             except Exception as exc:
                 logging.warning("SOD signature verification failed: %s", exc)
@@ -603,8 +606,9 @@ class ViewerPane:
         def worker() -> None:
             error = None
             try:
-                ep.iso7816.source = "read"
-                verified = bool(ep.do_active_authentication(dg15))
+                with self.parent.card_operation("GUI: active authentication"):
+                    ep.iso7816.source = "read"
+                    verified = bool(ep.do_active_authentication(dg15))
             except Exception as exc:
                 logging.warning("Active Authentication failed: %s", exc)
                 error = str(exc)
@@ -684,6 +688,15 @@ class ViewerPane:
         return details
 
     def read_passport(self):
+        try:
+            with self.parent.card_operation("GUI: read passport"):
+                return self._read_passport()
+        except Exception as exc:
+            if type(exc).__name__ != "CardBusy":
+                raise
+            messagebox.showwarning("Card busy", str(exc), parent=self.root)
+
+    def _read_passport(self):
         doc_number = self.parent.doc_number.get().strip()
         dob = self.parent.dob.get().strip()
         expiry = self.parent.expiry.get().strip()
@@ -853,6 +866,56 @@ class ViewerPane:
         self._select_ef("DG1")
         integrity = self._update_integrity_strip(ep)
         self._refresh_security_from_cache(integrity=integrity, live_details=security_live_details)
+
+    def refresh_from_passport(self) -> bool:
+        """Merge files already cached by an MCP operation into the View pane.
+
+        This intentionally performs no card reads. The shared passport object
+        is the authoritative cache; live APDUs remain visible through the
+        normal ISO7816/APDUHistory path while this method updates the GUI.
+        """
+
+        ep = self.parent.ep
+        if ep is None:
+            self._update_auth_buttons(None)
+            return False
+
+        changed = False
+        dg1 = self._cached_ep_file(ep, "DG1")
+        if dg1 is not None:
+            try:
+                self._apply_dg1_values(self._dg1_values(dg1))
+            except ValueError as exc:
+                logging.warning("Could not render MCP-cached DG1: %s", exc)
+
+        dg2 = self._cached_ep_file(ep, "DG2")
+        if isinstance(dg2, BiometricTemplates):
+            try:
+                faces = dg2.get_biometric_data()
+                if faces:
+                    self._photo_bytes = faces[0]
+                    self._display_photo(self._photo_bytes)
+            except Exception as exc:
+                logging.warning("Could not render MCP-cached DG2: %s", exc)
+
+        for ef in _EF_NAMES:
+            data = self._cached_ep_file(ep, ef)
+            if data is None:
+                continue
+            changed = True
+            if hasattr(data, "file"):
+                self._ef_raw[ef] = data.file.hex()
+            try:
+                content = self._ef_to_content(ef, data)
+            except Exception as exc:
+                content = f"(Could not display {ef}: {exc})"
+            self._set_ef_content(ef, content)
+
+        integrity = self._update_integrity_strip(ep)
+        self._refresh_security_from_cache(integrity=integrity)
+        if changed and self._ef_contents.get("DG1") is not None:
+            self._select_ef("DG1")
+        return changed
 
     def update_field(self, item, value):
         self.fields[item].config(text=value)

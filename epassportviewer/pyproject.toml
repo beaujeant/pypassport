@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    "epassportviewer-mcp",
     "pypassport[reader]",
     "Pillow>=10.3.0",
 ]
@@ -38,6 +39,7 @@ Homepage = "https://github.com/beaujeant/ePassportViewer"
 Repository = "https://github.com/beaujeant/ePassportViewer"
 
 [tool.uv.sources]
+epassportviewer-mcp = { workspace = true }
 pypassport = { workspace = true }
 
 [tool.setuptools.packages.find]

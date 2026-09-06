@@ -292,28 +292,29 @@ class FuzzingPane:
 
         def worker():
             try:
-                if reset_kind == "reauth":
-                    assert creds is not None
-                    mrz, can = creds
-                    ep = self.main.get_passport(mrz, can)
-                    iso = ep.iso7816
-                else:
-                    ep = None
-                    iso = self.main.ensure_iso7816()
-                iso.source = "fuzz"
-                reset_callback = self._build_reset_callback(iso, reset_kind, creds, ep=ep)
-                results = run_fuzz_campaign(
-                    iso,
-                    cases,
-                    channel=channel,
-                    repeat_each=repeat_each,
-                    delay_ms=delay_ms,
-                    reset_policy=reset_policy,
-                    reset_callback=reset_callback,
-                    stop_event=self._stop_event,
-                    on_result=lambda result: self._post(partial(self._append_result, result)),
-                    source="fuzz",
-                )
+                with self.main.card_operation("GUI: APDU fuzz campaign"):
+                    if reset_kind == "reauth":
+                        assert creds is not None
+                        mrz, can = creds
+                        ep = self.main.get_passport(mrz, can)
+                        iso = ep.iso7816
+                    else:
+                        ep = None
+                        iso = self.main.ensure_iso7816()
+                    iso.source = "fuzz"
+                    reset_callback = self._build_reset_callback(iso, reset_kind, creds, ep=ep)
+                    results = run_fuzz_campaign(
+                        iso,
+                        cases,
+                        channel=channel,
+                        repeat_each=repeat_each,
+                        delay_ms=delay_ms,
+                        reset_policy=reset_policy,
+                        reset_callback=reset_callback,
+                        stop_event=self._stop_event,
+                        on_result=lambda result: self._post(partial(self._append_result, result)),
+                        source="fuzz",
+                    )
                 self._post(partial(self._finish_run, results))
             except Exception as exc:
                 logging.exception("Fuzz campaign failed")

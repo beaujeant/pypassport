@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pypassport import ca_manager
+from pypassport.apdu_history import APDUHistory
 from pypassport.doc9303 import converter, secure_messaging
 from pypassport.doc9303.access_control import (
     EMRTD_AID,
@@ -18,7 +19,7 @@ from pypassport.doc9303.bac import BAC, BACException
 from pypassport.doc9303.data_group import DataGroupDump, ElementaryFileException, read_elementary_file
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.pace import PACE
-from pypassport.doc9303.file_context import resolve_file
+from pypassport.doc9303.file_context import FILES, resolve_file
 from pypassport.doc9303.chip_authentication import ChipAuthentication, select_chip_authentication_pair
 from pypassport.doc9303.security_info import parse_security_infos
 from pypassport.doc9303.trust_store import TrustStore
@@ -91,6 +92,10 @@ class EPassport(dict):
         self._ca = ChipAuthentication(self.iso7816)
         self._ta = TerminalAuthentication(self.iso7816)
         self.file_system = FileSystemExplorer(self.iso7816)
+        # High-level lazy reads historically returned ``None`` for denied or
+        # absent files. Keep the exact transport failure as structured evidence
+        # so MCP and GUI audits can distinguish those outcomes.
+        self.read_errors: dict[str, dict[str, object]] = {}
         self._trust_store: TrustStore | None = None
         self._CSCADirectory: ca_manager.CAManager | None = None
         self._access_control: NegotiationResult | None = None
@@ -217,6 +222,24 @@ class EPassport(dict):
         if not isinstance(value, TrustStore):
             raise TypeError("trust_store must be an ICAO TrustStore")
         self._trust_store = value
+
+    def configure_trust_store(self, directory, *, master_list_signers=(), deviation_list_signers=(),
+                              allow_legacy_profiles=False):
+        """Load a strict ICAO trust store, including authenticated Master Lists.
+
+        Signer values are DER/PEM bytes for explicitly trusted MLSC/DLSC
+        certificates.  An unauthenticated ``.ml``/Deviation List is never
+        silently treated as a trust anchor.
+        """
+
+        self._trust_store = TrustStore.from_directory(
+            directory,
+            master_list_signers=master_list_signers,
+            deviation_list_signers=deviation_list_signers,
+            allow_legacy_profiles=allow_legacy_profiles,
+        )
+        self._CSCADirectory = None
+        return self._trust_store
 
     def rst_connection(self):
         logging.debug("Reset Connection")
@@ -480,18 +503,23 @@ class EPassport(dict):
 
         if reference.name in self:
             return super(EPassport, self).__getitem__(reference.name)
-        if reference.name != "CardSecurity" and reference.tag in self:
+        if self._unique_cache_tag(reference.tag) and reference.tag in self:
             value = super(EPassport, self).__getitem__(reference.tag)
             self.__setitem__(reference.name, value)
             return value
 
         dg = self._read(reference)
         if dg is not None:
+            getattr(self, "read_errors", {}).pop(reference.name, None)
             self.__setitem__(reference.name, dg)
-            if reference.name != "CardSecurity" and dg.tag:
+            if dg.tag and self._unique_cache_tag(reference.tag):
                 self.__setitem__(dg.tag, dg)
             return dg
         return None
+
+    @staticmethod
+    def _unique_cache_tag(tag):
+        return bool(tag) and sum(ref.tag == tag for ref in FILES) == 1
 
     def _read(self, tag):
         """
@@ -520,16 +548,58 @@ class EPassport(dict):
                     return self._read_elementary_file(tag)
                 except ISO7816Exception as e2:
                     sw2_str = f"SW={e2.sw1:02X}{e2.sw2:02X}" if e2.sw1 is not None else ""
+                    self._record_read_error(tag, e2, phase="read_after_access_control")
                     logging.error(f"Could not read {tag} after BAC: chip returned {sw2_str} ({e2.data})")
                     return None
             sw_str = f"SW={e.sw1:02X}{e.sw2:02X}" if e.sw1 is not None else str(e)
+            self._record_read_error(tag, e, phase="select_or_read")
             logging.error(f"Could not read {tag}: chip returned {sw_str} ({e.data})")
             return None
         except EPassportException:
             raise
         except Exception as msg:
+            if not hasattr(self, "read_errors"):
+                self.read_errors = {}
+            self.read_errors[self._read_name(tag)] = {
+                "outcome": "inconclusive",
+                "phase": "parse_or_transport",
+                "message": str(msg),
+                "status_word": "",
+            }
             logging.error(f"Could not read {tag}: {msg}")
             return None
+
+    @staticmethod
+    def _read_name(tag):
+        try:
+            return resolve_file(tag).name
+        except KeyError:
+            return str(tag)
+
+    def _record_read_error(self, tag, error: ISO7816Exception, *, phase: str) -> None:
+        status_word = (
+            f"{error.sw1:02X}{error.sw2:02X}" if error.sw1 is not None and error.sw2 is not None else ""
+        )
+        if status_word in {"6982", "6985", "6986", "6988"}:
+            outcome = "denied"
+        elif status_word in {"6A82", "6A86"}:
+            outcome = "absent"
+        elif status_word.startswith("63C") or status_word == "6983":
+            outcome = "blocked"
+        else:
+            outcome = "inconclusive"
+        history = APDUHistory.get()
+        last = history[-1] if history else None
+        if phase == "select_or_read" and last is not None and status_word == f"{last.response_sw1:02X}{last.response_sw2:02X}":
+            phase = "select" if last.request_ins == "A4" else "read" if last.request_ins in {"B0", "B1"} else phase
+        if not hasattr(self, "read_errors"):
+            self.read_errors = {}
+        self.read_errors[self._read_name(tag)] = {
+            "outcome": outcome,
+            "phase": phase,
+            "message": str(error.data),
+            "status_word": status_word,
+        }
 
     def _read_elementary_file(self, tag):
         """Read one EF while preserving the eMRTD application context.

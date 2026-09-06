@@ -70,6 +70,28 @@ class APDUHistory:
         if cb in self._listeners:
             self._listeners.remove(cb)
 
+    @staticmethod
+    def _transaction_from_dict(item: object, *, source: Optional[str] = None) -> APDUTransaction | None:
+        if not isinstance(item, dict):
+            return None
+        field_names = {f.name for f in dataclasses.fields(APDUTransaction)}
+        kwargs = {k: v for k, v in item.items() if k in field_names}
+        ts = kwargs.get("timestamp")
+        if isinstance(ts, str):
+            try:
+                kwargs["timestamp"] = datetime.fromisoformat(ts)
+            except ValueError:
+                kwargs["timestamp"] = datetime.now()
+        elif not isinstance(ts, datetime):
+            kwargs.pop("timestamp", None)
+        if source is not None:
+            kwargs["source"] = source
+        try:
+            return APDUTransaction(**kwargs)
+        except TypeError as exc:
+            logging.warning("Skipping malformed APDU record %r: %s", item, exc)
+            return None
+
     def __iter__(self):
         return iter(list(self._entries))
 
@@ -108,25 +130,9 @@ class APDUHistory:
         so a hand-edited file can't abort the whole load. Listeners are not
         notified: this is a bulk replace, so callers refresh their views once.
         """
-        field_names = {f.name for f in dataclasses.fields(APDUTransaction)}
         entries: List[APDUTransaction] = []
         for item in items:
-            if not isinstance(item, dict):
-                logging.warning("Skipping non-dict APDU record: %r", item)
-                continue
-            kwargs = {k: v for k, v in item.items() if k in field_names}
-            ts = kwargs.get("timestamp")
-            if isinstance(ts, str):
-                try:
-                    kwargs["timestamp"] = datetime.fromisoformat(ts)
-                except ValueError:
-                    kwargs["timestamp"] = datetime.now()
-            elif not isinstance(ts, datetime):
-                kwargs.pop("timestamp", None)  # let the default factory supply one
-            if source is not None:
-                kwargs["source"] = source
-            try:
-                entries.append(APDUTransaction(**kwargs))
-            except TypeError as e:
-                logging.warning("Skipping malformed APDU record %r: %s", item, e)
+            tx = self._transaction_from_dict(item, source=source)
+            if tx is not None:
+                entries.append(tx)
         self._entries = entries

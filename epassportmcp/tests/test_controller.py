@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from pypassport import reader
 from pypassport.apdu_history import APDUHistory
 from pypassport.doc9303.access_control import NegotiationResult
 from pypassport.doc9303.file_system import FileProbe
+from pypassport.iso7816 import ISO7816
 
+from epassportmcp import bridge
+from epassportmcp.bridge import ViewerMCPClient, ViewerMCPHost, ViewerUnavailable, _capability_path
 from epassportmcp.controller import ActionError, PassportController
 
 
@@ -151,7 +155,7 @@ def test_missing_pcsc_is_an_actionable_optional_dependency_error(monkeypatch):
         PassportController().execute("reader.list")
     except ActionError as error:
         assert error.code == "pcsc_unavailable"
-        assert error.details == {"install": "epassportviewer-mcp[reader]"}
+        assert error.details == {"install": "epassportviewer"}
     else:
         raise AssertionError("missing PC/SC support was not surfaced")
 
@@ -209,6 +213,177 @@ def test_advanced_protocol_and_filesystem_actions_are_first_class(tmp_path):
         "id_picc_hex": "0102",
     })["result"]
     assert ta["input_lengths"] == [1, 10, 2]
+
+
+def test_bounded_discovery_and_access_matrix_preserve_probe_status(monkeypatch):
+    APDUHistory.get().clear()
+    connection = FakeConnection()
+    monkeypatch.setattr(reader, "get_reader", lambda _selector=None: connection)
+    controller = PassportController()
+    controller.execute("session.connect")
+
+    discovery = controller.execute(
+        "security.discover_files",
+        {"application": "A0000002471001", "fid_start": "01F0", "fid_end": "01F1", "max_probes": 2},
+    )["result"]
+    assert discovery["probe_count"] == 2
+    assert discovery["status_histogram"] == {"9000": 2}
+
+    matrix = controller.execute(
+        "security.access_matrix",
+        {"states": ["none"], "files": ["DG1"], "paths": ["fid", "sfi"], "max_probes": 2},
+    )["result"]
+    assert matrix["outcomes"] == {"pass": 2}
+    assert {cell["phase"] for cell in matrix["cells"]} == {"read"}
+
+
+def test_fuzz_safety_profile_rejects_opaque_wire_campaign(monkeypatch):
+    connection = FakeConnection()
+    monkeypatch.setattr(reader, "get_reader", lambda _selector=None: connection)
+    controller = PassportController()
+    controller.execute("session.connect")
+
+    try:
+        controller.execute(
+            "fuzz.run",
+            {"seed_apdu_hex": "00A4020C020101", "channel": "wire", "reset_policy": "before_each"},
+        )
+    except ActionError as error:
+        assert error.code == "unsafe_wire_fuzz"
+    else:
+        raise AssertionError("opaque wire campaign was accepted under read_only")
+
+
+def test_bridge_executes_in_viewer_process_and_uses_in_memory_traffic(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPASSPORT_VIEWER_SOCKET", str(tmp_path / "viewer.sock"))
+    APDUHistory.get().clear()
+    connection = FakeConnection()
+    connection.connect()
+
+    class Viewer:
+        reader = connection
+        iso7816 = ISO7816(connection)
+        ep = None
+        _reader_name = "Research reader"
+        _mcp_mrz = None
+        _mcp_can = None
+
+    host = ViewerMCPHost(Viewer())
+    host.start()
+    try:
+        result = ViewerMCPClient().request(
+            "action", {"action": "apdu.transmit", "arguments": {"apdu_hex": "00010000", "channel": "current"}}
+        )
+    finally:
+        host.stop()
+
+    assert result["result"]["status_word"] == "9000"
+    assert len(APDUHistory.get()) == 1
+    assert APDUHistory.get()[0].source == "mcp-current"
+
+
+def test_bridge_requires_viewer_approval_for_arbitrary_apdus(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPASSPORT_VIEWER_SOCKET", str(tmp_path / "viewer.sock"))
+    class Viewer:
+        reader = None
+        iso7816 = None
+        ep = None
+        _reader_name = ""
+        _mcp_mrz = None
+        _mcp_can = None
+
+        def approve_mcp_action(self, action, effect):
+            return False
+
+    host = ViewerMCPHost(Viewer())
+    host.start()
+    try:
+        result = ViewerMCPClient().request(
+            "action", {"action": "apdu.transmit", "arguments": {"apdu_hex": "00010000", "channel": "current"}}
+        )
+    finally:
+        host.stop()
+
+    assert result["error"]["code"] == "viewer_denied"
+
+
+def test_bridge_capability_is_ephemeral_and_private(monkeypatch, tmp_path):
+    address = tmp_path / "viewer.sock"
+    monkeypatch.setenv("EPASSPORT_VIEWER_SOCKET", str(address))
+
+    class Viewer:
+        reader = None
+        iso7816 = None
+        ep = None
+        _reader_name = ""
+        _mcp_mrz = None
+        _mcp_can = None
+
+    host = ViewerMCPHost(Viewer())
+    host.start()
+    capability = _capability_path(str(address))
+    try:
+        assert address.exists()
+        assert capability.stat().st_mode & 0o777 == 0o600
+    finally:
+        host.stop()
+
+    assert not address.exists()
+    assert not capability.exists()
+
+    host.start()
+    try:
+        assert ViewerMCPClient().request("list")["groups"]
+    finally:
+        host.stop()
+
+
+def test_default_unix_endpoint_does_not_depend_on_xdg_runtime_dir(monkeypatch, tmp_path):
+    monkeypatch.delenv("EPASSPORT_VIEWER_SOCKET", raising=False)
+    without_xdg = bridge.endpoint()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "gui-runtime"))
+
+    assert bridge.endpoint() == without_xdg
+
+
+def test_second_host_does_not_disable_existing_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPASSPORT_VIEWER_SOCKET", str(tmp_path / "viewer.sock"))
+
+    class Viewer:
+        reader = None
+        iso7816 = None
+        ep = None
+        _reader_name = ""
+        _mcp_mrz = None
+        _mcp_can = None
+
+    first = ViewerMCPHost(Viewer())
+    second = ViewerMCPHost(Viewer())
+    first.start()
+    try:
+        with pytest.raises(ViewerUnavailable, match="already owns"):
+            second.start()
+        assert _capability_path(str(tmp_path / "viewer.sock")).exists()
+        assert ViewerMCPClient().request("list")["groups"]
+    finally:
+        first.stop()
+
+
+def test_bridge_has_no_headless_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPASSPORT_VIEWER_SOCKET", str(tmp_path / "absent.sock"))
+
+    with pytest.raises(ViewerUnavailable, match="not enabled"):
+        ViewerMCPClient().request("list")
+
+
+def test_windows_bridge_uses_a_per_user_named_pipe(monkeypatch):
+    monkeypatch.setattr(bridge.sys, "platform", "win32")
+    monkeypatch.setattr(bridge.getpass, "getuser", lambda: "DOMAIN\\researcher")
+
+    address, family = bridge.endpoint()
+
+    assert family == "AF_PIPE"
+    assert address == r"\\.\pipe\epassportviewer-mcp-DOMAIN_researcher"
 
 
 def test_conformance_action_does_not_return_passport_content():
