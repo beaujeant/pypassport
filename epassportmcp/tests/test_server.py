@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 
 from mcp import Client, StdioServerParameters
@@ -21,7 +22,11 @@ def test_mcp_advertises_only_three_lazy_front_door_tools():
 
 def test_stdio_entrypoint_serves_lazy_catalog_end_to_end():
     async def inspect_server():
-        parameters = StdioServerParameters(command=sys.executable, args=["-m", "epassportmcp"])
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "epassportmcp"],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+        )
         async with Client(parameters, read_timeout_seconds=10) as client:
             tools = await client.list_tools()
             catalog = await client.call_tool("epassport_list_tools", {"group": "transport"})

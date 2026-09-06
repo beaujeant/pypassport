@@ -7,6 +7,7 @@ from pyasn1.type import univ
 from pypassport.asn1 import asn1_length, to_asn1_length
 from pypassport.doc9303.aes_secure_messaging import AesSecureMessaging, AesSecureMessagingException
 from pypassport.doc9303.file_context import MF, resolve_file
+from pypassport.doc9303.file_system import FileSystemExplorer
 from pypassport.doc9303.pace import PACE
 from pypassport.doc9303.security_info import PACEInfo
 from pypassport.iso7816 import APDUCommand, APDUResponse, ISO7816
@@ -52,6 +53,22 @@ def test_file_reference_needs_application_for_colliding_fid():
     with pytest.raises(KeyError, match="Ambiguous"):
         resolve_file("011D")
     assert resolve_file("011D", application=MF).name == "CardSecurity"
+
+
+def test_filesystem_reads_explicit_application_qualified_fid():
+    class FakeISO:
+        raw = b"\x53\x05hello"
+
+        def select_context(self, reference):
+            self.reference = reference
+
+        def read_binary(self, offset, length):
+            return self.raw[offset:offset + length]
+
+    iso = FakeISO()
+    ef = FileSystemExplorer(iso).read_file("A00000024710FE", "BEEF")
+    assert iso.reference.application == "A00000024710FE" and iso.reference.fid == "BEEF"
+    assert ef.file == iso.raw
 
 
 def test_asn1_long_lengths_roundtrip():

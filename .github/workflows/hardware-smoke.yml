@@ -1,0 +1,48 @@
+name: Hardware conformance smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Non-secret interoperability profile
+        required: true
+        default: icao-baseline
+        type: choice
+        options:
+          - icao-baseline
+          - modern-pace
+          - eac-terminal
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, epassport-lab]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e "./pypassport[reader]"
+      - name: Run redacted interoperability profile
+        run: >-
+          pypassport-conformance
+          --profile .github/conformance/${{ inputs.profile }}.json
+          --csca-directory "$EPASSPORT_CSCA_DIR"
+          --report "$RUNNER_TEMP/conformance.json"
+        env:
+          EPASSPORT_MRZ: ${{ secrets.EPASSPORT_MRZ }}
+          EPASSPORT_CAN: ${{ secrets.EPASSPORT_CAN }}
+          EPASSPORT_CSCA_DIR: ${{ vars.EPASSPORT_CSCA_DIR }}
+          EPASSPORT_TA_CHAIN: ${{ vars.EPASSPORT_TA_CHAIN }}
+          EPASSPORT_CVCA_ANCHORS: ${{ vars.EPASSPORT_CVCA_ANCHORS }}
+          EPASSPORT_TA_PRIVATE_KEY: ${{ vars.EPASSPORT_TA_PRIVATE_KEY }}
+          EPASSPORT_ID_PICC: ${{ secrets.EPASSPORT_ID_PICC }}
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: redacted-conformance-${{ github.run_id }}
+          path: ${{ runner.temp }}/conformance.json
+          if-no-files-found: error

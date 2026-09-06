@@ -1,0 +1,11 @@
+{
+  "name": "PACE + Chip Authentication issuer profile",
+  "required_files": ["CardAccess", "COM", "DG1", "DG14", "SOD"],
+  "allowed_access_controls": ["PACE"],
+  "forbid_bac_downgrade": true,
+  "reject_parse_errors": true,
+  "verify_data_group_integrity": true,
+  "verify_sod_signature": true,
+  "verify_chip_authentication": true,
+  "enumerate_file_system": true
+}

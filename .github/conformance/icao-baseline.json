@@ -1,0 +1,10 @@
+{
+  "name": "ICAO Doc 9303 / TR-03105 eMRTD baseline",
+  "required_files": ["COM", "DG1", "SOD"],
+  "allowed_access_controls": ["PACE", "BAC"],
+  "forbid_bac_downgrade": false,
+  "reject_parse_errors": true,
+  "verify_data_group_integrity": true,
+  "verify_sod_signature": true,
+  "enumerate_file_system": true
+}

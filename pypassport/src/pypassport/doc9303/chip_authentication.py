@@ -89,7 +89,7 @@ class ChipAuthentication:
 
         key_ref = (b"" if key_id is None or not ca_info.get("_include_key_reference")
                    else _tlv(0x84, self._int_bytes(key_id, max(1, (key_id.bit_length()+7)//8))))
-        if cipher == "3DES":
+        if version == 1:
             # CA v1 performs the ephemeral exchange in MSE:Set KAT.
             data = _tlv(0x91, terminal_public) + key_ref
             self.iso7816.transmit(APDUCommand("00", "22", "41", "A6", data=data), "CA v1 MSE:Set KAT")

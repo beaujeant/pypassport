@@ -129,6 +129,12 @@ def build_security_report(
         "active_authentication": _active_authentication_summary(captured.get("DG15"), dg14_infos, checks),
         "chip_authentication": [info for info in dg14_infos + card_security_infos if _protocol_startswith(info, "id-CA-")],
         "terminal_authentication": [info for info in dg14_infos + card_security_infos if _protocol_startswith(info, "id-TA")],
+        "extended_access_control_checks": {
+            "chip_authentication": checks.get("chip_authentication"),
+            "terminal_authentication": checks.get("terminal_authentication"),
+            "terminal_rights": _json_value(checks.get("terminal_authentication_rights", {})),
+            "negative_rights": _json_value(checks.get("terminal_negative_rights", [])),
+        },
         "security_infos": dg14_infos + card_security_infos,
         "passive_authentication": _passive_authentication_summary(captured.get("SOD"), sod_verification, checks),
     }
@@ -582,6 +588,25 @@ def _add_authentication_findings(
             findings, "high", "anti-cloning", "Chip Authentication failed",
             str(checks.get("chip_authentication_error", "CA implicit authentication did not validate.")),
             "Preserve the key-selection and first fresh-SM exchanges.",
+        )
+    elif ca and checks.get("chip_authentication") is None:
+        _add(
+            findings,
+            "info",
+            "coverage",
+            "Chip Authentication was advertised but not tested",
+            "DG14/EF.CardSecurity contains a CA protocol and public key, but no successful live CA result is attached.",
+            "Authenticate the key source, run CA, and require an authenticated response under the fresh keys.",
+        )
+    terminal = protocols["terminal_authentication"]
+    if terminal and checks.get("terminal_authentication") is None:
+        _add(
+            findings,
+            "info",
+            "coverage",
+            "Terminal Authentication was advertised but not tested",
+            "DG14/EF.CardSecurity contains Terminal Authentication metadata without a live CVC/CHAT result.",
+            "Run TA with an explicit CVCA trust anchor and test ungranted DG3/DG4 rights.",
         )
     negative = checks.get("terminal_negative_rights", [])
     if isinstance(negative, list):

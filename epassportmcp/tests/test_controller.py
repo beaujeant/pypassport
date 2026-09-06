@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pypassport import reader
 from pypassport.apdu_history import APDUHistory
 from pypassport.doc9303.access_control import NegotiationResult
+from pypassport.doc9303.file_system import FileProbe
 
 from epassportmcp.controller import ActionError, PassportController
 
@@ -151,3 +154,78 @@ def test_missing_pcsc_is_an_actionable_optional_dependency_error(monkeypatch):
         assert error.details == {"install": "epassportviewer-mcp[reader]"}
     else:
         raise AssertionError("missing PC/SC support was not surfaced")
+
+
+def test_advanced_protocol_and_filesystem_actions_are_first_class(tmp_path):
+    controller = PassportController()
+    controller.iso7816 = SimpleNamespace(ciphering=object(), reader_connection=None)
+
+    class FakePassport(dict):
+        def __init__(self):
+            super().__init__()
+            self.access_control = SimpleNamespace(mechanism="PACE", downgraded=False, pace_info=None)
+            self.file_system = SimpleNamespace(
+                applications=lambda: ["A0000002471001"],
+                enumerate=lambda application, extra_fids=(): [
+                    FileProbe(application, extra_fids[0], None, None, True, b"", "9000")
+                ],
+            )
+            self.files = {
+                name: SimpleNamespace(file=name.encode(), get=lambda _name, default=(): default)
+                for name in ("COM", "DG1", "SOD")
+            }
+
+        def __getitem__(self, name):
+            return self.files[name]
+
+        def do_verify_dg_integrity(self, _files):
+            return {"DG1": True}
+
+        def do_chip_authentication(self, **kwargs):
+            return {"version": 2, "key_size": 256, **kwargs}
+
+        def do_terminal_authentication(self, chain, key, id_picc, **kwargs):
+            return {
+                "rights": {"read_dg3": False},
+                "negative_rights": [],
+                "input_lengths": [len(chain), len(key), len(id_picc)],
+            }
+
+    controller.passport = FakePassport()
+    filesystem = controller.execute("passport.filesystem", {"extra_fids": ["01FE"]})["result"]
+    assert filesystem["enumerated"][0]["files"][0]["fid"] == "01FE"
+    ca = controller.execute("security.chip_authentication", {"source": "DG14", "key_id": 7})["result"]
+    assert ca["version"] == 2 and ca["key_id"] == 7
+
+    cvc = tmp_path / "terminal.cvc"
+    key = tmp_path / "terminal.der"
+    anchor = tmp_path / "cvca.cvc"
+    for path in (cvc, key, anchor):
+        path.write_bytes(b"credential")
+    ta = controller.execute("security.terminal_authentication", {
+        "terminal_chain_paths": [str(cvc)],
+        "private_key_path": str(key),
+        "trust_anchor_paths": [str(anchor)],
+        "id_picc_hex": "0102",
+    })["result"]
+    assert ta["input_lengths"] == [1, 10, 2]
+
+
+def test_conformance_action_does_not_return_passport_content():
+    controller = PassportController()
+    controller.iso7816 = SimpleNamespace(ciphering=None, reader_connection=None)
+
+    class FakePassport(dict):
+        access_control = SimpleNamespace(mechanism="PACE", downgraded=False, pace_info=None)
+        file_system = SimpleNamespace(enumerate=lambda *_args, **_kwargs: [])
+
+        def __getitem__(self, name):
+            return SimpleNamespace(file=("PERSONAL-" + name).encode(), get=lambda _name, default=(): default)
+
+        def do_verify_dg_integrity(self, _files):
+            return {"DG1": True}
+
+    controller.passport = FakePassport()
+    result = controller.execute("security.conformance", {})["result"]
+    assert result["verdict"] == "PASS"
+    assert "PERSONAL" not in str(result)

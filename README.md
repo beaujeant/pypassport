@@ -62,7 +62,7 @@ for testing known security vulnerabilities in deployed passports.
 
 ## Installation
 
-This repo is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) and requires Python 3.10 or newer because the current MCP SDK requires it. The standalone `pypassport` library remains compatible with Python 3.9. The recommended way to install is with [`uv`](https://github.com/astral-sh/uv):
+This repo is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) and requires Python 3.10 or newer. The recommended way to install is with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
 # Install uv if you don't have it
@@ -240,6 +240,38 @@ EF.CardSecurity even though both are `011D/77`. The APDU layer supports short
 and extended cases under Secure Messaging, 61xx GET RESPONSE, 6Cxx Le repair,
 authenticated 62xx/63xx partial responses, odd READ BINARY offsets, command
 chaining and bounded reads.
+
+### Interoperability and conformance
+
+`pypassport-conformance` runs a redacted, TR-03105-oriented profile against a
+physical document. Credentials are supplied through `EPASSPORT_MRZ` or the
+three `EPASSPORT_DOCUMENT_NUMBER`, `EPASSPORT_DATE_OF_BIRTH`, and
+`EPASSPORT_DATE_OF_EXPIRY` environment variables (and optional
+`EPASSPORT_CAN`), never through command-line arguments. Reports contain check
+outcomes and APDU status histograms, but no document bytes, credentials, exact
+APDUs, ATR, UID, challenges, keys, or certificate holder references.
+The profiles follow the application/LDS and EAC areas of the official
+[BSI TR-03105 test plans](https://www.bsi.bund.de/dok/TR-03105-en); this runner
+collects interoperability evidence but is not a substitute for accredited
+conformity certification or RF layer testing.
+
+```bash
+EPASSPORT_MRZ='<full MRZ>' pypassport-conformance \
+  --profile .github/conformance/icao-baseline.json \
+  --csca-directory /path/to/trusted-csca \
+  --report conformance.json
+```
+
+The repository includes baseline, modern PACE/CA, and EAC/TA profiles under
+`.github/conformance`. A manual hardware-smoke workflow runs them on a
+self-hosted runner labelled `epassport-lab`; all document credentials and
+ID_PICC values come from runner secrets/environment rather than the workflow
+or report.
+
+The desktop Security workbench exposes the same modern protocol engine under
+**Advanced protocols**. The MCP actions are `passport.filesystem`,
+`passport.read_by_fid`, `security.chip_authentication`,
+`security.terminal_authentication`, and `security.conformance`.
 
 ## Troubleshooting
 

@@ -16,6 +16,7 @@ from pypassport.attacks.active_authentication_traceability import AATraceability
 from pypassport.attacks.brute_force import BruteForce
 from pypassport.attacks.mac_traceability import MacTraceability
 from pypassport.attacks.sign_everything import SignEverything
+from pypassport.conformance import ConformanceProfile, ConformanceRunner
 from pypassport.doc9303 import converter, data_group
 from pypassport.doc9303.access_control import NegotiationResult
 from pypassport.doc9303.mrz import MRZ
@@ -138,6 +139,36 @@ class PassportController:
                 "Begin from a known reset state, preserve exact wire responses, "
                 "then establish or recover Secure Messaging."
             )
+        elif words & {"filesystem", "files", "fid", "sfi", "application", "aid"}:
+            recipe = [
+                "reader.list",
+                "session.connect",
+                "session.authenticate",
+                "passport.filesystem",
+                "passport.read_file",
+                "apdu.history",
+            ]
+            rationale = "Discover every advertised application and preserve its FID/SFI context while probing files."
+        elif words & {"eac", "chip", "terminal", "cvc", "biometric", "fingerprint", "iris"}:
+            recipe = [
+                "reader.list",
+                "session.connect",
+                "session.authenticate",
+                "passport.capture",
+                "security.chip_authentication",
+                "security.terminal_authentication",
+                "passport.read_file",
+            ]
+            rationale = "Authenticate DG14/CardSecurity, re-key with CA, validate the CVC path, then test CHAT rights."
+        elif words & {"conformance", "interop", "interoperability", "compatibility", "issuer", "profile"}:
+            recipe = [
+                "reader.list",
+                "session.connect",
+                "session.authenticate",
+                "security.conformance",
+                "apdu.history",
+            ]
+            rationale = "Run the privacy-preserving profile and inspect only the status evidence behind failed checks."
         elif words & {"pace", "bac", "authentication", "encryption", "secure", "messaging"}:
             recipe = [
                 "reader.list",
@@ -468,6 +499,38 @@ class PassportController:
     def _action_passport_inventory(self, _args: dict[str, Any]) -> dict[str, Any]:
         return {"files": self._inventory_rows(), "acquisition_errors": dict(self._acquisition_errors)}
 
+    def _action_passport_filesystem(self, args: dict[str, Any]) -> dict[str, Any]:
+        passport = self._require_passport()
+        applications = [args["application"]] if args.get("application") else passport.file_system.applications()
+        extra_fids = tuple(self._fid(value) for value in args.get("extra_fids", []))
+        enumerated = []
+        for application in applications:
+            application = str(application).upper()
+            probes = passport.file_system.enumerate(application, extra_fids=extra_fids)
+            enumerated.append({
+                "application": application,
+                "files": [self._compact_value(item, 256) for item in probes],
+            })
+        return {"applications": [str(item).upper() for item in applications], "enumerated": enumerated}
+
+    def _action_passport_read_by_fid(self, args: dict[str, Any]) -> dict[str, Any]:
+        application = str(args["application"]).upper()
+        fid = self._fid(args["fid"])
+        ef = self._require_passport().file_system.read_file(
+            application,
+            fid,
+            sfi=args.get("sfi"),
+            maximum=int(args.get("maximum", 1024 * 1024)),
+        )
+        return self._file_payload(
+            f"{application}:{fid}",
+            ef,
+            "both",
+            int(args.get("raw_offset", 0)),
+            int(args.get("raw_length", 4096)),
+            256,
+        )
+
     def _action_passport_verify(self, args: dict[str, Any]) -> dict[str, Any]:
         passport = self._require_passport()
         results: dict[str, Any] = {}
@@ -509,6 +572,57 @@ class PassportController:
                 self._checks["sod_signature_error"] = str(exc)
                 results["sod_certificate"] = {"ok": False, "error": str(exc)}
         return results
+
+    def _action_security_chip_authentication(self, args: dict[str, Any]) -> dict[str, Any]:
+        passport = self._require_passport()
+        if args.get("csca_directory"):
+            passport.csca_directory = args["csca_directory"]
+        try:
+            result = passport.do_chip_authentication(source=args.get("source", "DG14"), key_id=args.get("key_id"))
+        except Exception as exc:
+            self._checks["chip_authentication"] = False
+            self._checks["chip_authentication_error"] = str(exc)
+            raise
+        self._checks["chip_authentication"] = True
+        self._checks.pop("chip_authentication_error", None)
+        return self._compact_value(result, 256)
+
+    def _action_security_terminal_authentication(self, args: dict[str, Any]) -> dict[str, Any]:
+        passport = self._require_passport()
+        chain = [self._credential_file(path, "terminal CVC") for path in args["terminal_chain_paths"]]
+        anchors = [self._credential_file(path, "CVCA trust anchor") for path in args["trust_anchor_paths"]]
+        key = self._credential_file(args["private_key_path"], "terminal private key")
+        references = args.get("cvca_references_hex")
+        references = [bytes.fromhex(self._clean_hex(value)) for value in references] if references else None
+        id_picc = bytes.fromhex(self._clean_hex(args["id_picc_hex"]))
+        if not id_picc:
+            raise ActionError("invalid_id_picc", "id_picc_hex must not be empty")
+        try:
+            result = passport.do_terminal_authentication(
+                chain,
+                key,
+                id_picc,
+                cvca_references=references,
+                trust_anchors=anchors,
+                test_negative_rights=bool(args.get("test_negative_rights", True)),
+            )
+        except Exception as exc:
+            self._checks["terminal_authentication"] = False
+            self._checks["terminal_authentication_error"] = str(exc)
+            raise
+        self._checks["terminal_authentication"] = True
+        self._checks["terminal_authentication_rights"] = result.get("rights")
+        self._checks["terminal_negative_rights"] = result.get("negative_rights", [])
+        return self._compact_value(result, 256)
+
+    def _action_security_conformance(self, args: dict[str, Any]) -> dict[str, Any]:
+        profile_args = {name: value for name, value in args.items() if name != "csca_directory"}
+        profile = ConformanceProfile.from_mapping(profile_args)
+        report = ConformanceRunner(self._require_passport()).run(
+            profile,
+            csca_directory=args.get("csca_directory"),
+        )
+        return report.to_dict()
 
     # ------------------------------- security actions --------------------------
 
@@ -837,6 +951,24 @@ class PassportController:
         except ValueError as exc:
             raise ActionError("invalid_hex", "Value is not valid hexadecimal") from exc
         return clean
+
+    @classmethod
+    def _fid(cls, raw: Any) -> str:
+        value = cls._clean_hex(raw)
+        if len(value) != 4:
+            raise ActionError("invalid_fid", "Each FID must contain exactly two bytes")
+        return value
+
+    @staticmethod
+    def _credential_file(raw_path: Any, description: str) -> bytes:
+        path = Path(str(raw_path)).expanduser()
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ActionError("credential_read_failed", f"Cannot read {description}: {exc}") from exc
+        if not data or len(data) > 1024 * 1024:
+            raise ActionError("invalid_credential_file", f"{description} must contain 1..1048576 bytes")
+        return data
 
     @staticmethod
     def _parse_short_apdu(raw_hex: str) -> APDUCommand:

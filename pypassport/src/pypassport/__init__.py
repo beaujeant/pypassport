@@ -24,6 +24,7 @@ from pypassport.doc9303.file_context import FileReference, resolve_file
 from pypassport.doc9303.file_system import FileSystemExplorer
 from pypassport.doc9303.terminal_authentication import TerminalAuthentication, CVCertificate, CVCError
 from pypassport.doc9303.trust_store import TrustStore
+from pypassport.conformance import ConformanceProfile, ConformanceReport, ConformanceRunner
 
 __all__ = [
     "EPassport",
@@ -57,4 +58,7 @@ __all__ = [
     "CVCertificate",
     "CVCError",
     "TrustStore",
+    "ConformanceProfile",
+    "ConformanceReport",
+    "ConformanceRunner",
 ]

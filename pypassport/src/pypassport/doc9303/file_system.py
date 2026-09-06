@@ -96,3 +96,22 @@ class FileSystemExplorer:
                 probes.append(FileProbe(application, ref.fid, ref.sfi, ref.name, False, b"",
                                         f"{(exc.sw1 or 0):02X}{(exc.sw2 or 0):02X}"))
         return probes
+
+    def read_file(self, application, fid, *, sfi=None, maximum=1024 * 1024):
+        """Read one explicit application/FID without relying on ambiguous tags."""
+
+        fid = str(fid).upper()
+        if len(fid) != 4 or any(character not in "0123456789ABCDEF" for character in fid):
+            raise ValueError("FID must contain exactly four hexadecimal characters")
+        from pypassport.doc9303.data_group import read_elementary_file
+
+        reference = FileReference(
+            f"{str(application).upper()}:{fid}",
+            f"EF.{fid}",
+            str(application).upper(),
+            fid,
+            sfi,
+            None,
+            "ElementaryFile",
+        )
+        return read_elementary_file(reference, self.iso7816, max_file_size=maximum)

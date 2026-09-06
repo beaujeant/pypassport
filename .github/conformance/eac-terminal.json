@@ -1,0 +1,12 @@
+{
+  "name": "EAC Chip and Terminal Authentication profile",
+  "required_files": ["CardAccess", "COM", "DG1", "DG14", "SOD"],
+  "allowed_access_controls": ["PACE", "BAC"],
+  "forbid_bac_downgrade": false,
+  "reject_parse_errors": true,
+  "verify_data_group_integrity": true,
+  "verify_sod_signature": true,
+  "verify_chip_authentication": true,
+  "verify_terminal_authentication": true,
+  "enumerate_file_system": true
+}

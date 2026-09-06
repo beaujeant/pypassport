@@ -287,6 +287,46 @@ SPECS = (
         example={},
     ),
     ActionSpec(
+        "passport.filesystem",
+        "passport",
+        "Enumerate eMRTD applications and probe application-qualified files.",
+        "Reads EF.DIR, then uses explicit application/FID context so colliding EF.SOD/EF.CardSecurity and "
+        "DG1/EF.DIR identifiers cannot be confused.",
+        _object(
+            {
+                "application": _string("AID in hexadecimal or MF; omit to enumerate every discovered application."),
+                "extra_fids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Additional four-hex-digit FIDs to probe.",
+                    "maxItems": 256,
+                },
+            }
+        ),
+        card_effect="bounded SELECT/READ APDUs",
+        example={},
+    ),
+    ActionSpec(
+        "passport.read_by_fid",
+        "passport",
+        "Read an explicit application-qualified FID.",
+        "Use after passport.filesystem for files not present in the LDS registry. Reads are bounded and the default "
+        "response returns metadata plus a limited hex prefix.",
+        _object(
+            {
+                "application": _string("Application AID in hexadecimal or MF."),
+                "fid": _string("Exactly four hexadecimal FID characters."),
+                "sfi": _integer("Optional short-file identifier.", minimum=1, maximum=31),
+                "maximum": _integer("Maximum permitted EF size.", default=1048576, minimum=1, maximum=16777216),
+                "raw_offset": _integer("Returned raw offset.", default=0, minimum=0),
+                "raw_length": _integer("Maximum returned bytes.", default=4096, minimum=1, maximum=65536),
+            },
+            ("application", "fid"),
+        ),
+        card_effect="bounded SELECT/READ APDUs",
+        example={"application": "A0000002471001", "fid": "0101"},
+    ),
+    ActionSpec(
         "passport.verify",
         "security",
         "Run Active Authentication, SOD trust verification, and DG integrity checks.",
@@ -302,6 +342,101 @@ SPECS = (
         ),
         card_effect="read/authentication APDUs",
         example={"active_authentication": True, "data_group_integrity": True},
+    ),
+    ActionSpec(
+        "security.chip_authentication",
+        "security",
+        "Run Chip Authentication v1/v2 and confirm the fresh channel keys.",
+        "Uses only an SOD-verified DG14 or authenticated EF.CardSecurity. A successful operation replaces the current "
+        "Secure Messaging keys and verifies possession through the first protected response.",
+        _object(
+            {
+                "source": _string("Authenticated key source.", enum=("DG14", "CardSecurity"), default="DG14"),
+                "key_id": _integer("Optional CA key identifier.", minimum=0),
+                "csca_directory": _string("Trust store used for DG14/CardSecurity authentication."),
+            }
+        ),
+        card_effect="Chip Authentication and SM re-key",
+        example={"source": "DG14"},
+    ),
+    ActionSpec(
+        "security.terminal_authentication",
+        "security",
+        "Validate and perform EAC Terminal Authentication.",
+        "Loads the IS/DV CVC chain, terminal private key, and explicit CVCA trust anchors from local files. "
+        "also confirms that DG3/DG4 rights omitted by CHAT remain denied.",
+        _object(
+            {
+                "terminal_chain_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Leaf-first CVC certificate file paths.",
+                    "minItems": 1,
+                },
+                "private_key_path": _string("Terminal RSA/EC private key file."),
+                "trust_anchor_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Explicit CVCA CVC trust anchor file paths.",
+                    "minItems": 1,
+                },
+                "id_picc_hex": _string("Document-derived ID_PICC hexadecimal."),
+                "cvca_references_hex": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Current/previous EF.CVCA references; omit to read EF.CVCA.",
+                    "maxItems": 2,
+                },
+                "test_negative_rights": _boolean("Probe ungranted DG3/DG4 access.", True),
+            },
+            ("terminal_chain_paths", "private_key_path", "trust_anchor_paths", "id_picc_hex"),
+        ),
+        card_effect="Terminal Authentication and protected biometric probes",
+        example={
+            "terminal_chain_paths": ["/path/is.cvc", "/path/dv.cvc"],
+            "private_key_path": "/path/is-key.der",
+            "trust_anchor_paths": ["/path/cvca.cvc"],
+            "id_picc_hex": "0102030405060708",
+        },
+    ),
+    ActionSpec(
+        "security.conformance",
+        "security",
+        "Run a redacted BSI TR-03105-oriented interoperability profile.",
+        "Runs required LDS, access-control, filesystem and optional authenticity/CA checks. The output contains no "
+        "credentials, raw document contents, exact APDUs, ATR, UID, challenges, keys, or certificate identities.",
+        _object(
+            {
+                "name": _string("Profile/report name."),
+                "required_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Logical files required by the issuer profile.",
+                    "maxItems": 32,
+                },
+                "allowed_access_controls": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["pace", "bac", "none", "PACE", "BAC", "NONE"]},
+                    "description": "Accepted mechanisms (case-sensitive values are normalized).",
+                    "maxItems": 3,
+                },
+                "allowed_pace_oids": {"type": "array", "items": {"type": "string"}, "maxItems": 64},
+                "forbid_bac_downgrade": _boolean("Fail an explicit PACE-to-BAC downgrade.", True),
+                "reject_parse_errors": _boolean("Fail structurally anomalous required files.", True),
+                "verify_data_group_integrity": _boolean("Check requested DG hashes against SOD.", True),
+                "verify_sod_signature": _boolean("Validate DSC/CSCA trust.", False),
+                "verify_active_authentication": _boolean("Run AA.", False),
+                "verify_chip_authentication": _boolean("Run CA.", False),
+                "chip_authentication_source": _string("CA key source.", enum=("DG14", "CardSecurity"), default="DG14"),
+                "chip_authentication_key_id": _integer("Optional CA key identifier.", minimum=0),
+                "enumerate_file_system": _boolean("Enumerate/probe application files.", True),
+                "application": _string("Application AID or MF."),
+                "extra_fids": {"type": "array", "items": {"type": "string"}, "maxItems": 256},
+                "csca_directory": _string("CSCA/Master List directory for trust checks."),
+            }
+        ),
+        card_effect="bounded read/authentication APDUs",
+        example={"name": "modern issuer", "allowed_access_controls": ["PACE"]},
     ),
     ActionSpec(
         "security.audit",

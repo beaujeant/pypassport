@@ -24,6 +24,9 @@ testpaths = [
     "epassportviewer/tests",
     "epassportmcp/tests",
 ]
+markers = [
+    "hardware: requires a locally attached eMRTD and PC/SC reader",
+]
 
 [tool.ruff]
 line-length = 120
@@ -45,4 +48,4 @@ module = ["pyasn1", "pyasn1.*", "pyasn1_modules", "pyasn1_modules.*", "ecdsa", "
 ignore_missing_imports = true
 
 [tool.coverage.run]
-source = ["pypassport/src", "epassportviewer/src"]
+source = ["pypassport/src", "epassportviewer/src", "epassportmcp/src"]

@@ -26,16 +26,20 @@ used by this project:
 | **Secure Messaging** | ISO 9797 / ICAO 9303 | Encrypts and MACs every APDU after BAC/PACE using 3DES or AES session keys and a Send Sequence Counter |
 | **Passive Authentication** | ICAO 9303 Part 11 | Verifies the Document Security Object (EF.SOD) against a Document Signer Certificate (DSC) and its issuing Country Signing CA (CSCA); validates data group hashes |
 | **Active Authentication** | ICAO 9303 Part 11 | Detects chip cloning — the chip signs a random challenge with the RSA or ECDSA private key whose public counterpart is stored in DG15 |
+| **Chip Authentication** | BSI TR-03110 / EAC | CA v1/v2 with DH/ECDH and 3DES/AES re-keys Secure Messaging and verifies chip-key possession |
+| **Terminal Authentication** | BSI TR-03110 / EAC | Validates CVC paths/CHAT rights and authenticates inspection systems for protected biometrics |
 
-PACE support is intentionally limited to the `id-PACE-ECDH-GM-AES-CBC-CMAC`
-profiles with Brainpool P-256-r1 domain parameters. DH-based PACE, Integrated
-Mapping, CAM, 3DES PACE, and other EC domain parameters are not implemented.
+PACE supports DH/ECDH Generic and Integrated Mapping, ECDH Chip Authentication
+Mapping, 3DES and AES-128/192/256, standardized parameters, issuer-supplied
+explicit parameters, and MRZ/CAN/PIN/PUK password references. The
+EF.CardSecurity evidence required to finish CAM must subsequently complete
+Passive Authentication.
 
 ### Logical Data Structure (LDS)
 
 The library has parser classes for the LDS files below. Whether a physical
 chip returns a file depends on the document's access controls; DG3 and DG4, in
-particular, are usually protected by EAC that this project does not perform.
+particular, are usually EAC/Terminal Authentication protected.
 
 | Tag | Name | Content |
 |-----|------|---------|
@@ -233,8 +237,10 @@ pubkey = ep.get_public_key()          # RSA or ECDSA public key (PEM)
 ### Passive Authentication
 
 Passive Authentication requires a directory of trusted CSCA certificates.
-`CAManager` loads `.cer`, `.crt`, `.pem`, `.der`, and ICAO Master List `.ml`
-files from that directory.
+`TrustStore` loads `.cer`, `.crt`, `.pem`, `.der`, and ICAO Master List `.ml`
+files from that directory. Master Lists require explicit MLSC trust anchors;
+the strict path also processes link certificates, CRLs, and signed Deviation
+Lists.
 When an issuing state has published its CSCA through ICAO, it is available in
 the [ICAO Master List](https://www.icao.int/icao-pkd/icao-master-list);
 otherwise use that state's national PKI.
@@ -249,10 +255,10 @@ cert_pem = ep.get_certificate()             # Document Signer Certificate (PEM)
 
 ### PACE
 
-PACE needs no separate call: `ep.open()` reads `EF.CardAccess`, runs PACE when
-the chip advertises an implemented ECDH-GM/AES Brainpool P-256-r1 profile, and
-otherwise falls back to BAC when an MRZ is available (see *Automatic PACE/BAC
-selection* above). To require PACE explicitly:
+PACE needs no separate call: `ep.open()` reads `EF.CardAccess`, selects the
+strongest locally supported DH/ECDH GM/IM/CAM AES/3DES profile, and enters BAC
+only for a BAC-only document unless downgrade was explicitly permitted. To
+require PACE explicitly:
 
 ```python
 ep.open(access_control="pace")   # raises if the chip can't do implemented PACE
@@ -324,7 +330,8 @@ EPassport (dict)
  ├── ISO7816          — APDU transport layer (ISO 7816-4 commands)
  │    └── SecureMessaging — protects APDUs after BAC/PACE (ISO 9797 padding + 3DES/AES)
  ├── BAC              — derives Kenc/Kmac from MRZ; runs mutual authentication
- ├── PACE             — ECDH-GM key agreement (Brainpool P-256-r1 / AES)
+ ├── PACE             — DH/ECDH GM, IM and CAM with 3DES/AES
+ ├── Conformance      — redacted TR-03105 live profile evidence
  ├── ActiveAuthentication  — sends challenge, verifies RSA or ECDSA signature against DG15
  ├── PassiveAuthentication — verifies EF.SOD, certificate chain, DG hashes
  └── MRZ              — validates access-control MRZ key material

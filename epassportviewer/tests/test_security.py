@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from pypassport.doc9303.security_info import PACEInfo
 
 from epassportviewer.security import SecurityPane
@@ -140,3 +142,9 @@ def test_snapshot_metadata_restores_offline_capture_context():
     assert report.acquisition_errors == {"DG2": "Unreadable"}
     assert report.protocols["access_control"]["selected_pace_info"]["oid"] == "0.4.0.127.0.7.2.2.4.2.2"
     assert "EF.SOD signature chain was not verified" not in _titles(report)
+
+
+def test_advanced_filesystem_fid_input_is_strict():
+    assert SecurityPane._parse_fids("011C, 01fe") == ("011C", "01FE")
+    with pytest.raises(ValueError, match="four hexadecimal"):
+        SecurityPane._parse_fids("DG1")

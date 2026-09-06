@@ -226,7 +226,8 @@ class TerminalAuthentication:
             digest = algorithm[1].new(message)
             signature = (pkcs1_15 if algorithm[2] == "v1.5" else pss).new(key).sign(digest)
         else:
-            key = SigningKey.from_der(private_key_der)
+            key_data = bytes(private_key_der)
+            key = SigningKey.from_pem(key_data) if b"-----BEGIN" in key_data else SigningKey.from_der(key_data)
             signature = key.sign_digest(algorithm[1].new(message).digest(), sigencode=sigencode_string, allow_truncate=True)
         self.iso7816.transmit(APDUCommand("00", "82", "00", "00", data=signature), "TA External Authenticate")
         return {"terminal": terminal.chr.decode("ascii", "replace"), "rights": terminal.rights, "challenge": challenge.hex().upper()}

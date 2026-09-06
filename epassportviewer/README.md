@@ -60,6 +60,9 @@ Summarises the current View session and keeps the research tools in one place:
 - An **Attacks** subtab for **MAC traceability**, **AA-before-BAC**,
   **sign-everything oracle**, **AA modulus traceability**, and **BAC brute
   force** (online and offline)
+- An **Advanced protocols** subtab for application-qualified filesystem/FID
+  exploration, bounded arbitrary EF reads, SOD/CardSecurity-backed Chip
+  Authentication, and CVC/CHAT-based Terminal Authentication
 
 ### Sessions & MRZ history
 

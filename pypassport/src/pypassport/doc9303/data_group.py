@@ -1556,6 +1556,7 @@ class CardSecurity(ElementaryFile):
 
 
 _CLASS_MAP = {
+    "ElementaryFile": ElementaryFile,
     "Common": Common,
     "DataGroup1": DataGroup1,
     "DataGroup2": DataGroup2,

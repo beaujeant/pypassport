@@ -17,7 +17,9 @@ The detailed catalog currently includes reader/session lifecycle, automatic or
 explicit PACE/BAC, exact raw-wire and Secure-Messaging APDUs, LDS capture and
 chunked evidence access, live authenticity checks, security findings, complete
 clear/wire traffic history, deterministic fuzzing, traceability/signing-oracle
-research, bounded BAC searches, and snapshot import/export.
+research, bounded BAC searches, snapshot import/export, application-qualified
+filesystem reads, Chip/Terminal Authentication, and redacted conformance
+profiles.
 
 ## Install and configure
 
