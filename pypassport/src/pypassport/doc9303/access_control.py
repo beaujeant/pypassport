@@ -74,9 +74,25 @@ class BACAuthenticationError(AccessControlNegotiationError):
 class NegotiationResult:
     """Outcome of a successful access-control negotiation."""
 
-    def __init__(self, mechanism: str, pace_info: Optional[PACEInfo] = None):
+    def __init__(
+        self,
+        mechanism: str,
+        pace_info: Optional[PACEInfo] = None,
+        *,
+        advertised_pace_infos: Optional[list[PACEInfo]] = None,
+        attempts: Optional[list[dict]] = None,
+        fallback_reason: Optional[str] = None,
+        cam_result=None,
+        card_security=None,
+    ):
         self.mechanism = mechanism  # "PACE" or "BAC"
         self.pace_info = pace_info
+        self.advertised_pace_infos = list(advertised_pace_infos or [])
+        self.attempts = list(attempts or [])
+        self.fallback_reason = fallback_reason
+        self.downgraded = mechanism == "BAC" and bool(self.advertised_pace_infos or fallback_reason)
+        self.cam_result = cam_result
+        self.card_security = card_security
 
     def __repr__(self):
         if self.pace_info is not None:
@@ -127,14 +143,14 @@ class PACEAuthenticator:
     (password reference 0x01).
     """
 
-    def __init__(self, iso7816, mrz: Optional[MRZ] = None, can: Optional[str] = None):
-        if can is None and mrz is None:
-            raise AccessControlNegotiationError("PACE requires either an MRZ or a CAN.")
+    def __init__(self, iso7816, mrz: Optional[MRZ] = None, can=None, pin=None, puk=None, password=None):
+        if all(x is None for x in (can, pin, puk, password, mrz)):
+            raise AccessControlNegotiationError("PACE requires an MRZ, CAN, PIN, PUK, or raw password.")
         self._iso7816 = iso7816
-        self._pace = PACE(iso7816, mrz=mrz, can=can)
-        self._secret_label = "CAN" if can is not None else "MRZ"
+        self._pace = PACE(iso7816, mrz=mrz, can=can, pin=pin, puk=puk, password=password)
+        self._secret_label = next((name for name, value in (("CAN", can), ("PIN", pin), ("PUK", puk), ("raw", password)) if value is not None), "MRZ")
 
-    def authenticate(self, info: PACEInfo) -> None:
+    def authenticate(self, info: PACEInfo, *, include_parameter_reference=False) -> None:
         logging.info(
             "Access control: running PACE (%s/%s/%s-%d) with %s",
             info.key_agreement or "?",
@@ -146,11 +162,13 @@ class PACEAuthenticator:
 
         # Build the algorithm OID and (optionally) the domain parameter id.
         oid_bytes = _oid_to_der_value(info.oid)
-        domain = bytes([info.parameter_id]) if info.parameter_id is not None else b""
+        width = max(1, (info.parameter_id.bit_length() + 7) // 8) if info.parameter_id is not None else 0
+        domain = info.parameter_id.to_bytes(width, "big") if include_parameter_reference and info.parameter_id is not None else b""
 
         pw_ref = self._pace.password_reference or PACE.PWD_MRZ
         try:
-            self._pace.perform_pace(oid_bytes, pw_ref, domain_params=domain)
+            self._pace.perform_pace(oid_bytes, pw_ref, domain_params=domain,
+                                    explicit_domain_parameters=info.domain_parameters, parameter_id=info.parameter_id)
         except NotImplementedError as exc:
             raise PACEAuthenticationError(
                 "PACE selected but the local implementation is incomplete: "
@@ -181,6 +199,11 @@ class PACEAuthenticator:
                 "use access_control='bac' to force BAC instead.",
                 mechanism="PACE",
             )
+        if info.mapping == "CAM":
+            from pypassport.doc9303.data_group import read_elementary_file
+
+            self.card_security = read_elementary_file("CardSecurity", self._iso7816)
+            self.cam_result = self._pace.verify_cam(self.card_security)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +222,17 @@ class AccessControlNegotiator:
         self._card_access_reader = CardAccessReader(iso7816)
         self._parser: SecurityInfoParser = SecurityInfoParser()
 
-    def open(self, mrz, mode: str = MODE_AUTO, can: Optional[str] = None) -> NegotiationResult:
+    def open(
+        self,
+        mrz,
+        mode: str = MODE_AUTO,
+        can: Optional[str] = None,
+        *,
+        pin=None,
+        puk=None,
+        password=None,
+        allow_bac_fallback: bool = False,
+    ) -> NegotiationResult:
         """
         Run the configured access-control flow and select the eMRTD AID.
 
@@ -220,10 +253,10 @@ class AccessControlNegotiator:
 
         if mode == MODE_BAC and mrz is None:
             raise AccessControlNegotiationError("MRZ is required for access_control='bac'.")
-        if mode == MODE_PACE and mrz is None and can is None:
-            raise AccessControlNegotiationError("PACE requires either an MRZ or a CAN.")
-        if mode == MODE_AUTO and mrz is None and can is None:
-            raise AccessControlNegotiationError("access_control='auto' requires an MRZ (and optionally a CAN).")
+        if mode == MODE_PACE and all(x is None for x in (mrz, can, pin, puk, password)):
+            raise AccessControlNegotiationError("PACE requires an MRZ, CAN, PIN, PUK, or raw password.")
+        if mode == MODE_AUTO and all(x is None for x in (mrz, can, pin, puk, password)):
+            raise AccessControlNegotiationError("access_control='auto' requires a PACE password or BAC MRZ.")
 
         if mode == MODE_NONE:
             logging.warning("Access control mode 'none' — no secure messaging will be set up.")
@@ -231,20 +264,50 @@ class AccessControlNegotiator:
             return NegotiationResult(mechanism="NONE")
 
         if mode == MODE_BAC:
-            BACAuthenticator(self._iso7816).authenticate(mrz)
             self._select_emrtd_application()
-            return NegotiationResult(mechanism="BAC")
+            BACAuthenticator(self._iso7816).authenticate(mrz)
+            return NegotiationResult(mechanism="BAC", attempts=[{"mechanism": "BAC", "result": "success"}])
 
         # auto or pace — read EF.CardAccess first.
         pace_info = self._discover_pace_info(mandatory=(mode == MODE_PACE))
+        pace_candidates = list(getattr(self, "_pace_candidates", [pace_info] if pace_info else []))
+        advertised = list(getattr(self, "_advertised_pace_infos", []))
+        attempts: list[dict] = []
+        fallback_reason = getattr(self, "_pace_discovery_problem", None)
 
-        if pace_info is not None:
+        safe_legacy_fallback = fallback_reason in ("cardaccess_missing", "cardaccess_contains_no_pace_info")
+        if mode == MODE_AUTO and fallback_reason and not safe_legacy_fallback and not allow_bac_fallback:
+            raise AccessControlNegotiationError(
+                f"PACE discovery failed and BAC fallback is disabled: {fallback_reason}", mechanism="PACE"
+            )
+
+        for candidate_no, pace_info in enumerate(pace_candidates):
             try:
-                PACEAuthenticator(self._iso7816, mrz=mrz, can=can).authenticate(pace_info)
+                authenticator_args = {"mrz": mrz, "can": can}
+                authenticator_args.update({name: value for name, value in (("pin", pin), ("puk", puk), ("password", password)) if value is not None})
+                authenticator = PACEAuthenticator(self._iso7816, **authenticator_args)
+                if sum(x.oid == pace_info.oid for x in advertised) > 1:
+                    authenticator.authenticate(pace_info, include_parameter_reference=True)
+                else:
+                    authenticator.authenticate(pace_info)
                 self._select_emrtd_application()
-                return NegotiationResult(mechanism="PACE", pace_info=pace_info)
-            except PACEAuthenticationError:
-                if mode == MODE_PACE or mrz is None:
+                attempts.append({"mechanism": "PACE", "oid": pace_info.oid, "result": "success"})
+                return NegotiationResult(
+                    mechanism="PACE", pace_info=pace_info, advertised_pace_infos=advertised, attempts=attempts,
+                    cam_result=getattr(authenticator, "cam_result", None),
+                    card_security=getattr(authenticator, "card_security", None),
+                )
+            except PACEAuthenticationError as exc:
+                attempts.append({"mechanism": "PACE", "oid": pace_info.oid, "result": "failed", "error": str(exc)})
+                fallback_reason = f"PACE authentication failed: {exc}"
+                if candidate_no + 1 < len(pace_candidates):
+                    try:
+                        self._iso7816.rst_connection_raw()
+                        self._card_access_reader.read()
+                    except Exception as reset_exc:
+                        raise PACEAuthenticationError(f"Could not reset for the next PACEInfo: {reset_exc}") from reset_exc
+                    continue
+                if mode == MODE_PACE or mrz is None or not allow_bac_fallback:
                     raise
                 logging.warning("PACE failed; falling back to BAC.")
                 # A failed PACE leaves the chip in a sticky auth-pending
@@ -256,9 +319,15 @@ class AccessControlNegotiator:
                     logging.warning("Could not reset card before BAC fallback: %s", exc)
 
         # auto mode — fall back to BAC.
-        BACAuthenticator(self._iso7816).authenticate(mrz)
         self._select_emrtd_application()
-        return NegotiationResult(mechanism="BAC")
+        BACAuthenticator(self._iso7816).authenticate(mrz)
+        attempts.append({"mechanism": "BAC", "result": "success"})
+        return NegotiationResult(
+            mechanism="BAC",
+            advertised_pace_infos=advertised,
+            attempts=attempts,
+            fallback_reason=fallback_reason,
+        )
 
     def _discover_pace_info(self, *, mandatory: bool) -> Optional[PACEInfo]:
         """
@@ -270,6 +339,8 @@ class AccessControlNegotiator:
         try:
             raw = self._card_access_reader.read()
         except CardAccessNotFound as exc:
+            self._advertised_pace_infos = []
+            self._pace_discovery_problem = "cardaccess_missing"
             if mandatory:
                 raise AccessControlNegotiationError(
                     f"EF.CardAccess is not available on this chip, but PACE was required: {exc}",
@@ -280,6 +351,8 @@ class AccessControlNegotiator:
             logging.info("EF.CardAccess not found; assuming BAC-only chip.")
             return None
         except CardAccessReadError as exc:
+            self._advertised_pace_infos = []
+            self._pace_discovery_problem = f"cardaccess_read_error: {exc}"
             if mandatory:
                 raise AccessControlNegotiationError(
                     f"Could not read EF.CardAccess: {exc}",
@@ -293,6 +366,8 @@ class AccessControlNegotiator:
         try:
             infos = self._parser.parse(raw)
         except SecurityInfoParseError as exc:
+            self._advertised_pace_infos = []
+            self._pace_discovery_problem = f"cardaccess_parse_error: {exc}"
             if mandatory:
                 raise AccessControlNegotiationError(
                     f"EF.CardAccess could not be parsed: {exc}",
@@ -301,7 +376,10 @@ class AccessControlNegotiator:
             logging.warning("EF.CardAccess parse error: %s; falling back to BAC.", exc)
             return None
 
+        self._advertised_pace_infos = list(infos)
+        self._pace_discovery_problem = None
         if not infos:
+            self._pace_discovery_problem = "cardaccess_contains_no_pace_info"
             if mandatory:
                 raise NoSupportedPACEInfo(
                     "EF.CardAccess contained no PACEInfo entries.",
@@ -310,9 +388,11 @@ class AccessControlNegotiator:
             logging.info("No PACEInfo entries in EF.CardAccess; falling back to BAC.")
             return None
 
-        chosen = self._parser.select_supported(infos)
+        self._pace_candidates = self._parser.select_all_supported(infos)
+        chosen = self._pace_candidates[0] if self._pace_candidates else None
         if chosen is None:
             unsupported = ", ".join(info.oid for info in infos)
+            self._pace_discovery_problem = f"no_locally_supported_pace_profile: {unsupported}"
             if mandatory:
                 raise NoSupportedPACEInfo(
                     f"No supported PACEInfo found in EF.CardAccess. Chip advertised: {unsupported}.",

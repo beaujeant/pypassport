@@ -5,6 +5,7 @@ import hashlib
 from typing import Any, TypedDict
 
 from pyasn1.codec.der import decoder
+from pyasn1.codec.der.encoder import encode as der_encode
 from pypassport import hex_utils
 from pypassport.doc9303 import converter
 from pypassport.doc9303 import data_group
@@ -12,6 +13,7 @@ from pypassport.der_object_identifier import OID, OIDException
 from pypassport.ca_manager import CAManager
 from pypassport.doc9303 import cms
 from pypassport import asn1
+from pypassport.doc9303.trust_store import TrustStore
 
 
 # Dispatch table mapping OID strings directly to hashlib constructors.
@@ -90,8 +92,8 @@ class PassiveAuthentication:
         if not isinstance(sodObj, data_group.SOD):
             raise PassiveAuthenticationException("sodObj must be a sod object")
 
-        if not isinstance(csca_directory, CAManager):
-            raise PassiveAuthenticationException("csca_directory must be a CAManager object")
+        if not isinstance(csca_directory, (CAManager, TrustStore)):
+            raise PassiveAuthenticationException("csca_directory must be a CAManager or TrustStore")
 
         self._verification_info = None
         info = self._parse(sodObj)
@@ -108,7 +110,15 @@ class PassiveAuthentication:
             raise PassiveAuthenticationException("SOD signature verification failed: " + str(msg))
 
         # Verify the Document Signer Certificate against the trusted CSCA store.
-        matched_csca_der = self.verify_dsc(info.dsc_der, csca_directory)
+        trust_result = None
+        if isinstance(csca_directory, TrustStore):
+            try:
+                trust_result = csca_directory.verify_document_signer(info.dsc_der)
+                matched_csca_der = trust_result.chain[-1]
+            except cms.CMSVerificationException as msg:
+                raise PassiveAuthenticationException(str(msg)) from msg
+        else:
+            matched_csca_der = self.verify_dsc(info.dsc_der, csca_directory)
         self._verification_info = {
             "sod": {
                 "econtent_type_oid": info.econtent_type,
@@ -120,6 +130,10 @@ class PassiveAuthentication:
             "document_signer_certificate": cms.certificate_summary(info.dsc_der),
             "country_signing_ca_certificate": cms.certificate_summary(matched_csca_der),
         }
+        if trust_result is not None:
+            self._verification_info["certificate_path"] = [cms.certificate_summary(x) for x in trust_result.chain]
+            self._verification_info["profile_warnings"] = trust_result.warnings
+            self._verification_info["signed_deviations"] = trust_result.deviations
         dsc = self._verification_info["document_signer_certificate"]
         logging.info(
             "SOD verified with DSC subject=%s serial=%s issuer=%s",
@@ -238,17 +252,24 @@ class PassiveAuthentication:
         dg_hashes: dict[str, bytes] = {}
 
         certType = asn1.LDSSecurityObject()
-        cert = decoder.decode(data, asn1Spec=certType)[0]
+        cert, trailing = decoder.decode(data, asn1Spec=certType)
+        if trailing or der_encode(cert) != data:
+            raise PassiveAuthenticationException("LDS Security Object is not canonical DER")
 
         content["version"] = cert.getComponentByName("version").prettyPrint()
         content["hashAlgorithm"] = (
             cert.getComponentByName("hashAlgorithm").getComponentByName("algorithm").prettyPrint()
         )
+        hash_fn = _HASH_ALGORITHMS.get(content["hashAlgorithm"])
+        if hash_fn is None:
+            raise PassiveAuthenticationException("Unsupported LDS hash algorithm " + content["hashAlgorithm"])
 
         for h in cert.getComponentByName("dataGroupHashValues"):
-            dg_hashes[h.getComponentByName("dataGroupNumber").prettyPrint()] = h.getComponentByName(
-                "dataGroupHashValue"
-            ).asOctets()
+            number = h.getComponentByName("dataGroupNumber").prettyPrint()
+            value = h.getComponentByName("dataGroupHashValue").asOctets()
+            if number in dg_hashes or not 1 <= int(number) <= 16 or len(value) != hash_fn().digest_size:
+                raise PassiveAuthenticationException("Invalid/duplicate data-group hash entry " + number)
+            dg_hashes[number] = value
 
         content["dataGroupHashValues"] = dg_hashes
 

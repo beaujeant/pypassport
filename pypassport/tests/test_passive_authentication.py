@@ -457,7 +457,13 @@ def test_load_certificates_der_passthrough(pki):
 
 def test_load_master_list_certificates_uses_inner_csca_set_only(pki):
     master_list = _make_master_list([pki["csca_der"]], pki["dsc_der"], pki["dsc_key"], "Test CSCA", 42)
-    assert cms.load_master_list_certificates(master_list) == [pki["csca_der"]]
+    assert cms.load_master_list_certificates(master_list, [pki["dsc_der"]]) == [pki["csca_der"]]
+
+
+def test_load_master_list_certificates_rejects_unanchored_signer(pki):
+    master_list = _make_master_list([pki["csca_der"]], pki["dsc_der"], pki["dsc_key"], "Test CSCA", 42)
+    with pytest.raises(cms.CMSVerificationException, match="Signer trust anchors"):
+        cms.load_master_list_certificates(master_list)
 
 
 def test_load_master_list_rejects_other_signed_data(pki):
@@ -485,7 +491,7 @@ def test_camanager_loads_icao_master_list_for_passive_authentication(pki, tmp_pa
 
     pa = PassiveAuthentication()
     sod = _make_sod_object(pki["sod_der"])
-    assert pa.verify_sod_and_cds(sod, CAManager(str(tmp_path))) is True
+    assert pa.verify_sod_and_cds(sod, CAManager(str(tmp_path), master_list_signers=[pki["dsc_der"]])) is True
 
 
 def test_verify_chain_skips_non_certificate_in_store(pki):

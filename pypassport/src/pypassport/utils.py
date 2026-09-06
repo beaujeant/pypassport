@@ -76,11 +76,16 @@ def parse_tlv(data: bytes | bytearray | memoryview | str | list[int]) -> tuple[s
     if not raw:
         raise ValueError("cannot parse an empty TLV value")
 
-    if (raw[0] & 0x0F) == 0x0F:
-        if len(raw) < 2:
+    if (raw[0] & 0x1F) == 0x1F:
+        offset = 1
+        while offset < len(raw):
+            more = raw[offset] & 0x80
+            offset += 1
+            if not more:
+                break
+        if raw[offset - 1] & 0x80:
             raise ValueError("truncated multi-byte TLV tag")
-        tag = to_hex_string(raw[:2])
-        offset = 2
+        tag = to_hex_string(raw[:offset])
     else:
         tag = to_hex_string(raw[0])
         offset = 1

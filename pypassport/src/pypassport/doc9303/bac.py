@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 from hashlib import sha1
 from Crypto import Random
@@ -210,11 +211,17 @@ class BAC:
         ksenc, ksmac = self._require_document_keys()
         if self._kifd is None or self._rnd_ifd is None:
             raise BACException("BAC authentication material is not initialized")
-        if mac(ksmac, pad(data[0:32])) != data[32:]:
-            raise Exception("The MAC value is not correct")
+        if len(data) != 40:
+            raise BACException(f"Mutual Authentication response must be 40 bytes, got {len(data)}")
+        if not hmac.compare_digest(mac(ksmac, pad(data[0:32])), data[32:40]):
+            raise BACException("The MAC value is not correct")
 
         tdes = DES3.new(ksenc, DES3.MODE_CBC, b"\x00\x00\x00\x00\x00\x00\x00\x00")
         response = tdes.decrypt(data[0:32])
+        if not hmac.compare_digest(response[0:8], bytes(rnd_icc)):
+            raise BACException("Chip response did not echo RND.ICC")
+        if not hmac.compare_digest(response[8:16], self._rnd_ifd):
+            raise BACException("Chip response did not echo RND.IFD")
         response_kicc = response[16:32]
         Kseed = self._xor(self._kifd, response_kicc)
         if _DEBUG_CRYPTO:

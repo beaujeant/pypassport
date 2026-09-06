@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import os
-import time
 import datetime
-import re
 import logging
-
+import os
+import re
+import time
 from hashlib import sha1
-from Crypto.Cipher import DES3
-from Crypto.Cipher import DES
 
-from pypassport.iso7816 import ISO7816, ISO7816Exception
-from pypassport.iso9797 import mac, pad
+from Crypto.Cipher import DES, DES3
+
 from pypassport.hex_utils import bin_to_hex_rep, hex_rep_to_bin
+from pypassport.iso7816 import ISO7816, APDUCommand, ISO7816Exception
+from pypassport.iso9797 import mac, pad
 
 
 class BruteForceException(Exception):
@@ -538,7 +537,10 @@ class BruteForce:
     def _send_cmd_data(self, cmd_data):
         """Send the EXTERNAL/MUTUAL AUTHENTICATE command data to the chip."""
         iso7816 = self._require_iso7816()
-        toSend = iso7816.mutual_authentication(bin_to_hex_rep(cmd_data))
+        # Build rather than execute the command here; mutual_authentication()
+        # itself transmits and returning its response as a second command loses
+        # the original status word on authentication failures.
+        toSend = APDUCommand("00", "82", "00", "00", data=bin_to_hex_rep(cmd_data), le="28")
         return iso7816.transmit(toSend, "Mutual Authentication")
 
     def init_offline(self, mrz):

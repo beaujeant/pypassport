@@ -33,6 +33,7 @@ STRATEGY_DATA_BITFLIP = "data_bitflip"
 STRATEGY_TLV_LENGTH = "tlv_length"
 STRATEGY_PAYLOAD_LENGTH = "payload_length"
 STRATEGY_OVERSIZED_PAYLOAD = "oversized_payload"
+STRATEGY_EXTENDED_ENCODING = "extended_encoding"
 STRATEGY_SFI_SWEEP = "sfi_sweep"
 STRATEGY_DATA_WORD_SWEEP = "data_word_sweep"
 
@@ -48,6 +49,7 @@ STRATEGY_LABELS = {
     STRATEGY_TLV_LENGTH: "TLV length corruption",
     STRATEGY_PAYLOAD_LENGTH: "Payload lengths",
     STRATEGY_OVERSIZED_PAYLOAD: "Oversized payloads",
+    STRATEGY_EXTENDED_ENCODING: "Canonical extended APDUs",
     STRATEGY_SFI_SWEEP: "READ BINARY SFI sweep",
     STRATEGY_DATA_WORD_SWEEP: "Data word sweep",
 }
@@ -94,13 +96,14 @@ class FuzzCase:
     lc: str
     data: str
     le: str
+    extended: bool | None = None
 
     @property
     def raw_hex(self) -> str:
-        return "".join((self.cla, self.ins, self.p1, self.p2, self.lc, self.data, self.le)).upper()
+        return str(self.to_command()).upper()
 
     def to_command(self) -> APDUCommand:
-        return APDUCommand(self.cla, self.ins, self.p1, self.p2, self.lc, self.data, self.le)
+        return APDUCommand(self.cla, self.ins, self.p1, self.p2, self.lc, self.data, self.le, extended=self.extended)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self) | {"raw_hex": self.raw_hex}
@@ -290,8 +293,16 @@ def generate_fuzz_cases(
                     f"payload len={length} wrapped Lc={length & 0xFF:02X} pattern={pattern:02X}",
                     lc=f"{length & 0xFF:02X}",
                     data=payload.hex().upper(),
+                    extended=False,
                 ):
                     return cases
+
+    if STRATEGY_EXTENDED_ENCODING in selected:
+        for length in (256, 512, 1024):
+            payload = bytes([0x41]) * length
+            if not add(STRATEGY_EXTENDED_ENCODING, f"case 4E payload len={length}", lc=f"{length:04X}",
+                       data=payload.hex().upper(), le="0000", extended=True):
+                return cases
 
     if STRATEGY_SFI_SWEEP in selected:
         for sfi in range(1, 32):
@@ -422,7 +433,7 @@ def classify_response(sw1: int | None, sw2: int | None, *, error: str = "") -> s
     return "other"
 
 
-def _fields(command: APDUCommand) -> dict[str, str]:
+def _fields(command: APDUCommand) -> dict[str, Any]:
     return {
         "cla": command.cla.upper(),
         "ins": command.ins.upper(),
@@ -431,11 +442,12 @@ def _fields(command: APDUCommand) -> dict[str, str]:
         "lc": command.lc.upper(),
         "data": command.data.upper(),
         "le": command.le.upper(),
+        "extended": command.extended,
     }
 
 
-def _raw_hex(fields: dict[str, str]) -> str:
-    return "".join(fields[name] for name in ("cla", "ins", "p1", "p2", "lc", "data", "le")).upper()
+def _raw_hex(fields: dict[str, Any]) -> str:
+    return str(APDUCommand(**fields)).upper()
 
 
 def _first_tlv_length_index(data: bytearray) -> int | None:

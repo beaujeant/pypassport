@@ -18,6 +18,7 @@ primitives. No external binary is required.
 """
 
 import base64
+import hmac
 import textwrap
 from datetime import datetime, timezone
 from typing import Any
@@ -26,7 +27,7 @@ from pyasn1.codec.der.decoder import decode as der_decode
 from pyasn1.codec.der.encoder import encode as der_encode
 from pyasn1.error import PyAsn1Error
 from pyasn1.type import namedtype, univ
-from pyasn1_modules import rfc5280, rfc5652
+from pyasn1_modules import rfc4055, rfc5280, rfc5652
 
 from Crypto.Hash import SHA1, SHA224, SHA256, SHA384, SHA512
 from Crypto.PublicKey import ECC, RSA
@@ -91,7 +92,8 @@ class SignedDataInfo:
     """Parsed pieces of a CMS SignedData (EF.SOD) needed for verification."""
 
     def __init__(
-        self, dsc_der, econtent, econtent_type, digest_algorithm, signed_attrs_der, signature_algorithm, signature
+        self, dsc_der, econtent, econtent_type, digest_algorithm, signed_attrs_der, signature_algorithm, signature,
+        signature_parameters=None, certificates=(),
     ):
         self.dsc_der = dsc_der  # DER of the Document Signer cert
         self.econtent = econtent  # LDSSecurityObject DER bytes
@@ -100,6 +102,8 @@ class SignedDataInfo:
         self.signed_attrs_der = signed_attrs_der  # SET-OF DER for verify, or None
         self.signature_algorithm = signature_algorithm  # OID string
         self.signature = signature  # signature bytes
+        self.signature_parameters = signature_parameters
+        self.certificates = tuple(certificates)
 
 
 class CscaMasterList(univ.Sequence):
@@ -130,18 +134,22 @@ def parse_sod(der):
         der = inner.asOctets()
 
     try:
-        content_info, _ = der_decode(der, asn1Spec=rfc5652.ContentInfo())
+        content_info, rest = der_decode(der, asn1Spec=rfc5652.ContentInfo())
     except Exception as exc:
         raise CMSVerificationException("EF.SOD is not a valid CMS ContentInfo: " + str(exc))
 
+    if rest or der_encode(content_info) != bytes(der):
+        raise CMSVerificationException("EF.SOD is not one canonical DER ContentInfo")
     if str(content_info["contentType"]) != str(rfc5652.id_signedData):
         raise CMSVerificationException("EF.SOD content type is not id-signedData")
 
-    signed_data, _ = der_decode(content_info["content"].asOctets(), asn1Spec=rfc5652.SignedData())
+    signed_data, rest = der_decode(content_info["content"].asOctets(), asn1Spec=rfc5652.SignedData())
+    if rest or der_encode(signed_data) != content_info["content"].asOctets():
+        raise CMSVerificationException("EF.SOD SignedData is not canonical DER")
 
     signer_infos = signed_data["signerInfos"]
-    if len(signer_infos) < 1:
-        raise CMSVerificationException("EF.SOD contains no SignerInfo")
+    if len(signer_infos) != 1:
+        raise CMSVerificationException(f"EF.SOD must contain exactly one SignerInfo (got {len(signer_infos)})")
     signer_info = signer_infos[0]
 
     encap = signed_data["encapContentInfo"]
@@ -149,19 +157,27 @@ def parse_sod(der):
         raise CMSVerificationException("EF.SOD has no embedded eContent")
     econtent = encap["eContent"].asOctets()
     econtent_type = str(encap["eContentType"])
+    if econtent_type != "2.23.136.1.1.1":
+        raise CMSVerificationException(f"EF.SOD has unexpected LDS Security Object content type {econtent_type}")
 
     dsc_der = _find_signer_certificate(signed_data, signer_info)
 
     digest_algorithm = str(signer_info["digestAlgorithm"]["algorithm"])
+    advertised_digests = {str(x["algorithm"]) for x in signed_data["digestAlgorithms"]}
+    if digest_algorithm not in advertised_digests:
+        raise CMSVerificationException("SignerInfo digestAlgorithm is absent from SignedData.digestAlgorithms")
     signature_algorithm = str(signer_info["signatureAlgorithm"]["algorithm"])
     signature = signer_info["signature"].asOctets()
+    signature_parameters = (signer_info["signatureAlgorithm"]["parameters"].asOctets()
+                            if signer_info["signatureAlgorithm"]["parameters"].isValue else None)
 
     signed_attrs_der = None
     if signer_info["signedAttrs"].isValue and len(signer_info["signedAttrs"]) > 0:
         signed_attrs_der = _reencode_signed_attrs(signer_info["signedAttrs"])
 
     return SignedDataInfo(
-        dsc_der, econtent, econtent_type, digest_algorithm, signed_attrs_der, signature_algorithm, signature
+        dsc_der, econtent, econtent_type, digest_algorithm, signed_attrs_der, signature_algorithm, signature,
+        signature_parameters, _embedded_certificates(signed_data),
     )
 
 
@@ -194,32 +210,37 @@ def verify_sod_signature(info):
 
     if info.signed_attrs_der is not None:
         expected = _hash_for_oid(info.digest_algorithm).new(info.econtent).digest()
-        actual = _signed_attr_message_digest(info.signed_attrs_der)
-        if actual != expected:
+        actual = _validate_signed_attributes(info.signed_attrs_der, info.econtent_type)
+        if not hmac.compare_digest(actual, expected):
             raise CMSVerificationException("SOD messageDigest attribute does not match eContent")
         signed_message = info.signed_attrs_der
     else:
         signed_message = info.econtent
 
+    if (info.signature_algorithm in _HASH_BY_OID
+            and _HASH_BY_OID[info.signature_algorithm] is not _HASH_BY_OID.get(info.digest_algorithm)):
+        raise CMSVerificationException("Signer digestAlgorithm conflicts with signature algorithm")
     _verify_signature(
-        spki_der, info.signature_algorithm, info.signature, signed_message, digest_oid=info.digest_algorithm
+        spki_der, info.signature_algorithm, info.signature, signed_message, digest_oid=info.digest_algorithm,
+        signature_parameters=info.signature_parameters,
     )
     return True
+
+
+def _embedded_certificates(signed_data):
+    certs = []
+    if signed_data["certificates"].isValue:
+        certs = [der_encode(x["certificate"]) for x in signed_data["certificates"] if x.getName() == "certificate"]
+    return certs
 
 
 def _find_signer_certificate(signed_data, signer_info):
     """Return the DER of the certificate identified by the SignerInfo (or the
     only embedded certificate)."""
     certs = []
-    if signed_data["certificates"].isValue:
-        for choice in signed_data["certificates"]:
-            if choice.getName() == "certificate":
-                certs.append(der_encode(choice["certificate"]))
+    certs.extend(_embedded_certificates(signed_data))
     if not certs:
         raise CMSVerificationException("EF.SOD does not embed a Document Signer certificate")
-    if len(certs) == 1:
-        return certs[0]
-
     sid = signer_info["sid"]
     if sid.getName() == "issuerAndSerialNumber":
         ias = sid["issuerAndSerialNumber"]
@@ -230,7 +251,8 @@ def _find_signer_certificate(signed_data, signer_info):
             tbs = cert["tbsCertificate"]
             if der_encode(tbs["issuer"]) == want_issuer and int(tbs["serialNumber"]) == want_serial:
                 return cert_der
-    return certs[0]
+        raise CMSVerificationException("No embedded certificate exactly matches SignerInfo issuer/serial")
+    raise CMSVerificationException("Unsupported or unmatched SignerIdentifier")
 
 
 def _reencode_signed_attrs(signed_attrs):
@@ -247,17 +269,80 @@ def _reencode_signed_attrs(signed_attrs):
     return b"\x31" + encoded[1:]
 
 
-def _signed_attr_message_digest(signed_attrs_der):
-    """Extract the messageDigest attribute value from re-encoded signedAttrs."""
-    attrs, _ = der_decode(signed_attrs_der, asn1Spec=rfc5652.SignedAttributes())
+def _validate_signed_attributes(signed_attrs_der, econtent_type):
+    """Validate the mandatory, single-valued RFC 5652 signed attributes."""
+    attrs, rest = der_decode(signed_attrs_der, asn1Spec=rfc5652.SignedAttributes())
+    if rest or der_encode(attrs) != signed_attrs_der:
+        raise CMSVerificationException("Signed attributes are not canonical DER")
+    seen = {}
     for attr in attrs:
-        if str(attr["attrType"]) == str(rfc5652.id_messageDigest):
-            value, _ = der_decode(attr["attrValues"][0].asOctets(), asn1Spec=univ.OctetString())
-            return value.asOctets()
-    raise CMSVerificationException("SOD signed attributes have no messageDigest")
+        oid = str(attr["attrType"])
+        if oid in seen:
+            raise CMSVerificationException(f"Duplicate signed attribute {oid}")
+        if len(attr["attrValues"]) != 1:
+            raise CMSVerificationException(f"Signed attribute {oid} is not single-valued")
+        seen[oid] = attr["attrValues"][0].asOctets()
+    digest_raw = seen.get(str(rfc5652.id_messageDigest))
+    content_raw = seen.get(str(rfc5652.id_contentType))
+    if digest_raw is None or content_raw is None:
+        raise CMSVerificationException("Signed attributes require contentType and messageDigest")
+    digest, rest = der_decode(digest_raw, asn1Spec=univ.OctetString())
+    if rest:
+        raise CMSVerificationException("Malformed messageDigest attribute")
+    content, rest = der_decode(content_raw, asn1Spec=univ.ObjectIdentifier())
+    if rest or str(content) != econtent_type:
+        raise CMSVerificationException("Signed contentType does not match eContentType")
+    return digest.asOctets()
 
 
-def load_master_list_certificates(data):
+def parse_signed_object(data, *, expected_econtent_type=None, label="CMS object"):
+    """Strictly parse any single-signer CMS SignedData object."""
+    try:
+        ci, rest = der_decode(data, asn1Spec=rfc5652.ContentInfo())
+        if rest or der_encode(ci) != bytes(data) or str(ci["contentType"]) != str(rfc5652.id_signedData):
+            raise ValueError("non-canonical or wrong content type")
+        sd, rest = der_decode(ci["content"].asOctets(), asn1Spec=rfc5652.SignedData())
+        if rest or der_encode(sd) != ci["content"].asOctets() or len(sd["signerInfos"]) != 1:
+            raise ValueError("SignedData must be canonical and single-signer")
+        signer = sd["signerInfos"][0]
+        encap = sd["encapContentInfo"]
+        econtent_type = str(encap["eContentType"])
+        if expected_econtent_type is not None and econtent_type != expected_econtent_type:
+            raise ValueError(f"unexpected encapsulated content type {econtent_type}")
+        if not encap["eContent"].isValue:
+            raise ValueError("detached content is not supported")
+        digest_algorithm = str(signer["digestAlgorithm"]["algorithm"])
+        if digest_algorithm not in {str(x["algorithm"]) for x in sd["digestAlgorithms"]}:
+            raise ValueError("SignerInfo digest absent from digestAlgorithms")
+        signed_attrs = (_reencode_signed_attrs(signer["signedAttrs"])
+                        if signer["signedAttrs"].isValue and len(signer["signedAttrs"]) else None)
+        params = (signer["signatureAlgorithm"]["parameters"].asOctets()
+                  if signer["signatureAlgorithm"]["parameters"].isValue else None)
+        return SignedDataInfo(
+            _find_signer_certificate(sd, signer), encap["eContent"].asOctets(), econtent_type,
+            digest_algorithm, signed_attrs, str(signer["signatureAlgorithm"]["algorithm"]),
+            signer["signature"].asOctets(), params, _embedded_certificates(sd),
+        )
+    except CMSVerificationException:
+        raise
+    except Exception as exc:
+        raise CMSVerificationException(f"{label} is not valid strict SignedData: {exc}") from exc
+
+
+def verify_signed_object(info):
+    if info.signed_attrs_der is None:
+        raise CMSVerificationException("ICAO signed objects require signed attributes")
+    expected = _hash_for_oid(info.digest_algorithm).new(info.econtent).digest()
+    actual = _validate_signed_attributes(info.signed_attrs_der, info.econtent_type)
+    if not hmac.compare_digest(actual, expected):
+        raise CMSVerificationException("CMS messageDigest attribute does not match eContent")
+    _verify_signature(_spki_der(_parse_certificate(info.dsc_der)), info.signature_algorithm,
+                      info.signature, info.signed_attrs_der, digest_oid=info.digest_algorithm,
+                      signature_parameters=info.signature_parameters)
+    return True
+
+
+def load_master_list_certificates(data, trusted_signers=None, *, allow_unverified=False):
     """Extract DER CSCA certificates from an ICAO CSCA Master List.
 
     A Master List is a CMS ``SignedData`` object whose encapsulated content is a
@@ -265,34 +350,22 @@ def load_master_list_certificates(data):
     returns only the certificates listed inside the payload; the outer signer
     certificate is deliberately not treated as a CSCA trust anchor.
 
-    The caller remains responsible for deciding whether the Master List source
-    itself is trusted, just as it does for individually supplied CSCA files.
+    By default the embedded signer must chain to ``trusted_signers``. The
+    ``allow_unverified`` option verifies content integrity but deliberately
+    skips that trust decision and is intended only for offline inspection.
     """
 
-    try:
-        content_info, rest = der_decode(data, asn1Spec=rfc5652.ContentInfo())
-    except Exception as exc:
-        raise CMSVerificationException("Master List is not a valid CMS ContentInfo: " + str(exc))
-    if rest:
-        raise CMSVerificationException("Master List has trailing data after CMS ContentInfo")
-    if str(content_info["contentType"]) != str(rfc5652.id_signedData):
-        raise CMSVerificationException("Master List content type is not id-signedData")
+    info = parse_signed_object(data, expected_econtent_type=_ICAO_CSCA_MASTER_LIST_OID, label="Master List")
+    verify_signed_object(info)
+    if not allow_unverified:
+        if not trusted_signers:
+            raise CMSVerificationException("Master List Signer trust anchors are required")
+        anchors = [load_certificate_der(bytes(x)) for x in trusted_signers]
+        if bytes(info.dsc_der) not in {bytes(x) for x in anchors}:
+            verify_chain(info.dsc_der, anchors)
 
     try:
-        signed_data, rest = der_decode(content_info["content"].asOctets(), asn1Spec=rfc5652.SignedData())
-    except Exception as exc:
-        raise CMSVerificationException("Master List SignedData is invalid: " + str(exc))
-    if rest:
-        raise CMSVerificationException("Master List has trailing data after SignedData")
-
-    encap = signed_data["encapContentInfo"]
-    if str(encap["eContentType"]) != _ICAO_CSCA_MASTER_LIST_OID:
-        raise CMSVerificationException("CMS object is not an ICAO CSCA Master List")
-    if not encap["eContent"].isValue:
-        raise CMSVerificationException("Master List has no embedded eContent")
-
-    try:
-        master_list, rest = der_decode(encap["eContent"].asOctets(), asn1Spec=CscaMasterList())
+        master_list, rest = der_decode(info.econtent, asn1Spec=CscaMasterList())
     except Exception as exc:
         raise CMSVerificationException("Master List payload is invalid: " + str(exc))
     if rest:
@@ -497,6 +570,8 @@ def verify_chain_with_issuer(dsc_der, csca_ders):
                 str(dsc["signatureAlgorithm"]["algorithm"]),
                 dsc["signature"].asOctets(),
                 der_encode(dsc_tbs),
+                signature_parameters=(dsc["signatureAlgorithm"]["parameters"].asOctets()
+                                      if dsc["signatureAlgorithm"]["parameters"].isValue else None),
             )
             return csca_der
         except CMSVerificationException as exc:
@@ -504,11 +579,11 @@ def verify_chain_with_issuer(dsc_der, csca_ders):
     raise CMSVerificationException("DSC signature not validated by any trusted CSCA: " + str(last_error))
 
 
-def _check_validity(tbs):
+def _check_validity(tbs, *, when=None):
     validity = tbs["validity"]
     not_before = _time_to_datetime(validity["notBefore"])
     not_after = _time_to_datetime(validity["notAfter"])
-    now = datetime.now(timezone.utc)
+    now = when or datetime.now(timezone.utc)
     if not_before is not None and now < not_before:
         raise CMSVerificationException("Certificate is not yet valid")
     if not_after is not None and now > not_after:
@@ -541,6 +616,8 @@ def rsa_recover(spki_der, signature):
     """
     key = RSA.import_key(spki_der)
     s = int.from_bytes(signature, "big")
+    if len(signature) != key.size_in_bytes() or s >= key.n:
+        raise CMSVerificationException("RSA signature representative is out of range")
     m = pow(s, key.e, key.n)
     size = (key.n.bit_length() + 7) // 8
     return m.to_bytes(size, "big")
@@ -568,7 +645,7 @@ def _hash_for_oid(oid):
     return hash_module
 
 
-def _verify_signature(spki_der, sig_alg_oid, signature, message, digest_oid=None):
+def _verify_signature(spki_der, sig_alg_oid, signature, message, digest_oid=None, signature_parameters=None):
     """Verify ``signature`` over ``message`` using the public key in ``spki_der``.
 
     Supports RSA PKCS#1 v1.5, RSA-PSS (best effort) and ECDSA.
@@ -586,8 +663,23 @@ def _verify_signature(spki_der, sig_alg_oid, signature, message, digest_oid=None
         hash_obj = _hash_for_oid(digest_oid).new(message)
         verifier = pkcs1_15.new(key)
     elif sig_alg_oid == _RSA_PSS_OID:
-        hash_obj = _hash_for_oid(digest_oid).new(message)
-        verifier = pss.new(key)
+        if signature_parameters is None:
+            raise CMSVerificationException("RSA-PSS parameters are mandatory")
+        params, rest = der_decode(signature_parameters, asn1Spec=rfc4055.RSASSA_PSS_params())
+        if rest or der_encode(params) != signature_parameters:
+            raise CMSVerificationException("Invalid/non-canonical RSA-PSS parameters")
+        pss_digest_oid = str(params["hashAlgorithm"]["algorithm"])
+        mgf = params["maskGenAlgorithm"]
+        mgf_params, rest = der_decode(mgf["parameters"].asOctets(), asn1Spec=rfc5280.AlgorithmIdentifier())
+        if (str(mgf["algorithm"]) != "1.2.840.113549.1.1.8" or rest
+                or str(mgf_params["algorithm"]) != pss_digest_oid or int(params["trailerField"]) != 1):
+            raise CMSVerificationException("Unsupported RSA-PSS hash/MGF/trailer combination")
+        if digest_oid is not None and _hash_for_oid(digest_oid) is not _hash_for_oid(pss_digest_oid):
+            raise CMSVerificationException("RSA-PSS parameters conflict with digestAlgorithm")
+        hash_module = _hash_for_oid(pss_digest_oid)
+        hash_obj = hash_module.new(message)
+        verifier = pss.new(key, mask_func=lambda seed, length: pss.MGF1(seed, length, hash_module),
+                           salt_bytes=int(params["saltLength"]))
     else:
         raise CMSVerificationException("Unsupported signature algorithm OID: " + str(sig_alg_oid))
 

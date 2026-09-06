@@ -3,14 +3,50 @@
 test.py
 test/
 
-# History and config files
+# Application state and local configuration
 history
+settings.json
+*.eps
+*.session
+
+# Passport material and security-research captures
+# These files may contain MRZ credentials, raw LDS data, biometrics or APDUs.
+passport_dump*/
+passport_dumps/
+captures/
+*.apdu
+*.trace
+*.pcap
+*.pcapng
+*.jsonl
+*.ndjson
 
 # PDF documentation
 *.pdf
 
 # Personal / sensitive data
 *.bin
+*.jp2
+*.j2k
+*.wsq
+face*.jpg
+face*.jpeg
+signature*.jpg
+signature*.jpeg
+
+# Locally acquired trust stores, certificates and private keys
+csca/
+CSCA/
+master_list/
+master-lists/
+*.cer
+*.crt
+*.der
+*.pem
+*.key
+*.p12
+*.pfx
+*.pk
 
 # OpenAI
 .agents/
@@ -70,6 +106,10 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+
+# Type-checker, linter and formatter caches
+.ruff_cache/
+.pyright/
 
 # Translations
 *.mo
@@ -149,9 +189,6 @@ celerybeat.pid
 .dmypy.json
 dmypy.json
 
-#ruff
-./ruff_cache/
-
 # Pyre
 .pyre/
 
@@ -163,7 +200,19 @@ cython_debug/
 
 # ── Editors ──────────────────────────────────────────────────────────────────
 .vscode/
-# .idea/
+.idea/
+.fleet/
+*.swp
+*.swo
+*~
+
+# ── Operating systems ────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
 # Private test data — keep the unit tests, exclude everything else.
 pypassport/tests/*

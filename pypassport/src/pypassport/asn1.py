@@ -1,6 +1,6 @@
 """ASN.1 helper types and length encoding/decoding utilities for pypassport."""
 
-from pypassport.hex_utils import bin_to_hex, bin_to_hex_rep, hex_to_bin, hex_rep_to_bin
+from pypassport.hex_utils import bin_to_hex, bin_to_hex_rep, hex_to_bin
 
 from pyasn1.type.univ import (
     Integer,
@@ -120,14 +120,16 @@ def asn1_length(data: bytes) -> tuple:
     @return: A tuple (decoded_length, encoding_size).
     @raise asn1Exception: If the field does not follow ASN.1 notation.
     """
+    if not data:
+        raise asn1Exception("Truncated ASN.1 length")
     if data[0] <= 0x7F:
         return (bin_to_hex(data[0]), 1)
-    if data[0] == 0x81:
-        return (bin_to_hex(data[1]), 2)
-    if data[0] == 0x82:
-        return (bin_to_hex(data[1:3]), 3)
-
-    raise asn1Exception("Cannot decode the asn1 length from this field: " + bin_to_hex_rep(data))
+    width = data[0] & 0x7F
+    if width == 0:
+        raise asn1Exception("Indefinite ASN.1 lengths are not accepted")
+    if width > 4 or len(data) < 1 + width:
+        raise asn1Exception("Cannot decode the ASN.1 length from this field: " + bin_to_hex_rep(data))
+    return (bin_to_hex(data[1:1 + width]), 1 + width)
 
 
 def to_asn1_length(data: int) -> bytes:
@@ -146,11 +148,11 @@ def to_asn1_length(data: int) -> bytes:
     @rtype: bytes
     @raise asn1Exception: If the value is out of range (must be 0 <= data <= 0xFFFF).
     """
+    if data < 0:
+        raise asn1Exception("ASN.1 length cannot be negative")
     if data <= 0x7F:
         return hex_to_bin(data)
-    if 0x80 <= data <= 0xFF:
-        return b"\x81" + hex_rep_to_bin("%02x" % data)
-    if 0x0100 <= data <= 0xFFFF:
-        return b"\x82" + hex_rep_to_bin("%04x" % data)
-
-    raise asn1Exception("The value is too big, must be <= FFFF")
+    encoded = data.to_bytes((data.bit_length() + 7) // 8, "big")
+    if len(encoded) > 4:
+        raise asn1Exception("The value is too big, must be <= FFFFFFFF")
+    return bytes([0x80 | len(encoded)]) + encoded

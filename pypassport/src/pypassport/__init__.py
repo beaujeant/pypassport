@@ -19,6 +19,11 @@ from pypassport.doc9303.security_info import (
 )
 from pypassport.security_audit import SecurityFinding, SecurityReport, build_security_report
 from pypassport.fuzzing import FuzzCase, FuzzResult, generate_fuzz_cases, run_fuzz_campaign, summarize_fuzz_results
+from pypassport.doc9303.chip_authentication import ChipAuthentication, ChipAuthenticationError
+from pypassport.doc9303.file_context import FileReference, resolve_file
+from pypassport.doc9303.file_system import FileSystemExplorer
+from pypassport.doc9303.terminal_authentication import TerminalAuthentication, CVCertificate, CVCError
+from pypassport.doc9303.trust_store import TrustStore
 
 __all__ = [
     "EPassport",
@@ -43,4 +48,13 @@ __all__ = [
     "generate_fuzz_cases",
     "run_fuzz_campaign",
     "summarize_fuzz_results",
+    "ChipAuthentication",
+    "ChipAuthenticationError",
+    "FileReference",
+    "resolve_file",
+    "FileSystemExplorer",
+    "TerminalAuthentication",
+    "CVCertificate",
+    "CVCError",
+    "TrustStore",
 ]

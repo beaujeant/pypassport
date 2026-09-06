@@ -20,6 +20,7 @@ _COLUMNS = (
     ("dir", "Direction", 60, False),
     ("info", "Info", 300, True),
     ("sm", "SM", 55, False),
+    ("auth", "Auth", 55, False),
     ("source", "Source", 70, False),
     ("comment", "Comment", 160, True),
 )
@@ -315,6 +316,7 @@ class TrafficPane:
                 "→ Req",
                 _request_info(tx),
                 sm_label,
+                "",
                 tx.source,
                 tx.comment,
             ),
@@ -332,6 +334,7 @@ class TrafficPane:
                 "← Res",
                 _response_info(tx),
                 "",
+                ("✓" if tx.response_authenticated is True else "!" if tx.response_authenticated is False else "—"),
                 "",
                 "",
             ),

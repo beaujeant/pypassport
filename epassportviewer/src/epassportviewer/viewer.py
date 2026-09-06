@@ -22,7 +22,7 @@ from . import theme
 
 
 # Row 1: file-system / meta EFs in logical access order
-_ROW1 = ["ATR/INFO", "DIR", "CardAccess", "COM", "SOD"]
+_ROW1 = ["ATR/INFO", "DIR", "CardAccess", "CardSecurity", "COM", "SOD"]
 # Row 2: DG1–DG8
 _ROW2 = ["DG1", "DG2", "DG3", "DG4", "DG5", "DG6", "DG7", "DG8"]
 # Row 3: DG9–DG16
@@ -493,13 +493,9 @@ class ViewerPane:
 
     @staticmethod
     def _cached_ep_file(ep, ef_name):
-        try:
-            tag = dg_converter.to_tag(ef_name)
-        except KeyError:
+        if ef_name not in ep:
             return None
-        if tag not in ep:
-            return None
-        return dict.__getitem__(ep, tag)
+        return dict.__getitem__(ep, ef_name)
 
     def _update_integrity_strip(self, ep) -> dict[str, bool | None]:
         dg15 = self._cached_ep_file(ep, "DG15")

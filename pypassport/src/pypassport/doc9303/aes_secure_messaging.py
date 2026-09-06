@@ -14,6 +14,7 @@ The protect/unprotect interface is identical to SecureMessaging so that
 ``ISO7816.ciphering`` can hold either object transparently.
 """
 
+import hmac
 import logging
 
 from Crypto.Cipher import AES
@@ -45,10 +46,15 @@ class AesSecureMessaging:
     :param ssc:   Initial Send Sequence Counter (16 zero bytes).
     """
 
-    def __init__(self, ksenc: bytes, ksmac: bytes, ssc: bytes):
+    def __init__(self, ksenc: bytes, ksmac: bytes, ssc: bytes, *, strict: bool = True):
         self._ksenc = bytes(ksenc)
         self._ksmac = bytes(ksmac)
         self._ssc = bytes(ssc)
+        self.strict = strict
+        if len(self._ksenc) not in (16, 24, 32) or len(self._ksmac) != len(self._ksenc):
+            raise AesSecureMessagingException("AES Secure Messaging keys must have equal 16/24/32-byte lengths")
+        if len(self._ssc) != 16:
+            raise AesSecureMessagingException("AES Secure Messaging SSC must be 16 bytes")
 
     @property
     def ssc(self) -> bytes:
@@ -86,17 +92,7 @@ class AesSecureMessaging:
 
         do8e = bytes([0x8E, _MAC_LEN]) + CC
         body = do87 + do97 + do8e
-        protected = cmd_header[:4] + bytes([len(body)]) + body + bytes([0x00])
-
-        return APDUCommand(
-            protected[0],
-            protected[1],
-            protected[2],
-            protected[3],
-            protected[4],
-            protected[5:-1],
-            protected[-1],
-        )
+        return APDUCommand(cmd_header[0], cmd_header[1], cmd_header[2], cmd_header[3], data=body, le="00", extended=len(body) > 0xFF)
 
     def unprotect(self, rapdu: APDUResponse) -> APDUResponse:
         """Verify MAC and decrypt a response APDU."""
@@ -107,11 +103,19 @@ class AesSecureMessaging:
         # must be processed even when the outer status word is an error,
         # otherwise the response-side SSC increment is skipped and the channel
         # desynchronises for every subsequent command.
-        data = bytes(rapdu.data)
-        if not data or data[0] not in (0x87, 0x99, 0x8E):
+        raw = bytes(rapdu.data)
+        if not raw or raw[0] not in (0x87, 0x99, 0x8E):
+            # ISO 7816 checking errors can be returned before the chip accepts
+            # the command as an SM message.  They are explicitly
+            # unauthenticated and therefore may never carry success/data.
+            if rapdu.sw1 in (0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F):
+                return APDUResponse([], rapdu.sw1, rapdu.sw2, authenticated=False)
+            if self.strict:
+                raise AesSecureMessagingException(
+                    "Secure-Messaging response is not protected with DO99/DO8E: " + to_hex_string(rapdu.raw())
+                )
+            rapdu.authenticated = False
             return rapdu
-
-        raw = rapdu.raw()
         offset = 0
 
         do87 = b""
@@ -121,7 +125,7 @@ class AesSecureMessaging:
         if raw[offset] == 0x87:
             enc_len, o = asn1_length(raw[offset + 1 :])
             inner_start = offset + 1 + o
-            if raw[inner_start] != 0x01:
+            if inner_start >= len(raw) or raw[inner_start] != 0x01:
                 raise AesSecureMessagingException("DO87 malformed (missing 0x01 indicator): " + to_hex_string(raw))
             do87 = raw[offset : inner_start + enc_len]
             do87_data = raw[inner_start + 1 : inner_start + enc_len]
@@ -130,17 +134,19 @@ class AesSecureMessaging:
         # DO'99' — always present (status word echo).
         do99 = raw[offset : offset + 4]
         if len(do99) < 4 or do99[0] != 0x99 or do99[1] != 0x02:
-            sw1 = raw[offset + 2] if len(raw) > offset + 2 else 0
-            sw2 = raw[offset + 3] if len(raw) > offset + 3 else 0
-            return APDUResponse([], sw1, sw2)
+            raise AesSecureMessagingException("DO99 malformed in response: " + to_hex_string(raw))
         sw1 = do99[2]
         sw2 = do99[3]
         offset += 4
+        if (rapdu.sw1, rapdu.sw2) != (0x90, 0x00) and (rapdu.sw1, rapdu.sw2) != (sw1, sw2):
+            raise AesSecureMessagingException("Outer and authenticated inner status words conflict")
 
         # DO'8E' — MAC.
-        if offset >= len(raw) or raw[offset] != 0x8E:
+        if offset + 2 > len(raw) or raw[offset] != 0x8E:
             raise AesSecureMessagingException("DO8E missing in response: " + to_hex_string(raw))
         cc_len = raw[offset + 1]
+        if cc_len != _MAC_LEN or offset + 2 + cc_len != len(raw):
+            raise AesSecureMessagingException("DO8E has an invalid length or trailing data: " + to_hex_string(raw))
         CC_received = raw[offset + 2 : offset + 2 + cc_len]
 
         self._ssc = self._inc_ssc()
@@ -151,14 +157,16 @@ class AesSecureMessaging:
             logging.debug("SM unprotect CC received:  %s", to_hex_string(CC_received))
             logging.debug("SM unprotect CC computed:  %s", to_hex_string(CC_computed))
 
-        if bytes(CC_received) != bytes(CC_computed):
+        if not hmac.compare_digest(bytes(CC_received), bytes(CC_computed)):
             raise AesSecureMessagingException("MAC mismatch in response APDU: " + to_hex_string(raw))
 
         data = b""
         if do87_data is not None:
-            data = _iso_unpad(self._decrypt(bytes(do87_data)))
+            if not do87_data or len(do87_data) % _BLOCK:
+                raise AesSecureMessagingException("DO87 ciphertext is not a non-empty AES block sequence")
+            data = _iso_unpad(self._decrypt(bytes(do87_data)), strict=self.strict)
 
-        return APDUResponse(data, sw1, sw2)
+        return APDUResponse(data, sw1, sw2, authenticated=True)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -185,7 +193,9 @@ class AesSecureMessaging:
 
     def _mask_class_and_pad(self, apdu: APDUCommand) -> bytes:
         """Set CLA to 0x0C and ISO-pad the 4-byte header to 16 bytes."""
-        header = to_bytes("0C" + apdu.ins + apdu.p1 + apdu.p2)
+        clear_cla = int(apdu.cla, 16)
+        protected_cla = clear_cla | (0x20 if clear_cla & 0x40 else 0x0C)
+        header = bytes([protected_cla]) + to_bytes(apdu.ins + apdu.p1 + apdu.p2)
         return _iso_pad(header)
 
     def _build_do87(self, apdu: APDUCommand) -> bytes:
@@ -194,7 +204,8 @@ class AesSecureMessaging:
         return b"\x87" + to_asn1_length(len(cipher)) + cipher
 
     def _build_do97(self, apdu: APDUCommand) -> bytes:
-        return to_bytes("9701" + apdu.le)
+        le = to_bytes(apdu.le)
+        return bytes([0x97, len(le)]) + le
 
     def __str__(self):
         return "KSenc: [REDACTED]\nKSmac: [REDACTED]\nSSC: " + to_hex_string(self._ssc)
@@ -211,11 +222,13 @@ def _iso_pad(data: bytes, block_size: int = _BLOCK) -> bytes:
     return data + b"\x80" + b"\x00" * (pad_len - 1)
 
 
-def _iso_unpad(data: bytes) -> bytes:
+def _iso_unpad(data: bytes, *, strict: bool = False) -> bytes:
     """Remove ISO/IEC 7816 padding."""
     i = len(data) - 1
     while i >= 0 and data[i] == 0x00:
         i -= 1
     if i >= 0 and data[i] == 0x80:
         return data[:i]
+    if strict:
+        raise AesSecureMessagingException("Invalid ISO/IEC 7816 padding")
     return data

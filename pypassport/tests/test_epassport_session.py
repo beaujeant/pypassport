@@ -155,10 +155,11 @@ def test_card_access_read_restores_emrtd_context_before_later_dg(monkeypatch):
     ep.iso7816.select_dedicated_file = lambda aid: setattr(ep.iso7816, "selected_context", "emrtd")
 
     def fake_read(tag, iso):
-        if tag == "42":
+        logical = getattr(tag, "name", tag)
+        if logical == "CardAccess":
             iso.selected_context = "mf"
             return FakeDG("42")
-        if tag == "6B":
+        if logical == "DG11":
             if iso.selected_context != "emrtd":
                 raise ISO7816Exception("File not found", 0x6A, 0x82)
             return FakeDG("6B")

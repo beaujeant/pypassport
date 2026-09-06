@@ -1,11 +1,12 @@
 """Raw ↔ fielded command-APDU conversion.
 
 Pure string helpers shared by the Forge tab, kept free of any Tk/UI imports so
-they can be unit-tested headlessly. Only short-form APDUs (Lc/Le ≤ 255) are
-handled, which is all this tool emits.
+they can be unit-tested headlessly. Canonical short and extended APDUs are
+handled; the separate raw path intentionally preserves malformed encodings.
 """
 
 from pypassport.doc9303 import converter
+from pypassport.iso7816 import APDUCommand
 
 
 _INS_NAMES = {
@@ -46,37 +47,11 @@ def parse_apdu(hexstr):
     if len(raw) < 4:
         raise ValueError("A command APDU needs at least 4 header bytes (CLA INS P1 P2).")
 
-    fields = {
-        "cla": "%02X" % raw[0],
-        "ins": "%02X" % raw[1],
-        "p1": "%02X" % raw[2],
-        "p2": "%02X" % raw[3],
-        "lc": "",
-        "data": "",
-        "le": "",
-    }
-    body = raw[4:]
-    if len(body) == 0:  # case 1: header only
-        return fields
-    if len(body) == 1:  # case 2: Le only
-        fields["le"] = "%02X" % body[0]
-        return fields
-
-    n = body[0]  # candidate Lc
-    rest = body[1:]
-    if len(rest) == n:  # case 3: Lc + data
-        fields["lc"] = "%02X" % n
-        fields["data"] = rest.hex().upper()
-    elif len(rest) == n + 1:  # case 4: Lc + data + Le
-        fields["lc"] = "%02X" % n
-        fields["data"] = rest[:n].hex().upper()
-        fields["le"] = "%02X" % rest[n]
-    else:
-        raise ValueError(
-            "Ambiguous APDU: the byte after the header (Lc=%02X) does not match "
-            "the %d remaining data byte(s)." % (n, len(rest))
-        )
-    return fields
+    try:
+        command = APDUCommand.from_bytes(raw)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    return {name: getattr(command, name) for name in ("cla", "ins", "p1", "p2", "lc", "data", "le")}
 
 
 def parse_apdu_lenient(hexstr):
@@ -126,9 +101,7 @@ def assemble_apdu(cla, ins, p1, p2, lc, data, le):
     lc = lc or ""
     data = data or ""
     le = le or ""
-    if data and not lc:
-        lc = "%02X" % (len(data) // 2)
-    return "".join((cla, ins, p1, p2, lc, data, le)).upper()
+    return str(APDUCommand(cla, ins, p1, p2, lc, data, le)).upper()
 
 
 def describe_apdu_fields(cla, ins, p1, p2, lc="", data="", le=""):

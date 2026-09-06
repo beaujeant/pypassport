@@ -28,6 +28,7 @@ class APDUTransaction:
     # unprotect; when SM is off they match the cleartext request/response.
     wire_request_hex: str = ""
     wire_response_hex: str = ""
+    response_authenticated: bool | None = None
     timestamp: datetime = field(default_factory=datetime.now)
     # User annotations (set from the Traffic tab). Purely descriptive: they
     # never affect transport and are view-only metadata on the record.

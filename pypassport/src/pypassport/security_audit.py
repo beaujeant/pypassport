@@ -28,6 +28,7 @@ from pypassport.doc9303.security_info import PACEInfo
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 _FILE_ORDER = (
     "CardAccess",
+    "CardSecurity",
     "COM",
     "SOD",
     "DG1",
@@ -118,14 +119,17 @@ def build_security_report(
     sod_hashed_dgs = _sod_hashed_dgs(captured.get("SOD"))
     pace_infos = _pace_infos(captured.get("CardAccess"), access_control)
     dg14_infos = _security_infos(captured.get("DG14"))
+    card_security_infos = _security_infos(captured.get("CardSecurity"))
+    for info in card_security_infos:
+        info["source"] = "authenticated EF.CardSecurity"
 
     protocols: dict[str, Any] = {
         "access_control": _access_control_summary(access_control, sm_type),
         "pace": pace_infos,
         "active_authentication": _active_authentication_summary(captured.get("DG15"), dg14_infos, checks),
-        "chip_authentication": [info for info in dg14_infos if _protocol_startswith(info, "id-CA-")],
-        "terminal_authentication": [info for info in dg14_infos if _protocol_startswith(info, "id-TA")],
-        "security_infos": dg14_infos,
+        "chip_authentication": [info for info in dg14_infos + card_security_infos if _protocol_startswith(info, "id-CA-")],
+        "terminal_authentication": [info for info in dg14_infos + card_security_infos if _protocol_startswith(info, "id-TA")],
+        "security_infos": dg14_infos + card_security_infos,
         "passive_authentication": _passive_authentication_summary(captured.get("SOD"), sod_verification, checks),
     }
     summary = {
@@ -257,6 +261,7 @@ def _pace_info_dict(info: Any) -> dict[str, Any]:
             "cipher": info.cipher,
             "key_size": info.key_size,
             "known": info.is_known(),
+            "supported": info.is_supported(),
         }
     if isinstance(info, Mapping):
         return cast(dict[str, Any], _json_value(dict(info)))
@@ -297,6 +302,19 @@ def _access_control_summary(access_control: Any, sm_type: str) -> dict[str, Any]
     pace_info = getattr(access_control, "pace_info", None)
     if pace_info is not None:
         summary["selected_pace_info"] = _pace_info_dict(pace_info)
+    advertised = getattr(access_control, "advertised_pace_infos", None)
+    if advertised:
+        summary["advertised_pace_infos"] = [_pace_info_dict(info) for info in advertised]
+    attempts = getattr(access_control, "attempts", None)
+    if attempts:
+        summary["attempts"] = _json_value(attempts)
+    fallback_reason = getattr(access_control, "fallback_reason", None)
+    if fallback_reason:
+        summary["fallback_reason"] = str(fallback_reason)
+        summary["downgraded"] = bool(getattr(access_control, "downgraded", True))
+    cam_result = getattr(access_control, "cam_result", None)
+    if cam_result:
+        summary["pace_cam"] = _json_value(cam_result)
     return summary
 
 
@@ -460,6 +478,26 @@ def _add_access_control_findings(findings: list[SecurityFinding], pace_infos: li
             "PACEInfo is present, but the captured live session used BAC.",
             "Review whether this was an intentional fallback or a downgrade condition.",
         )
+    fallback_reason = getattr(access_control, "fallback_reason", None)
+    if fallback_reason and fallback_reason != "cardaccess_missing":
+        _add(
+            findings,
+            "high",
+            "access-control",
+            "PACE failure or discovery error caused BAC fallback",
+            str(fallback_reason),
+            "Repeat PACE and forced-BAC tests separately; do not accept the session as equivalent to PACE.",
+        )
+    cam_result = getattr(access_control, "cam_result", None)
+    if isinstance(cam_result, Mapping) and cam_result.get("passive_authentication") == "pending":
+        _add(
+            findings,
+            "high",
+            "anti-cloning",
+            "PACE-CAM proof is not yet anchored",
+            "Encrypted CA data matched EF.CardSecurity, but its Document Signer chain has not completed Passive Authentication.",
+            "Validate the signed Master List/CSCA path and EF.CardSecurity signer before treating the chip as genuine.",
+        )
 
 
 def _add_authentication_findings(
@@ -539,6 +577,19 @@ def _add_authentication_findings(
             "The live challenge response did not verify against DG15.",
             "Preserve the transaction trace and investigate a clone, corruption, or implementation defect.",
         )
+    if checks.get("chip_authentication") is False:
+        _add(
+            findings, "high", "anti-cloning", "Chip Authentication failed",
+            str(checks.get("chip_authentication_error", "CA implicit authentication did not validate.")),
+            "Preserve the key-selection and first fresh-SM exchanges.",
+        )
+    negative = checks.get("terminal_negative_rights", [])
+    if isinstance(negative, list):
+        for probe in negative:
+            if isinstance(probe, Mapping) and probe.get("enforced") is False:
+                _add(findings, "high", "authorization", "Terminal CHAT restriction not enforced",
+                     str(probe.get("security_issue", probe)),
+                     "Retest with a minimal IS certificate and notify the document-application implementer.")
 
 
 def _add_sod_findings(

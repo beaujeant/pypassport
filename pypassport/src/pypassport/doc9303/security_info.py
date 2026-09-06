@@ -23,10 +23,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pyasn1.codec.der.decoder import decode as asn1decode
+from pyasn1.codec.der.encoder import encode as der_encode
 from pyasn1.type import univ
 
 from pypassport.der_object_identifier import OID
 from pypassport.utils import parse_tlv
+from pypassport.asn1 import to_asn1_length
+from pypassport.doc9303.domain_parameters import resolve as resolve_domain_parameters
 
 
 # Mapping of known PACE protocol OIDs (BSI TR-03110 part 3, A.1.1.2).
@@ -58,12 +61,16 @@ _PACE_OID_TABLE: dict[str, tuple[str, str, str, int]] = {
     "0.4.0.127.0.7.2.2.4.6.3": ("ECDH", "CAM", "AES", 192),
     "0.4.0.127.0.7.2.2.4.6.4": ("ECDH", "CAM", "AES", 256),
 }
+_PACE_DOMAIN_OIDS = {f"0.4.0.127.0.7.2.2.4.{value}" for value in (1, 2, 3, 4, 6)}
 
 
 # Default-supported variants for the negotiator. The order defines
 # preference: stronger AES variants come first, then 3DES, GM before IM.
 # Only OIDs the codebase has any chance of running are listed here.
 _DEFAULT_SUPPORTED: tuple[str, ...] = (
+    "0.4.0.127.0.7.2.2.4.6.4",  # ECDH-CAM-AES-256
+    "0.4.0.127.0.7.2.2.4.6.3",  # ECDH-CAM-AES-192
+    "0.4.0.127.0.7.2.2.4.6.2",  # ECDH-CAM-AES-128
     "0.4.0.127.0.7.2.2.4.2.4",  # ECDH-GM-AES-256
     "0.4.0.127.0.7.2.2.4.2.3",  # ECDH-GM-AES-192
     "0.4.0.127.0.7.2.2.4.2.2",  # ECDH-GM-AES-128
@@ -72,6 +79,14 @@ _DEFAULT_SUPPORTED: tuple[str, ...] = (
     "0.4.0.127.0.7.2.2.4.1.2",  # DH-GM-AES-128
     "0.4.0.127.0.7.2.2.4.2.1",  # ECDH-GM-3DES
     "0.4.0.127.0.7.2.2.4.1.1",  # DH-GM-3DES
+    "0.4.0.127.0.7.2.2.4.4.4",  # ECDH-IM-AES-256
+    "0.4.0.127.0.7.2.2.4.4.3",  # ECDH-IM-AES-192
+    "0.4.0.127.0.7.2.2.4.4.2",  # ECDH-IM-AES-128
+    "0.4.0.127.0.7.2.2.4.3.4",  # DH-IM-AES-256
+    "0.4.0.127.0.7.2.2.4.3.3",  # DH-IM-AES-192
+    "0.4.0.127.0.7.2.2.4.3.2",  # DH-IM-AES-128
+    "0.4.0.127.0.7.2.2.4.4.1",  # ECDH-IM-3DES
+    "0.4.0.127.0.7.2.2.4.3.1",  # DH-IM-3DES
 )
 
 
@@ -86,6 +101,7 @@ class PACEInfo:
     oid: str
     version: int
     parameter_id: int | None = None
+    domain_parameters: bytes | None = None
 
     @property
     def key_agreement(self) -> str | None:
@@ -109,6 +125,20 @@ class PACEInfo:
 
     def is_known(self) -> bool:
         return self.oid in _PACE_OID_TABLE
+
+    def is_supported(self) -> bool:
+        if not self.is_known() or self.version != 2:
+            return False
+        try:
+            domain = resolve_domain_parameters(self.key_agreement, self.parameter_id, self.domain_parameters)
+            if self.mapping == "IM":
+                if self.key_agreement == "DH" and domain.q is None:
+                    return False
+                if self.key_agreement == "ECDH" and domain.curve.p() % 4 != 3:
+                    return False
+        except Exception:
+            return False
+        return True
 
 
 class SecurityInfoParser:
@@ -160,6 +190,7 @@ class SecurityInfoParser:
         # Application-class tags some chips embed) are silently skipped rather
         # than aborting the entire decode.
         infos: list[PACEInfo] = []
+        domains = {}
         pos = 0
         while pos < len(set_val):
             try:
@@ -172,14 +203,7 @@ class SecurityInfoParser:
                 continue
 
             # Reconstruct the SEQUENCE TLV and let pyasn1 decode it
-            n = len(elem_val)
-            if n < 0x80:
-                enc_len = bytes([n])
-            elif n < 0x100:
-                enc_len = bytes([0x81, n])
-            else:
-                enc_len = bytes([0x82, n >> 8, n & 0xFF])
-            seq_der = b"\x30" + enc_len + elem_val
+            seq_der = b"\x30" + to_asn1_length(len(elem_val)) + elem_val
 
             try:
                 seq, _ = asn1decode(seq_der)
@@ -188,6 +212,16 @@ class SecurityInfoParser:
                 continue
 
             if not oid_str.startswith(self._PACE_OID_PREFIX):
+                continue
+
+            if oid_str in _PACE_DOMAIN_OIDS:
+                # PACEDomainParameterInfo has a base protocol OID, an
+                # AlgorithmIdentifier, and a reference used by PACEInfo.
+                try:
+                    if len(seq) >= 3:
+                        domains[int(seq[2])] = der_encode(seq[1][1])
+                except Exception:
+                    pass
                 continue
 
             try:
@@ -204,7 +238,7 @@ class SecurityInfoParser:
 
             infos.append(PACEInfo(oid=oid_str, version=version, parameter_id=parameter_id))
 
-        return infos
+        return [PACEInfo(x.oid, x.version, x.parameter_id, domains.get(x.parameter_id)) for x in infos]
 
     def select_supported(self, infos: list[PACEInfo]) -> PACEInfo | None:
         """
@@ -212,11 +246,12 @@ class SecurityInfoParser:
         following the supported-OID preference order. Returns None if none
         match.
         """
-        by_oid = {info.oid: info for info in infos}
-        for oid in self._supported:
-            if oid in by_oid:
-                return by_oid[oid]
-        return None
+        candidates = self.select_all_supported(infos)
+        return candidates[0] if candidates else None
+
+    def select_all_supported(self, infos):
+        """Return every executable profile in preference order."""
+        return [info for oid in self._supported for info in infos if info.oid == oid and info.is_supported()]
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +463,17 @@ def _describe_security_info(seq_val: bytes) -> SecurityInfoDict:
             optional = rest[version_consumed:]
             if optional:
                 info["ef_cvca_der_hex"] = optional.hex().upper()
+                try:
+                    seq, trailing = asn1decode(optional)
+                    if not trailing and len(seq):
+                        try:
+                            info["ef_cvca_fid"] = seq[0].asOctets().hex().upper()
+                        except Exception:
+                            info["ef_cvca_fid"] = f"{int(seq[0]):04X}"
+                        if len(seq) > 1:
+                            info["ef_cvca_sfi"] = int(seq[1])
+                except Exception:
+                    pass
     elif oid.startswith(_ID_PACE):
         if rest:
             t, v, consumed = parse_tlv(rest)

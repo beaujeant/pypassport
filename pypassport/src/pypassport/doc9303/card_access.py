@@ -89,8 +89,11 @@ class CardAccessReader:
 
     def _select_master_file(self):
         # 00 A4 00 0C 02 3F 00 — select MF by FID, no FCI returned.
-        toSend = APDUCommand("00", "A4", "00", "0C", data=MASTER_FILE_FID)
-        self._iso7816.transmit(toSend, "Select Master File")
+        if hasattr(self._iso7816, "select_master_file"):
+            self._iso7816.select_master_file()
+        else:
+            toSend = APDUCommand("00", "A4", "00", "0C", data=MASTER_FILE_FID)
+            self._iso7816.transmit(toSend, "Select Master File")
 
     def _read_all(self) -> bytes:
         # Read 4 bytes to discover the ASN.1 length, then iterate.

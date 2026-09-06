@@ -8,8 +8,10 @@ This repository contains two complementary projects:
 |---------|-------------|
 | [`pypassport/`](./pypassport/) | Core Python library — parses ICAO 9303 LDS files, performs BAC / supported PACE / authentication flows, and communicates with ePassports over RFID/NFC via a PC/SC reader |
 | [`epassportviewer/`](./epassportviewer/) | Desktop GUI — reads and displays passport data and provides APDU traffic, forge, intercept, security-report, fuzzing, and attack workflows on top of `pypassport` |
+| [`epassportmcp/`](./epassportmcp/) | Headless MCP server — gives external AIs lazy-discovery access to the same reader, analysis, raw APDU, reset, authentication, fuzzing, and research workflows |
 
-`pypassport` is the standalone library. `ePassportViewer` is an optional GUI that depends on it.
+`pypassport` is the standalone library. `ePassportViewer` is an optional GUI that depends on it, and
+`epassportviewer-mcp` is the optional local MCP integration for external AIs.
 
 ---
 
@@ -48,6 +50,7 @@ for testing known security vulnerabilities in deployed passports.
 │   │       └── resources/      # Bundled icons and widgets
 │   └── tests/
 │
+├── epassportmcp/               # Stateful, lazy-discovery MCP server
 ├── pyproject.toml              # Monorepo-level tooling (pytest, ruff, mypy, coverage)
 ├── uv.lock
 ├── CLAUDE.md
@@ -59,7 +62,7 @@ for testing known security vulnerabilities in deployed passports.
 
 ## Installation
 
-This repo is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) and requires Python 3.9 or newer. The recommended way to install is with [`uv`](https://github.com/astral-sh/uv):
+This repo is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) and requires Python 3.10 or newer because the current MCP SDK requires it. The standalone `pypassport` library remains compatible with Python 3.9. The recommended way to install is with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
 # Install uv if you don't have it
@@ -171,6 +174,20 @@ uv run python -m epassportviewer  # equivalent module form
 epassportviewer
 ```
 
+### Running the MCP server
+
+```bash
+uv sync --package epassportviewer-mcp --extra reader
+uv run --package epassportviewer-mcp --extra reader epassportviewer-mcp
+```
+
+Omit `--extra reader` when the MCP only needs offline snapshot analysis.
+
+Configure the command as a local stdio MCP. It advertises only catalog,
+recommendation, and generic-call tools; the external AI retrieves detailed
+passport action schemas lazily. See [`epassportmcp/README.md`](./epassportmcp/README.md)
+for configuration and the raw/protected APDU channel model.
+
 ### Verifying authenticity (View tab)
 
 The **View** tab's **Verify Signature** and **Active Authentication** controls
@@ -194,26 +211,35 @@ across runs.
 
 ---
 
-## PACE support
+## Advanced access and authentication
 
-PACE (Password Authenticated Connection Establishment) is implemented for the
-**ECDH Generic Mapping** variants with AES session keys and Brainpool P-256-r1
-domain parameters:
+PACE supports DH/ECDH Generic and Integrated Mapping, ECDH Chip Authentication
+Mapping, the standard parameter IDs (with domain suitability checks),
+issuer-supplied explicit parameters, AES-128/192/256 and 3DES, MRZ/CAN/PIN/PUK,
+and multiple PACEInfo entries. PACE-CAM decrypts CA data, binds the mapping key
+to EF.CardSecurity, and retains the still-required Passive Authentication state.
+Automatic mode only enters ordinary BAC for a BAC-only file profile. Any PACE
+discovery/profile/authentication failure requires the explicit
+`allow_bac_fallback=True` downgrade and is preserved as a high-severity finding.
 
-| OID | Algorithm | Status |
-|-----|-----------|--------|
-| `0.4.0.127.0.7.2.2.4.2.2` | ECDH-GM / Brainpool P-256-r1 / AES-128-CBC-CMAC | **Supported** |
-| `0.4.0.127.0.7.2.2.4.2.3` | ECDH-GM / Brainpool P-256-r1 / AES-192-CBC-CMAC | **Supported** |
-| `0.4.0.127.0.7.2.2.4.2.4` | ECDH-GM / Brainpool P-256-r1 / AES-256-CBC-CMAC | **Supported** |
+`EPassport.do_chip_authentication()` runs CA v1/v2 with DH/ECDH and AES/3DES,
+using an SOD-authenticated DG14 or signed/trusted EF.CardSecurity. The optional
+`do_terminal_authentication()` path parses and validates CVCA/link/DV/IS CVCs,
+dates and CHAT rights, sends the certificate/APDU flow when credentials are
+provided, and can test that DG3/DG4 rights which were not granted stay denied.
 
-The access-control negotiator (`AccessControlNegotiator`) selects PACE
-automatically when EF.CardAccess advertises one of those implemented profiles,
-and otherwise falls back to BAC when an MRZ is available. DH-based PACE,
-Integrated Mapping, CAM, 3DES PACE, and other EC domain parameters are not
-implemented. After a successful PACE run, AES-CBC/CMAC Secure Messaging
-replaces the 3DES/retail-MAC channel used by BAC.
+`TrustStore.from_directory()` is the strict PKI entry point. Signed Master Lists
+require configured MLSC anchors; paths cover link/intermediate certificates,
+certificate roles/critical extensions, CRLs and signed Deviation Lists.
 
 KDF counters and hash algorithms follow BSI TR-03110 §4.3.3: SHA-1 for AES-128 keys, SHA-256 for AES-192 and AES-256 keys.
+
+`FileSystemExplorer` enumerates applications from EF.DIR and probes explicit
+`(application, FID, SFI)` references. This keeps EF.SOD separate from
+EF.CardSecurity even though both are `011D/77`. The APDU layer supports short
+and extended cases under Secure Messaging, 61xx GET RESPONSE, 6Cxx Le repair,
+authenticated 62xx/63xx partial responses, odd READ BINARY offsets, command
+chaining and bounded reads.
 
 ## Troubleshooting
 

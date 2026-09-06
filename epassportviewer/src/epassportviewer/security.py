@@ -19,7 +19,7 @@ from . import theme
 from .fuzzing import FuzzingPane
 
 
-_REPORT_FILES = ("COM", "SOD") + tuple(f"DG{index}" for index in range(1, 17))
+_REPORT_FILES = ("COM", "SOD", "CardSecurity") + tuple(f"DG{index}" for index in range(1, 17))
 
 
 @dataclass(frozen=True)
@@ -44,12 +44,20 @@ _PROBES = (
         "Plaintext",
         "Select the pre-authentication PACE capability file under the MF.",
     ),
+    SecurityProbe(
+        "Select EF.CardSecurity",
+        "00A4020C02011D",
+        "SM",
+        "Select authenticated MF-level EAC SecurityInfos, not LDS EF.SOD.",
+    ),
     SecurityProbe("Select EF.COM", "00A4020C02011E", "SM", "Select the LDS inventory file."),
     SecurityProbe("Select EF.SOD", "00A4020C02011D", "SM", "Select the passive-authentication security object."),
     SecurityProbe("Select DG14", "00A4020C02010E", "SM", "Select SecurityInfos for AA/CA/TA/EAC review."),
     SecurityProbe("Select DG15", "00A4020C02010F", "SM", "Select the Active Authentication public key."),
     SecurityProbe("Read first 4 bytes", "00B0000004", "Current", "Read a selected EF header and declared length."),
     SecurityProbe("Read via SFI 1", "00B0810004", "Current", "Probe short-file-ID reads and SFI access controls."),
+    SecurityProbe("Odd READ BINARY", "00B100000454027FFF00", "Current", "Exercise enhanced offsets independently of even-INS reads."),
+    SecurityProbe("Extended READ BINARY", "00B0000000000100", "Current", "Request 256 bytes with case-2E under the current channel."),
     SecurityProbe("Get Challenge", "0084000008", "Plaintext", "Exercise BAC/AA challenge behavior and status words."),
     SecurityProbe("GET RESPONSE", "00C0000000", "Current", "Request pending response bytes after a 61xx status."),
     SecurityProbe(
@@ -478,12 +486,8 @@ class SecurityPane:
         ep = self.parent.ep
         if ep is not None:
             for name in ("CardAccess",) + _REPORT_FILES:
-                try:
-                    tag = converter.to_tag(name)
-                except KeyError:
-                    continue
-                if tag in ep:
-                    files[name] = dict.__getitem__(ep, tag)
+                if name in ep:
+                    files[name] = dict.__getitem__(ep, name)
         if files:
             return files
 

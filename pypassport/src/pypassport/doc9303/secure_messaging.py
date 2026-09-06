@@ -1,6 +1,7 @@
+import hmac
 import logging
 from pypassport.iso7816 import APDUCommand, APDUResponse
-from pypassport.iso9797 import pad, unpad, mac
+from pypassport.iso9797 import pad, mac
 from Crypto.Cipher import DES3
 from pypassport.utils import to_hex_string, to_bytes
 from pypassport.asn1 import asn1_length, to_asn1_length
@@ -21,10 +22,15 @@ class SecureMessaging:
     ciphers it following the doc9303 specification, sends the ciphered APDU to the reader layer and returns the unciphered APDU.
     """
 
-    def __init__(self, ksenc, ksmac, ssc):
-        self._ksenc = ksenc
-        self._ksmac = ksmac
-        self._ssc = ssc
+    def __init__(self, ksenc, ksmac, ssc, *, strict=True):
+        self._ksenc = bytes(ksenc)
+        self._ksmac = bytes(ksmac)
+        self._ssc = bytes(ssc)
+        self.strict = strict
+        if len(self._ksenc) != 16 or len(self._ksmac) != 16:
+            raise SecureMessagingException("BAC/3DES Secure Messaging keys must be 16 bytes")
+        if len(self._ssc) != 8:
+            raise SecureMessagingException("BAC/3DES Secure Messaging SSC must be 8 bytes")
 
     @property
     def ssc(self):
@@ -73,21 +79,12 @@ class SecureMessaging:
             logging.debug("\t\tCC: " + to_hex_string(CC))
 
         do8e = self._build_d08e(CC)
-        size = len(do87) + len(do97) + len(do8e)
-        protectedAPDU = cmdHeader[:4] + bytes([size]) + do87 + do97 + do8e + bytes([0x00])
+        body = do87 + do97 + do8e
 
         if _DEBUG_CRYPTO:
             logging.debug("Construct and send protected APDU")
 
-        return APDUCommand(
-            protectedAPDU[0],
-            protectedAPDU[1],
-            protectedAPDU[2],
-            protectedAPDU[3],
-            protectedAPDU[4],
-            protectedAPDU[5:-1],
-            protectedAPDU[-1],
-        )
+        return APDUCommand(cmdHeader[0], cmdHeader[1], cmdHeader[2], cmdHeader[3], data=body, le="00", extended=len(body) > 0xFF)
 
     def unprotect(self, rapdu):
         """
@@ -106,19 +103,25 @@ class SecureMessaging:
         # must be processed even when the outer status word is an error,
         # otherwise the response-side SSC increment is skipped and the channel
         # desynchronises for every subsequent command.
-        data = bytes(rapdu.data)
-        if not data or data[0] not in (0x87, 0x99, 0x8E):
-            return rapdu
-
-        rapdu = rapdu.raw()
-
+        raw_response = rapdu
+        rapdu = bytes(rapdu.data)
+        if not rapdu or rapdu[0] not in (0x87, 0x99, 0x8E):
+            if raw_response.sw1 in (0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F):
+                return APDUResponse([], raw_response.sw1, raw_response.sw2, authenticated=False)
+            if self.strict:
+                raise SecureMessagingException(
+                    "Secure-Messaging response is not protected with DO99/DO8E: "
+                    + to_hex_string(raw_response.raw())
+                )
+            raw_response.authenticated = False
+            return raw_response
         # DO'87'
         # Mandatory if data is returned, otherwise absent
         if rapdu[0] == 0x87:
             (encDataLength, o) = asn1_length(rapdu[1:])
             offset = 1 + o
 
-            if rapdu[offset] != 0x01:
+            if offset >= len(rapdu) or rapdu[offset] != 0x01:
                 raise SecureMessagingException("DO87 malformed, must be 87 L 01 <encdata> : " + to_hex_string(rapdu))
 
             do87 = rapdu[0 : offset + encDataLength]
@@ -129,21 +132,22 @@ class SecureMessaging:
         # DO'99'
         # Mandatory, only absent if SM error occurs
         do99 = rapdu[offset : offset + 4]
-        sw1 = rapdu[offset + 2]
-        sw2 = rapdu[offset + 3]
+        if len(do99) != 4 or do99[0] != 0x99 or do99[1] != 0x02:
+            raise SecureMessagingException("DO99 malformed in response: " + to_hex_string(rapdu))
+        sw1 = do99[2]
+        sw2 = do99[3]
         offset += 4
+        if ((raw_response.sw1, raw_response.sw2) != (0x90, 0x00)
+                and (raw_response.sw1, raw_response.sw2) != (sw1, sw2)):
+            raise SecureMessagingException("Outer and authenticated inner status words conflict")
         needCC = True
-
-        if do99[0] != 0x99 or do99[1] != 0x02:
-            # SM error, return the error code
-            if _DEBUG_CRYPTO:
-                logging.debug("DO99 malformed, must be 9902 instead" + to_hex_string(rapdu))
-            return APDUResponse([], sw1, sw2)
 
         # DO'8E'
         # Mandatory id DO'87' and/or DO'99' is present
-        if rapdu[offset] == 0x8E:
+        if offset + 2 <= len(rapdu) and rapdu[offset] == 0x8E:
             ccLength = rapdu[offset + 1]
+            if ccLength != 8 or offset + 2 + ccLength != len(rapdu):
+                raise SecureMessagingException("DO8E has an invalid length or trailing data: " + to_hex_string(rapdu))
             CC = rapdu[offset + 2 : offset + 2 + ccLength]
 
             # CheckCC
@@ -171,7 +175,7 @@ class SecureMessaging:
             if _DEBUG_CRYPTO:
                 logging.debug("\t\tCC: " + to_hex_string(CCb))
 
-            res = CC == CCb
+            res = hmac.compare_digest(bytes(CC), bytes(CCb))
             if _DEBUG_CRYPTO:
                 logging.debug("\tCompare CC with data of DO'8E of RAPDU")
                 logging.debug("\t\t" + to_hex_string(CC) + " == " + to_hex_string(CCb) + " ? " + str(res))
@@ -185,17 +189,22 @@ class SecureMessaging:
         data = b""
         if do87Data:
             # There is a payload
+            if len(do87Data) % 8:
+                raise SecureMessagingException("DO87 ciphertext is not a 3DES block sequence")
             tdes = DES3.new(self._ksenc, DES3.MODE_CBC, b"\x00\x00\x00\x00\x00\x00\x00\x00")
-            data = unpad(tdes.decrypt(do87Data))
+            plaintext = tdes.decrypt(do87Data)
+            data = _unpad(plaintext, strict=self.strict)
             if _DEBUG_CRYPTO:
                 logging.debug("Decrypt data of DO'87 with KSenc")
 
-        return APDUResponse(data, sw1, sw2)
+        return APDUResponse(data, sw1, sw2, authenticated=True)
 
     def _mask_class_and_pad(self, apdu):
         if _DEBUG_CRYPTO:
             logging.debug("Mask class byte and pad command header")
-        res = pad(to_bytes("0C" + apdu.ins + apdu.p1 + apdu.p2))
+        clear_cla = int(apdu.cla, 16)
+        protected_cla = clear_cla | (0x20 if clear_cla & 0x40 else 0x0C)
+        res = pad(bytes([protected_cla]) + to_bytes(apdu.ins + apdu.p1 + apdu.p2))
         if _DEBUG_CRYPTO:
             logging.debug("\tCmdHeader: " + to_hex_string(res))
         return res
@@ -235,7 +244,19 @@ class SecureMessaging:
         if _DEBUG_CRYPTO:
             logging.debug("Build DO'97")
             logging.debug(f"\tDO97: {apdu.le}")
-        return to_bytes("9701" + apdu.le)
+        le = to_bytes(apdu.le)
+        return bytes([0x97, len(le)]) + le
 
     def __str__(self):
         return "KSenc: [REDACTED]\nKSmac: [REDACTED]\nSSC: " + to_hex_string(self._ssc)
+
+
+def _unpad(data: bytes, *, strict: bool) -> bytes:
+    i = len(data) - 1
+    while i >= 0 and data[i] == 0:
+        i -= 1
+    if i >= 0 and data[i] == 0x80:
+        return data[:i]
+    if strict:
+        raise SecureMessagingException("Invalid ISO/IEC 7816 padding")
+    return data

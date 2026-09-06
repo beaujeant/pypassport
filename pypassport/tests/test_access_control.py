@@ -117,7 +117,7 @@ def test_auto_mode_chooses_pace_when_advertised():
         patch.object(neg._card_access_reader, "read", return_value=blob),
         patch("pypassport.doc9303.access_control.PACEAuthenticator", stub),
     ):
-        result = neg.open(FakeMRZ(), mode="auto")
+        result = neg.open(FakeMRZ(), mode="auto", allow_bac_fallback=True)
 
     assert result.mechanism == "PACE"
     assert result.pace_info.oid == "0.4.0.127.0.7.2.2.4.2.2"
@@ -139,7 +139,7 @@ def test_auto_mode_falls_back_to_bac_when_cardaccess_missing():
         patch.object(neg._card_access_reader, "read", side_effect=not_found),
         patch("pypassport.doc9303.access_control.BACAuthenticator.authenticate") as mock_bac,
     ):
-        result = neg.open(FakeMRZ(), mode="auto")
+        result = neg.open(FakeMRZ(), mode="auto", allow_bac_fallback=True)
 
     mock_bac.assert_called_once()
     assert result.mechanism == "BAC"
@@ -154,10 +154,18 @@ def test_auto_mode_falls_back_to_bac_on_parse_error():
         patch.object(neg._card_access_reader, "read", return_value=b"\xff\xff\xff\xff"),
         patch("pypassport.doc9303.access_control.BACAuthenticator.authenticate") as mock_bac,
     ):
-        result = neg.open(FakeMRZ(), mode="auto")
+        result = neg.open(FakeMRZ(), mode="auto", allow_bac_fallback=True)
 
     mock_bac.assert_called_once()
     assert result.mechanism == "BAC"
+
+
+def test_auto_mode_rejects_downgrade_on_parse_error_by_default():
+    iso = FakeISO7816()
+    neg = AccessControlNegotiator(iso)
+    with patch.object(neg._card_access_reader, "read", return_value=b"\xff\xff\xff\xff"):
+        with pytest.raises(AccessControlNegotiationError, match="fallback is disabled"):
+            neg.open(FakeMRZ(), mode="auto")
 
 
 def test_auto_mode_falls_back_to_bac_on_read_error():
@@ -169,7 +177,7 @@ def test_auto_mode_falls_back_to_bac_on_read_error():
         patch.object(neg._card_access_reader, "read", side_effect=read_err),
         patch("pypassport.doc9303.access_control.BACAuthenticator.authenticate") as mock_bac,
     ):
-        result = neg.open(FakeMRZ(), mode="auto")
+        result = neg.open(FakeMRZ(), mode="auto", allow_bac_fallback=True)
 
     mock_bac.assert_called_once()
     assert result.mechanism == "BAC"
@@ -179,7 +187,7 @@ def test_auto_mode_falls_back_to_bac_when_no_supported_pace_info():
     iso = FakeISO7816()
     neg = AccessControlNegotiator(iso)
 
-    # OID not in our supported list — auto mode should silently fall back.
+    # OID not in our supported list — explicit downgrade permits BAC.
     # Valid OID with the PACE prefix that's not in our default supported list.
     blob = _pace_blob(("0.4.0.127.0.7.2.2.4.99.1", 2, 13))
 
@@ -187,7 +195,7 @@ def test_auto_mode_falls_back_to_bac_when_no_supported_pace_info():
         patch.object(neg._card_access_reader, "read", return_value=blob),
         patch("pypassport.doc9303.access_control.BACAuthenticator.authenticate") as mock_bac,
     ):
-        result = neg.open(FakeMRZ(), mode="auto")
+        result = neg.open(FakeMRZ(), mode="auto", allow_bac_fallback=True)
 
     mock_bac.assert_called_once()
     assert result.mechanism == "BAC"
@@ -205,7 +213,7 @@ def test_auto_mode_falls_back_when_pace_authentication_fails():
         patch("pypassport.doc9303.access_control.PACEAuthenticator", stub),
         patch("pypassport.doc9303.access_control.BACAuthenticator.authenticate") as mock_bac,
     ):
-        result = neg.open(FakeMRZ(), mode="auto")
+        result = neg.open(FakeMRZ(), mode="auto", allow_bac_fallback=True)
 
     mock_bac.assert_called_once()
     assert result.mechanism == "BAC"

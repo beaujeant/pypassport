@@ -12,6 +12,7 @@ from pypassport.utils import to_hex_string, to_bytes, parse_tlv
 from pypassport.asn1 import asn1_length
 from pypassport.iso19794 import BIOMETRIC_PARSERS
 from pypassport.doc9303 import converter
+from pypassport.doc9303.file_context import resolve_file
 
 # Reference: https://www.icao.int/publications/Documents/9303_p10_cons_en.pdf
 
@@ -258,26 +259,30 @@ _READABLE_KEY_NAMES = {
 }
 
 
-def read_elementary_file(tag, iso7816, maxSize=0xDF):
+def read_elementary_file(tag, iso7816, maxSize=0xDF, max_file_size=0x1000000):
     try:
-        expected_tag = converter.to_tag(tag)
-        fid = converter.to_fid(expected_tag)
-        if converter.to_dg(expected_tag) == "CardAccess":
+        reference = resolve_file(tag)
+        expected_tag = reference.tag
+        fid = reference.fid
+        if reference.name == "CardAccess":
             # EF.CardAccess is a raw SecurityInfos DER object under the MF,
             # not an LDS EF wrapped in application tag 0x42. Read it through
             # the dedicated MF-aware reader and keep its ASN.1 wrapper intact.
             from pypassport.doc9303.card_access import CardAccessReader
 
             return CardAccess.from_security_infos(CardAccessReader(iso7816).read())
-        logging.info(f"Reading {expected_tag} (FID {fid})...")
+        logging.info(f"Reading {reference.name}@{reference.application} (FID {fid})...")
         offset = 0
 
-        iso7816.select_elementary_file(fid)
+        if getattr(type(iso7816), "select_context", None) is not None:
+            iso7816.select_context(reference)
+        else:
+            iso7816.select_elementary_file(fid)
 
         # Read DG header (to know the body size)
-        headerRaw = iso7816.read_binary(offset, 4)
+        headerRaw = iso7816.read_binary(offset, 8)
         header = ElementaryFileHeader(headerRaw)
-        if header.tag != expected_tag:
+        if expected_tag is not None and header.tag != expected_tag:
             logging.warning("EF %s returned unexpected outer tag %s", expected_tag, header.tag)
 
         # Read the DG body
@@ -285,12 +290,17 @@ def read_elementary_file(tag, iso7816, maxSize=0xDF):
         logging.debug("Read EF body")
         body = b""
         remaining = header.bodySize
+        if remaining > max_file_size:
+            raise ElementaryFileException(f"EF declares unsafe body length {remaining}")
 
         while remaining:
             toRead = min(remaining, maxSize)
-            body += iso7816.read_binary(offset, toRead)
-            remaining -= toRead
-            offset += toRead
+            chunk = iso7816.read_binary(offset, toRead)
+            if not chunk:
+                break
+            body += chunk
+            remaining -= len(chunk)
+            offset += len(chunk)
 
         if header.bodySize != len(body):
             raise Exception(
@@ -299,11 +309,11 @@ def read_elementary_file(tag, iso7816, maxSize=0xDF):
 
         # Creating the DG
         file = header.raw + body
-        class_name = converter.to_class(expected_tag)
+        class_name = reference.parser
         if class_name not in _CLASS_MAP:
             raise ElementaryFileException(f"Unknown class for tag {expected_tag}: {class_name}")
         dg = _CLASS_MAP[class_name](file=file)
-        if header.tag != expected_tag:
+        if expected_tag is not None and header.tag != expected_tag:
             dg["actual_outer_tag"] = header.tag
             dg["expected_outer_tag"] = expected_tag
             dg._record_parse_error(
@@ -1517,9 +1527,32 @@ class CardSecurity(ElementaryFile):
             self._record_parse_error("card_security", e)
 
     def parse(self):
-        from pypassport.doc9303.security_info import SecurityInfoParser
+        from pypassport.doc9303 import cms
+        from pypassport.doc9303.security_info import parse_security_infos
 
-        self["security_infos"] = SecurityInfoParser().parse(_unwrap_security_infos(self.body))
+        signed = cms.parse_signed_object(self.body, label="EF.CardSecurity")
+        cms.verify_signed_object(signed)
+        self["signature_valid"] = True
+        self["signer_certificate_der"] = signed.dsc_der
+        self["econtent_type_oid"] = signed.econtent_type
+        self["security_infos"] = parse_security_infos(signed.econtent)
+        self["authenticated_security_infos_der"] = signed.econtent
+
+    def authenticate(self, trust_store):
+        from pypassport.doc9303 import cms
+        from pypassport.doc9303.trust_store import TrustStore
+
+        signer = self.get("signer_certificate_der")
+        if not signer or not self.get("signature_valid"):
+            raise cms.CMSVerificationException("EF.CardSecurity signature has not been verified")
+        if isinstance(trust_store, TrustStore):
+            result = trust_store.verify_document_signer(signer)
+            self["signer_trusted"] = result.trusted
+            return result
+        anchors = trust_store.get_certificates() if hasattr(trust_store, "get_certificates") else trust_store
+        cms.verify_chain(signer, anchors)
+        self["signer_trusted"] = True
+        return True
 
 
 _CLASS_MAP = {

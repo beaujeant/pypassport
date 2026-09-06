@@ -58,7 +58,7 @@ class ActiveAuthentication:
 
         self._dg15 = None
 
-    def execute_aa(self, dg15, dg14=None):
+    def execute_aa(self, dg15, dg14=None, *, strict=False):
         """
         Perform the Active Authentication protocol.
 
@@ -86,15 +86,18 @@ class ActiveAuthentication:
         self._dg15 = dg15
         ec_key = self._load_ec_public_key(dg15.body)
         if ec_key is not None:
-            return self._execute_aa_ecdsa(ec_key, dg14)
-        return self._execute_aa_rsa(dg15)
+            return self._execute_aa_ecdsa(ec_key, dg14, strict=strict)
+        return self._execute_aa_rsa(dg15, strict=strict)
 
-    def _execute_aa_rsa(self, dg15):
+    def _execute_aa_rsa(self, dg15, *, strict=True):
         """Active Authentication with an RSA key (ISO/IEC 9796-2 scheme 1)."""
         self.RND_IFD = self._gen_random(8)
         hex_rnd_ifd = to_hex_string(self.RND_IFD)
         self.signature = self._iso7816.internal_authentication(hex_rnd_ifd)
         self.F = self._decrypt_signature(dg15.body, self.signature)
+
+        if strict and (not self.F or self.F[0] != 0x6A):
+            raise ActiveAuthenticationException("Invalid ISO 9796-2 implicit-trailer header")
 
         (hash_fn, hashSize, offset) = self._get_hash_algo(self.F)
         self.D = self._extract_digest(self.F, hashSize, offset)
@@ -112,7 +115,7 @@ class ActiveAuthentication:
 
         return self.D == self.D_
 
-    def _execute_aa_ecdsa(self, ec_key, dg14):
+    def _execute_aa_ecdsa(self, ec_key, dg14, *, strict=True):
         """Active Authentication with an ECDSA key.
 
         The chip signs the 8-byte challenge RND.IFD and returns a plain r||s
@@ -125,8 +128,13 @@ class ActiveAuthentication:
         signature = bytes(self.signature)
 
         logging.debug("Active Authentication (ECDSA) on curve %s", ec_key.curve.name)
-        for hash_fn in self._aa_ecdsa_hashes(ec_key, dg14):
-            for sigdecode in (sigdecode_string, sigdecode_der):
+        advertised_hash = self._aa_hash_from_dg14(dg14)
+        if strict and advertised_hash is None:
+            raise ActiveAuthenticationException("ECDSA Active Authentication requires a recognized DG14 algorithm")
+        hashes = [advertised_hash] if strict else self._aa_ecdsa_hashes(ec_key, dg14)
+        decoders = (sigdecode_string,) if strict else (sigdecode_string, sigdecode_der)
+        for hash_fn in hashes:
+            for sigdecode in decoders:
                 try:
                     ec_key.verify(signature, challenge, hashfunc=hash_fn, sigdecode=sigdecode, allow_truncate=True)
                     logging.debug("ECDSA AA verified (hash=%s)", getattr(hash_fn, "__name__", hash_fn))

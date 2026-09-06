@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
-import logging
 
-from pypassport.iso7816 import ISO7816, ISO7816Exception, APDUResponse
 from pypassport.doc9303.bac import BAC
 from pypassport.doc9303.mrz import MRZ
 from pypassport.hex_utils import bin_to_hex_rep
+from pypassport.iso7816 import ISO7816, APDUCommand, APDUResponse, ISO7816Exception
 
 
 class MacTraceabilityException(Exception):
@@ -214,7 +214,11 @@ class MacTraceability:
             logMsg = "Correct MAC"
             data = bin_to_hex_rep(cmd_data)
 
-        toSend = self._iso7816.mutual_authentication(data)
+        # mutual_authentication() executes the APDU immediately, which is not
+        # suitable here because the response timing and status word are the
+        # evidence under test. Build the command explicitly and request the
+        # complete APDUResponse from transmit().
+        toSend = APDUCommand("00", "82", "00", "00", data=data, le="28")
         starttime = time.time()
         try:
             response = self._iso7816.transmit(toSend, logMsg, full=True)

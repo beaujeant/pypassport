@@ -5,8 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pypassport import ca_manager
-from pypassport.doc9303 import converter
-from pypassport.doc9303 import secure_messaging
+from pypassport.doc9303 import converter, secure_messaging
 from pypassport.doc9303.access_control import (
     EMRTD_AID,
     MODE_AUTO,
@@ -19,6 +18,12 @@ from pypassport.doc9303.bac import BAC, BACException
 from pypassport.doc9303.data_group import DataGroupDump, ElementaryFileException, read_elementary_file
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.pace import PACE
+from pypassport.doc9303.file_context import resolve_file
+from pypassport.doc9303.chip_authentication import ChipAuthentication, select_chip_authentication_pair
+from pypassport.doc9303.security_info import parse_security_infos
+from pypassport.doc9303.trust_store import TrustStore
+from pypassport.doc9303.terminal_authentication import TerminalAuthentication, parse_ef_cvca, validate_cvc_chain
+from pypassport.doc9303.file_system import FileSystemExplorer
 from pypassport.doc9303.passive_authentication import PassiveAuthentication, PassiveAuthenticationException
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.reader import is_no_card_exception
@@ -48,7 +53,9 @@ class EPassport(dict):
         """
         Initialise the ePassport object.
 
-        @param reader: A reader object or path to dump files for the simulator.
+        @param reader: A reader object, or an existing :class:`ISO7816`
+            transport when attaching high-level operations to a low-level
+            research session.
         @param epMrz: MRZ string/tuple. Required for BAC; optional otherwise.
         @param select_aid: If True (default), select the eMRTD application
             immediately after connecting. Set to False when the caller plans
@@ -60,24 +67,31 @@ class EPassport(dict):
 
         self._mrz: MRZ | None
         if epMrz:
-            self._mrz = MRZ(epMrz)
+            self._mrz = epMrz if isinstance(epMrz, MRZ) else MRZ(epMrz)
             if not self._mrz.check_mrz():
                 raise EPassportException("Invalid MRZ")
         else:
             self._mrz = None
 
-        try:
-            reader.connect()
-        except Exception as exc:
-            if is_no_card_exception(exc):
-                raise EPassportException("No passport present on the reader") from exc
-            raise
+        if isinstance(reader, ISO7816):
+            self.iso7816 = reader
+        else:
+            try:
+                reader.connect()
+            except Exception as exc:
+                if is_no_card_exception(exc):
+                    raise EPassportException("No passport present on the reader") from exc
+                raise
 
-        self.iso7816 = ISO7816(reader)
+            self.iso7816 = ISO7816(reader)
         self._bac = BAC(self.iso7816)
         self._pace = PACE(self.iso7816, self._mrz)
         self._aa = ActiveAuthentication(self.iso7816)
         self._pa = PassiveAuthentication()
+        self._ca = ChipAuthentication(self.iso7816)
+        self._ta = TerminalAuthentication(self.iso7816)
+        self.file_system = FileSystemExplorer(self.iso7816)
+        self._trust_store: TrustStore | None = None
         self._CSCADirectory: ca_manager.CAManager | None = None
         self._access_control: NegotiationResult | None = None
         # EF.CardAccess lives under the MF, while normal EPassport reads live
@@ -89,6 +103,7 @@ class EPassport(dict):
         # caller re-supplying them (see ensure_open / _read).
         self._can: str | None = None
         self._ac_mode = MODE_AUTO
+        self._allow_bac_fallback = False
 
         if select_aid:
             # Select eMRTD Dedicated File (DF) with AID = A0000002471001
@@ -103,7 +118,7 @@ class EPassport(dict):
         """The NegotiationResult from the last successful :meth:`open` call."""
         return self._access_control
 
-    def open(self, mrz=None, access_control=MODE_AUTO, can=None):
+    def open(self, mrz=None, access_control=MODE_AUTO, can=None, *, pin=None, puk=None, password=None, allow_bac_fallback=False):
         """
         Set up secure messaging via PACE or BAC, then select the eMRTD AID.
 
@@ -134,6 +149,7 @@ class EPassport(dict):
 
         self._can = can
         self._ac_mode = access_control
+        self._allow_bac_fallback = allow_bac_fallback
         self._pace = PACE(self.iso7816, mrz=self._mrz, can=can)
 
         try:
@@ -141,15 +157,21 @@ class EPassport(dict):
                 self._mrz,
                 mode=access_control,
                 can=can,
+                pin=pin,
+                puk=puk,
+                password=password,
+                allow_bac_fallback=allow_bac_fallback,
             )
         except AccessControlNegotiationError as exc:
             raise EPassportException(str(exc)) from exc
 
         self._access_control = result
+        if result.card_security is not None:
+            self.__setitem__("CardSecurity", result.card_security)
         self._emrtd_selected = True
         return result
 
-    def ensure_open(self, mrz=None, access_control=None, can=None):
+    def ensure_open(self, mrz=None, access_control=None, can=None, *, allow_bac_fallback=None):
         """Open the session only if no Secure Messaging channel is active yet.
 
         Idempotent counterpart to :meth:`open`, intended for a passport object
@@ -168,11 +190,15 @@ class EPassport(dict):
         """
         if self.iso7816.ciphering is not None and self._access_control is not None:
             return self._access_control
-        return self.open(
-            mrz=mrz,
-            access_control=self._ac_mode if access_control is None else access_control,
-            can=self._can if can is None else can,
-        )
+        kwargs = {
+            "mrz": mrz,
+            "access_control": self._ac_mode if access_control is None else access_control,
+            "can": self._can if can is None else can,
+        }
+        configured_fallback = getattr(self, "_allow_bac_fallback", None)
+        if allow_bac_fallback is not None or configured_fallback is not None:
+            kwargs["allow_bac_fallback"] = configured_fallback if allow_bac_fallback is None else allow_bac_fallback
+        return self.open(**kwargs)
 
     @property
     def csca_directory(self):
@@ -181,6 +207,16 @@ class EPassport(dict):
     @csca_directory.setter
     def csca_directory(self, value):
         self._CSCADirectory = ca_manager.CAManager(value)
+
+    @property
+    def trust_store(self):
+        return self._trust_store
+
+    @trust_store.setter
+    def trust_store(self, value):
+        if not isinstance(value, TrustStore):
+            raise TypeError("trust_store must be an ICAO TrustStore")
+        self._trust_store = value
 
     def rst_connection(self):
         logging.debug("Reset Connection")
@@ -211,7 +247,7 @@ class EPassport(dict):
         sm = secure_messaging.SecureMessaging(KSenc, KSmac, ssc)
         self.iso7816.ciphering = sm
 
-    def do_active_authentication(self, dg15=None):
+    def do_active_authentication(self, dg15=None, *, strict=True):
         """
         Execute the Active Authentication protocol.
 
@@ -230,7 +266,7 @@ class EPassport(dict):
                 dg14 = self["DG14"]
             except Exception:
                 dg14 = None
-            res = self._aa.execute_aa(dg15, dg14)
+            res = self._aa.execute_aa(dg15, dg14, strict=strict)
             return res
         except ElementaryFileException as msg:
             res = msg
@@ -240,6 +276,71 @@ class EPassport(dict):
             raise ActiveAuthenticationException(msg)
         finally:
             logging.debug("Active Authentication: " + str(res))
+
+    def do_chip_authentication(self, *, source="DG14", key_id=None):
+        """Run CA v1/v2 from SOD-authenticated DG14 or signed CardSecurity."""
+        source_name = str(source).upper()
+        security_file = self["CardSecurity" if source_name in ("CARDSECURITY", "MF") else "DG14"]
+        if security_file is None:
+            raise EPassportException(f"Cannot read {source}")
+        if source_name in ("CARDSECURITY", "MF"):
+            trust = self._trust_store or self._CSCADirectory
+            if trust is None:
+                raise EPassportException("Authenticated EF.CardSecurity requires a configured trust store")
+            security_file.authenticate(trust)
+            infos = security_file["security_infos"]
+        else:
+            # A DG14 key is security-relevant only after both the SOD chain and
+            # its own data-group hash have been verified.
+            self.do_verify_sod_certificate()
+            integrity = self.do_verify_dg_integrity([security_file])
+            if not integrity or integrity.get("DG14") is not True:
+                raise EPassportException("DG14 failed passive authentication")
+            infos = security_file.get("security_infos") or parse_security_infos(security_file.body)
+        ca_info, public_key = select_chip_authentication_pair(infos, key_id)
+        return self._ca.perform(ca_info, public_key)
+
+    def read_ef_cvca(self, fid=None, *, application=None):
+        if fid is None:
+            dg14 = dict.get(self, "DG14")
+            if dg14:
+                infos = dg14.get("security_infos") or []
+                fid = next((x.get("ef_cvca_fid") for x in infos if x.get("ef_cvca_fid")), None)
+        reference = resolve_file("CVCA")
+        if fid is not None or application is not None:
+            reference = type(reference)(reference.name, reference.ef_name, application or reference.application,
+                                        fid or reference.fid, reference.sfi, reference.tag, reference.parser)
+        self.iso7816.select_context(reference)
+        return parse_ef_cvca(self.iso7816.read_selected_binary_all(chunk_size=256, maximum=4096))
+
+    def do_terminal_authentication(self, terminal_chain, private_key_der, id_picc, *, cvca_references=None,
+                                   trust_anchors=(), test_negative_rights=True, allow_chip_validation_only=False):
+        """Validate/send a CVC chain and optionally probe absent CHAT rights."""
+        if not terminal_chain or not private_key_der or not id_picc:
+            raise EPassportException("TA requires a terminal certificate chain, private key, and ID_PICC")
+        if trust_anchors:
+            validate_cvc_chain(terminal_chain, trust_anchors)
+        elif not allow_chip_validation_only:
+            raise EPassportException("TA requires local CVCA trust anchors; set allow_chip_validation_only for protocol-negative testing")
+        references = cvca_references or self.read_ef_cvca()
+        ca_public = self._ca.result.terminal_public_key if hasattr(self._ca, "result") else b""
+        result = self._ta.perform(terminal_chain, private_key_der, references, id_picc,
+                                  ca_ephemeral_public_key=ca_public)
+        result["locally_validated"] = bool(trust_anchors)
+        result["negative_rights"] = []
+        if test_negative_rights:
+            for allowed, name in ((result["rights"]["read_dg3"], "DG3"), (result["rights"]["read_dg4"], "DG4")):
+                if allowed:
+                    continue
+                try:
+                    unexpected = self._read_elementary_file(name)
+                except Exception as exc:
+                    result["negative_rights"].append({"file": name, "enforced": True, "error": str(exc)})
+                else:
+                    result["negative_rights"].append({"file": name, "enforced": False,
+                                                       "security_issue": f"{name} readable without its CHAT right",
+                                                       "bytes": len(unexpected.file)})
+        return result
 
     def do_verify_sod_certificate(self):
         """
@@ -251,7 +352,17 @@ class EPassport(dict):
         res: Any = ""
         try:
             sod = self.read_sod()
-            res = self._pa.verify_sod_and_cds(sod, self.csca_directory)
+            trust = self._trust_store or self.csca_directory
+            if trust is None:
+                raise PassiveAuthenticationException("csca_directory/trust_store is not set")
+            res = self._pa.verify_sod_and_cds(sod, trust)
+            if res and self._access_control is not None and self._access_control.cam_result:
+                card_security = self._access_control.card_security
+                if card_security is None:
+                    raise PassiveAuthenticationException("PACE-CAM CardSecurity evidence was not retained")
+                card_security.authenticate(trust)
+                self._access_control.cam_result["card_security_signer_trusted"] = True
+                self._access_control.cam_result["passive_authentication"] = "complete"
             return res
         except ElementaryFileException as msg:
             res = msg
@@ -313,14 +424,17 @@ class EPassport(dict):
             dg_list.append(converter.to_dg(tag))
         return dg_list
 
-    def read_data_groups(self):
+    def read_data_groups(self, *, include_unlisted=False):
         """
         Read all data groups listed in the Common file (EF.COM).
 
         @return: A list of data group objects successfully read.
         """
         dg_list = []
-        for dg in self["COM"]["5C"]:
+        listed = list(self["COM"]["5C"]) if self["COM"] is not None else []
+        if include_unlisted:
+            listed.extend(f"DG{i}" for i in range(1, 17))
+        for dg in dict.fromkeys(listed):
             try:
                 data_group = self[dg]
             except Exception as e:
@@ -360,16 +474,22 @@ class EPassport(dict):
         @raise ElementaryFileException: If the tag is unknown.
         """
         try:
-            tag = converter.to_tag(tag)
+            reference = resolve_file(tag)
         except KeyError:
             raise ElementaryFileException("The data group '" + str(tag) + "' does not exist")
 
-        if tag in self:
-            return super(EPassport, self).__getitem__(tag)
+        if reference.name in self:
+            return super(EPassport, self).__getitem__(reference.name)
+        if reference.name != "CardSecurity" and reference.tag in self:
+            value = super(EPassport, self).__getitem__(reference.tag)
+            self.__setitem__(reference.name, value)
+            return value
 
-        dg = self._read(tag)
+        dg = self._read(reference)
         if dg is not None:
-            self.__setitem__(dg.tag, dg)
+            self.__setitem__(reference.name, dg)
+            if reference.name != "CardSecurity" and dg.tag:
+                self.__setitem__(dg.tag, dg)
             return dg
         return None
 
@@ -419,9 +539,13 @@ class EPassport(dict):
         temporary selection must not leak into the next DG read.
         """
 
-        restore_emrtd = getattr(self, "_emrtd_selected", False) and converter.to_dg(tag) == "CardAccess"
+        reference = resolve_file(tag)
+        restore_emrtd = getattr(self, "_emrtd_selected", False) and reference.name == "CardAccess"
         try:
-            return read_elementary_file(tag, self.iso7816)
+            # Keep the resolved application/DF identity intact. Converting it
+            # back to an outer tag is lossy (DG1 and EF.DIR are both 0x61;
+            # EF.SOD and EF.CardSecurity are both 0x011D/0x77).
+            return read_elementary_file(reference, self.iso7816)
         finally:
             if restore_emrtd:
                 try:
