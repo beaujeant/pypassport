@@ -277,7 +277,11 @@ class ViewerMCPHost:
                 raise
             self._listener = listener
             capability = _capability_path(address)
-            descriptor = os.open(capability, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            descriptor = os.open(
+                capability,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
             try:
                 os.write(descriptor, self._authkey)
             finally:

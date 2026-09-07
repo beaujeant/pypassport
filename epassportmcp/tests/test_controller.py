@@ -320,12 +320,15 @@ def test_bridge_capability_is_ephemeral_and_private(monkeypatch, tmp_path):
         _mcp_mrz = None
         _mcp_can = None
 
+    authkey = b"\n" + (b"x" * 31)
     host = ViewerMCPHost(Viewer())
-    host.start()
+    with monkeypatch.context() as context:
+        context.setattr(bridge.os, "urandom", lambda size: authkey)
+        host.start()
     capability = _capability_path(str(address))
     try:
         assert address.exists()
-        assert len(capability.read_bytes()) == 32
+        assert capability.read_bytes() == authkey
         # NTFS permissions are represented by an ACL, while ``st_mode`` on
         # Windows reports compatibility bits and cannot express 0o600.
         if sys.platform != "win32":
