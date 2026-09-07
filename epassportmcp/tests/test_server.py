@@ -1,9 +1,11 @@
 import asyncio
 import os
 import sys
+from contextlib import asynccontextmanager
 
 from mcp import Client, StdioServerParameters
 
+from epassportmcp import stdio
 from epassportmcp.bridge import ViewerMCPHost
 from epassportmcp.server import mcp
 
@@ -19,6 +21,34 @@ def test_mcp_advertises_only_three_lazy_front_door_tools():
     assert set(tools) == {"epassport_list_tools", "epassport_recommend_tools", "epassport_call"}
     assert "action" in tools["epassport_call"]["properties"]
     assert "enum" not in tools["epassport_call"]["properties"]["action"]
+
+
+def test_stdio_uses_sdk_transport_on_windows(monkeypatch):
+    receive = object()
+    send = object()
+    options = object()
+    calls = []
+
+    @asynccontextmanager
+    async def fake_stdio_server():
+        yield receive, send
+
+    class LowLevelServer:
+        def create_initialization_options(self):
+            return options
+
+        async def run(self, actual_receive, actual_send, actual_options):
+            calls.append((actual_receive, actual_send, actual_options))
+
+    class Server:
+        _lowlevel_server = LowLevelServer()
+
+    monkeypatch.setattr(stdio.sys, "platform", "win32")
+    monkeypatch.setattr(stdio, "stdio_server", fake_stdio_server)
+
+    asyncio.run(stdio.run_stdio(Server()))
+
+    assert calls == [(receive, send, options)]
 
 
 def test_stdio_entrypoint_serves_lazy_catalog_end_to_end(monkeypatch, tmp_path):

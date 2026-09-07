@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
+
+from epassportmcp import bridge
+from epassportmcp.bridge import ViewerMCPClient, ViewerMCPHost, ViewerUnavailable, _capability_path
+from epassportmcp.controller import ActionError, PassportController
 from pypassport import reader
 from pypassport.apdu_history import APDUHistory
 from pypassport.doc9303.access_control import NegotiationResult
 from pypassport.doc9303.file_system import FileProbe
 from pypassport.iso7816 import ISO7816
-
-from epassportmcp import bridge
-from epassportmcp.bridge import ViewerMCPClient, ViewerMCPHost, ViewerUnavailable, _capability_path
-from epassportmcp.controller import ActionError, PassportController
 
 
 class FakeConnection:
@@ -324,7 +325,11 @@ def test_bridge_capability_is_ephemeral_and_private(monkeypatch, tmp_path):
     capability = _capability_path(str(address))
     try:
         assert address.exists()
-        assert capability.stat().st_mode & 0o777 == 0o600
+        assert len(capability.read_bytes()) == 32
+        # NTFS permissions are represented by an ACL, while ``st_mode`` on
+        # Windows reports compatibility bits and cannot express 0o600.
+        if sys.platform != "win32":
+            assert capability.stat().st_mode & 0o777 == 0o600
     finally:
         host.stop()
 
