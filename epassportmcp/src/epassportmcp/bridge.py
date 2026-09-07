@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 import os
-import socket
 import sys
 import tempfile
 import threading
@@ -258,11 +257,17 @@ class ViewerMCPHost:
                 public_socket.parent.mkdir(parents=True, exist_ok=True)
                 if public_socket.exists():
                     try:
-                        with socket.create_connection(transport_address, timeout=0.1):
-                            raise ViewerUnavailable("Another running ePassportViewer already owns the MCP endpoint")
+                        existing = Client(
+                            transport_address, family=transport_family, authkey=_read_authkey(address)
+                        )
+                        existing.close()
+                        raise ViewerUnavailable("Another running ePassportViewer already owns the MCP endpoint")
+                    except AuthenticationError:
+                        raise ViewerUnavailable("Another running ePassportViewer already owns the MCP endpoint")
                     except ViewerUnavailable:
                         raise
-                    except OSError:
+                    except (OSError, EOFError):
+                        # The marker can survive an unclean process exit.
                         public_socket.unlink()
             try:
                 listener = Listener(transport_address, family=transport_family, authkey=self._authkey)
