@@ -385,6 +385,11 @@ def test_windows_bridge_uses_a_per_user_named_pipe(monkeypatch):
     assert family == "AF_PIPE"
     assert address == r"\\.\pipe\epassportviewer-mcp-DOMAIN_researcher"
 
+    transport, transport_family = bridge._transport_endpoint(address, family)
+    assert transport_family == "AF_INET"
+    assert transport[0] == "127.0.0.1"
+    assert 49152 <= transport[1] <= 65535
+
 
 def test_conformance_action_does_not_return_passport_content():
     controller = PassportController()

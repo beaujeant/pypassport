@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -32,12 +33,12 @@ class ViewerUnavailable(RuntimeError):
 def endpoint() -> tuple[str, str]:
     """Return the per-user local endpoint and multiprocessing family."""
 
+    configured = os.environ.get("EPASSPORT_VIEWER_SOCKET", "").strip()
+    if configured:
+        return str(Path(configured).expanduser()), "AF_PIPE" if sys.platform == "win32" else "AF_UNIX"
     if sys.platform == "win32":
         username = getpass.getuser().replace("\\", "_").replace("/", "_")
         return rf"\\.\pipe\epassportviewer-mcp-{username}", "AF_PIPE"
-    configured = os.environ.get("EPASSPORT_VIEWER_SOCKET", "").strip()
-    if configured:
-        return str(Path(configured).expanduser()), "AF_UNIX"
     # GUI launchers commonly set XDG_RUNTIME_DIR while MCP clients spawned by
     # editors/desktop apps do not. Using that environment value therefore
     # makes the two halves select different sockets even though they run as the
@@ -61,19 +62,22 @@ def _capability_path(address: str) -> Path:
     return Path(address + ".cap")
 
 
-def _transport_endpoint(address: str, family: str) -> tuple[str, str]:
+def _transport_endpoint(address: str, family: str) -> tuple[Any, str]:
     """Return an endpoint that is usable by the platform's socket layer.
 
     Windows named pipes can be denied by the runner's pipe security policy.
-    A short loopback Unix socket is available on supported Windows versions
-    and avoids that policy.  macOS limits Unix socket names to roughly 104
+    Use an authenticated loopback TCP endpoint instead; unlike AF_UNIX this
+    is supported by Python's multiprocessing layer on Windows. macOS limits
+    Unix socket names to roughly 104
     bytes; pytest's temporary directories can exceed that limit, so bind a
     short hashed path and expose the requested path as a symlink.
     """
 
     if family == "AF_PIPE":
-        short = hashlib.sha256(address.encode()).hexdigest()[:16]
-        return str(Path(tempfile.gettempdir()) / f"epassportviewer-mcp-{short}.sock"), "AF_UNIX"
+        # Client and host must independently derive the same port. The
+        # authentication key still provides the actual access control.
+        port = 49152 + (int(hashlib.sha256(address.encode()).hexdigest()[:8], 16) % 16384)
+        return ("127.0.0.1", port), "AF_INET"
     if len(os.fsencode(address)) >= 100:
         short = hashlib.sha256(address.encode()).hexdigest()[:16]
         return str(Path(tempfile.gettempdir()) / f"epassportviewer-mcp-{short}.sock"), "AF_UNIX"
@@ -215,6 +219,7 @@ class ViewerMCPHost:
         capability: Path | None = None
         owns_capability = False
         public_socket: Path | None = None
+        owns_public_socket = False
         try:
             if transport_family == "AF_UNIX":
                 socket_path = Path(transport_address)
@@ -244,7 +249,27 @@ class ViewerMCPHost:
                     if public_socket.exists() or public_socket.is_symlink():
                         public_socket.unlink()
                     public_socket.symlink_to(socket_path)
-            listener = Listener(transport_address, family=transport_family, authkey=self._authkey)
+                    owns_public_socket = True
+            elif transport_family == "AF_INET" and not address.startswith("\\\\.\\pipe\\"):
+                # A configured path remains a useful visible marker for
+                # callers/tests, even though Windows transports it over TCP.
+                # Remove only stale markers; a live port is left untouched.
+                public_socket = Path(address)
+                public_socket.parent.mkdir(parents=True, exist_ok=True)
+                if public_socket.exists():
+                    try:
+                        with socket.create_connection(transport_address, timeout=0.1):
+                            raise ViewerUnavailable("Another running ePassportViewer already owns the MCP endpoint")
+                    except ViewerUnavailable:
+                        raise
+                    except OSError:
+                        public_socket.unlink()
+            try:
+                listener = Listener(transport_address, family=transport_family, authkey=self._authkey)
+            except OSError as exc:
+                if transport_family == "AF_INET":
+                    raise ViewerUnavailable("Another running ePassportViewer already owns the MCP endpoint") from exc
+                raise
             self._listener = listener
             capability = _capability_path(address)
             descriptor = os.open(capability, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -253,6 +278,10 @@ class ViewerMCPHost:
             finally:
                 os.close(descriptor)
             owns_capability = True
+            if public_socket is not None and transport_family == "AF_INET":
+                descriptor = os.open(public_socket, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(descriptor)
+                owns_public_socket = True
             self._ready.set()
             if transport_family == "AF_UNIX":
                 Path(transport_address).chmod(0o600)
@@ -301,7 +330,7 @@ class ViewerMCPHost:
                     listener.close()
                 except OSError:
                     pass
-            if public_socket is not None:
+            if owns_public_socket and public_socket is not None:
                 try:
                     public_socket.unlink()
                 except OSError:
