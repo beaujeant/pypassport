@@ -26,14 +26,13 @@ import logging
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox, ttk
 
 from pypassport.interceptor import Interceptor, Rule
 from pypassport.iso7816 import APDUCommand
 
 from . import theme
 from .apdu_format import assemble_apdu, describe_apdu_fields
-
 
 # How long the transport will block waiting for the user before auto-forwarding
 # the command unchanged, so a forgotten/closed window never hangs a read.

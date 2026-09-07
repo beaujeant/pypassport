@@ -24,7 +24,6 @@ from pypassport.asn1 import asn1_length, to_asn1_length
 from pypassport.iso7816 import APDUCommand, APDUResponse
 from pypassport.utils import to_bytes, to_hex_string
 
-
 _DEBUG_CRYPTO = False
 
 # Length of the MAC tag placed in DO'8E (first 8 bytes of the 16-byte CMAC).

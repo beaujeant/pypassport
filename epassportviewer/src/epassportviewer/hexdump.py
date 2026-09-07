@@ -11,7 +11,6 @@ from tkinter import ttk
 
 from . import theme
 
-
 # ── Per-field colours used by both the hex dump and its legend ───────────────
 FIELD_COLORS = {
     "CLA": "#cfe8ff",

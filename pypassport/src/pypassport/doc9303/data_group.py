@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import string
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from pypassport.iso7816 import ISO7816Exception
-from pypassport.utils import to_hex_string, to_bytes, parse_tlv
 from pypassport.asn1 import asn1_length
-from pypassport.iso19794 import BIOMETRIC_PARSERS
 from pypassport.doc9303 import converter
 from pypassport.doc9303.file_context import resolve_file
+from pypassport.iso7816 import ISO7816Exception
+from pypassport.iso19794 import BIOMETRIC_PARSERS
+from pypassport.utils import parse_tlv, to_bytes, to_hex_string
 
 # Reference: https://www.icao.int/publications/Documents/9303_p10_cons_en.pdf
 
@@ -1046,10 +1046,11 @@ class SOD(ElementaryFile):
             self._record_parse_error("sod", e)
 
     def parse(self):
+        from pyasn1.codec.der import decoder as der_dec
+
         from pypassport.asn1 import LDSSecurityObject
         from pypassport.der_object_identifier import OID
         from pypassport.doc9303 import cms
-        from pyasn1.codec.der import decoder as der_dec
 
         _partial = False
         body = self.body

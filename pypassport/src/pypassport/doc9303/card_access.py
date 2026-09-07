@@ -13,7 +13,6 @@ import logging
 from pypassport.asn1 import asn1_length
 from pypassport.iso7816 import APDUCommand, ISO7816Exception
 
-
 # FID of EF.CardAccess as defined in ICAO 9303 Part 11.
 EF_CARD_ACCESS_FID = "011C"
 MASTER_FILE_FID = "3F00"

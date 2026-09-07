@@ -16,16 +16,16 @@ from pypassport.doc9303.access_control import (
 )
 from pypassport.doc9303.active_authentication import ActiveAuthentication, ActiveAuthenticationException
 from pypassport.doc9303.bac import BAC, BACException
+from pypassport.doc9303.chip_authentication import ChipAuthentication, select_chip_authentication_pair
 from pypassport.doc9303.data_group import DataGroupDump, ElementaryFileException, read_elementary_file
+from pypassport.doc9303.file_context import FILES, resolve_file
+from pypassport.doc9303.file_system import FileSystemExplorer
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.pace import PACE
-from pypassport.doc9303.file_context import FILES, resolve_file
-from pypassport.doc9303.chip_authentication import ChipAuthentication, select_chip_authentication_pair
-from pypassport.doc9303.security_info import parse_security_infos
-from pypassport.doc9303.trust_store import TrustStore
-from pypassport.doc9303.terminal_authentication import TerminalAuthentication, parse_ef_cvca, validate_cvc_chain
-from pypassport.doc9303.file_system import FileSystemExplorer
 from pypassport.doc9303.passive_authentication import PassiveAuthentication, PassiveAuthenticationException
+from pypassport.doc9303.security_info import parse_security_infos
+from pypassport.doc9303.terminal_authentication import TerminalAuthentication, parse_ef_cvca, validate_cvc_chain
+from pypassport.doc9303.trust_store import TrustStore
 from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.reader import is_no_card_exception
 

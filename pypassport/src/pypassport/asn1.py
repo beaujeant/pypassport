@@ -1,20 +1,20 @@
 """ASN.1 helper types and length encoding/decoding utilities for pypassport."""
 
-from pypassport.hex_utils import bin_to_hex, bin_to_hex_rep, hex_to_bin
-
+from pyasn1.type.constraint import ValueSizeConstraint
+from pyasn1.type.namedtype import NamedType, NamedTypes, OptionalNamedType
+from pyasn1.type.namedval import NamedValues
 from pyasn1.type.univ import (
+    Any,
+    BitString,
     Integer,
-    Sequence,
-    SequenceOf,
+    Null,
     ObjectIdentifier,
     OctetString,
-    BitString,
-    Null,
-    Any,
+    Sequence,
+    SequenceOf,
 )
-from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
-from pyasn1.type.namedval import NamedValues
-from pyasn1.type.constraint import ValueSizeConstraint
+
+from pypassport.hex_utils import bin_to_hex, bin_to_hex_rep, hex_to_bin
 
 ub_DataGroups = Integer(16)
 

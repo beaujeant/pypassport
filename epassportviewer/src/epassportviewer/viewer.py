@@ -12,14 +12,13 @@ from typing import Any
 
 from PIL import Image, ImageTk
 
+from pypassport.apdu_history import APDUHistory
+from pypassport.doc9303 import converter as dg_converter
+from pypassport.doc9303.data_group import _CLASS_MAP, BiometricTemplates
 from pypassport.epassport import EPassportException
 from pypassport.iso7816 import APDUCommand
-from pypassport.apdu_history import APDUHistory
-from pypassport.doc9303.data_group import BiometricTemplates, _CLASS_MAP
-from pypassport.doc9303 import converter as dg_converter
 
 from . import theme
-
 
 # Row 1: file-system / meta EFs in logical access order
 _ROW1 = ["ATR/INFO", "DIR", "CardAccess", "CardSecurity", "COM", "SOD"]

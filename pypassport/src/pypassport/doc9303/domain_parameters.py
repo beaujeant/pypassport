@@ -4,13 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ecdsa.curves import (
+    BRAINPOOLP192r1,
+    BRAINPOOLP224r1,
+    BRAINPOOLP256r1,
+    BRAINPOOLP320r1,
+    BRAINPOOLP384r1,
+    BRAINPOOLP512r1,
+    Curve,
+    NIST192p,
+    NIST224p,
+    NIST256p,
+    NIST384p,
+    NIST521p,
+)
 from pyasn1.codec.der.decoder import decode as der_decode
 from pyasn1.type import univ
-from ecdsa.curves import (
-    Curve, NIST192p, NIST224p, NIST256p, NIST384p, NIST521p,
-    BRAINPOOLP192r1, BRAINPOOLP224r1, BRAINPOOLP256r1,
-    BRAINPOOLP320r1, BRAINPOOLP384r1, BRAINPOOLP512r1,
-)
 
 
 def _number(value):

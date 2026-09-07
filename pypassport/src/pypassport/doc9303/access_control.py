@@ -16,18 +16,17 @@ from pypassport.doc9303 import secure_messaging
 from pypassport.doc9303.bac import BAC, BACException
 from pypassport.doc9303.card_access import (
     CardAccessNotFound,
-    CardAccessReadError,
     CardAccessReader,
+    CardAccessReadError,
 )
 from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.pace import PACE, PACEException
 from pypassport.doc9303.security_info import (
     PACEInfo,
-    SecurityInfoParser,
     SecurityInfoParseError,
+    SecurityInfoParser,
 )
 from pypassport.iso7816 import ISO7816Exception
-
 
 # AID of the ICAO eMRTD application.
 EMRTD_AID = "A0000002471001"

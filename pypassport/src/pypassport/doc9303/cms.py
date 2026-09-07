@@ -23,18 +23,16 @@ import textwrap
 from datetime import datetime, timezone
 from typing import Any
 
+from Crypto.Hash import SHA1, SHA224, SHA256, SHA384, SHA512
+from Crypto.PublicKey import ECC, RSA
+from Crypto.Signature import DSS, pkcs1_15, pss
+from ecdsa import BadSignatureError, VerifyingKey
+from ecdsa.util import sigdecode_der
 from pyasn1.codec.der.decoder import decode as der_decode
 from pyasn1.codec.der.encoder import encode as der_encode
 from pyasn1.error import PyAsn1Error
 from pyasn1.type import namedtype, univ
 from pyasn1_modules import rfc4055, rfc5280, rfc5652
-
-from Crypto.Hash import SHA1, SHA224, SHA256, SHA384, SHA512
-from Crypto.PublicKey import ECC, RSA
-from Crypto.Signature import DSS, pkcs1_15, pss
-
-from ecdsa import BadSignatureError, VerifyingKey
-from ecdsa.util import sigdecode_der
 
 from pypassport.der_object_identifier import OID
 

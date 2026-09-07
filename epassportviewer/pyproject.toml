@@ -27,8 +27,13 @@ classifiers = [
 ]
 dependencies = [
     "epassportviewer-mcp",
-    "pypassport[reader]",
+    "pypassport",
     "Pillow>=10.3.0",
+]
+
+[project.optional-dependencies]
+reader = [
+    "pypassport[reader]",
 ]
 
 [project.scripts]

@@ -6,18 +6,19 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from pyasn1.codec.der.decoder import decode as der_decode
-from pyasn1.codec.der.encoder import encode as der_encode
-from pyasn1.type import univ
 from Crypto.Random import get_random_bytes
 from ecdsa.curves import Curve
 from ecdsa.ellipticcurve import Point
+from pyasn1.codec.der.decoder import decode as der_decode
+from pyasn1.codec.der.encoder import encode as der_encode
+from pyasn1.type import univ
 
 from pypassport.asn1 import to_asn1_length
 from pypassport.doc9303.aes_secure_messaging import AesSecureMessaging
-from pypassport.doc9303.secure_messaging import SecureMessaging
-from pypassport.doc9303.domain_parameters import DHParameters, resolve as resolve_domain_parameters
+from pypassport.doc9303.domain_parameters import DHParameters
+from pypassport.doc9303.domain_parameters import resolve as resolve_domain_parameters
 from pypassport.doc9303.pace import _odd_parity
+from pypassport.doc9303.secure_messaging import SecureMessaging
 from pypassport.iso7816 import APDUCommand
 
 

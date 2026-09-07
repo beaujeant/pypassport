@@ -27,7 +27,6 @@ from pypassport.iso7816 import APDUCommand
 from . import theme
 from .apdu_format import describe_apdu_fields, parse_apdu, parse_apdu_lenient
 
-
 _CHANNELS = {
     "Current channel": "current",
     "Plaintext": "plaintext",

@@ -3,12 +3,14 @@ from __future__ import annotations
 import hmac
 import logging
 from hashlib import sha1
+
 from Crypto import Random
 from Crypto.Cipher import DES3
+
 from pypassport.doc9303.mrz import MRZ
-from pypassport.utils import to_hex_string
-from pypassport.iso9797 import mac, pad
 from pypassport.iso7816 import ISO7816, ISO7816Exception
+from pypassport.iso9797 import mac, pad
+from pypassport.utils import to_hex_string
 
 _DEBUG_CRYPTO = False
 

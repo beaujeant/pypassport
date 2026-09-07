@@ -17,8 +17,8 @@ class ReaderException(Exception):
 
 def _load_pcsc() -> tuple[Any, Any]:
     try:
-        from smartcard.System import readers  # type: ignore[import-untyped]
         from smartcard.pcsc import PCSCExceptions  # type: ignore[import-untyped]
+        from smartcard.System import readers  # type: ignore[import-untyped]
     except ImportError as exc:
         raise ReaderException(
             "PC/SC reader support requires the optional 'pypassport[reader]' extra and a platform PC/SC service."

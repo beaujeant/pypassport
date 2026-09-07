@@ -24,7 +24,6 @@ from typing import Any, Mapping, cast
 from pypassport.doc9303 import converter
 from pypassport.doc9303.security_info import PACEInfo
 
-
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 _FILE_ORDER = (
     "CardAccess",

@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 from typing import Any, TypedDict
 
 from pyasn1.codec.der import decoder
 from pyasn1.codec.der.encoder import encode as der_encode
-from pypassport import hex_utils
-from pypassport.doc9303 import converter
-from pypassport.doc9303 import data_group
-from pypassport.der_object_identifier import OID, OIDException
-from pypassport.ca_manager import CAManager
-from pypassport.doc9303 import cms
-from pypassport import asn1
-from pypassport.doc9303.trust_store import TrustStore
 
+from pypassport import asn1, hex_utils
+from pypassport.ca_manager import CAManager
+from pypassport.der_object_identifier import OID, OIDException
+from pypassport.doc9303 import cms, converter, data_group
+from pypassport.doc9303.trust_store import TrustStore
 
 # Dispatch table mapping OID strings directly to hashlib constructors.
 # Replaces the previous eval(OID[oid]) pattern.

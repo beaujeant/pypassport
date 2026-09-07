@@ -7,14 +7,12 @@ from ecdsa import BadSignatureError, VerifyingKey
 from ecdsa.util import sigdecode_der, sigdecode_string
 from pyasn1.codec.der import decoder
 
-from pypassport.asn1 import SubjectPublicKeyInfo
 from pypassport import hex_utils
+from pypassport.asn1 import SubjectPublicKeyInfo
 from pypassport.der_object_identifier import OID
-from pypassport.doc9303 import cms
-from pypassport.doc9303 import data_group
+from pypassport.doc9303 import cms, data_group
 from pypassport.doc9303.security_info import parse_security_infos
 from pypassport.utils import to_hex_string
-
 
 # id-icao-mrtd-security-aaProtocolObject (ActiveAuthenticationInfo, DG14).
 _AA_INFO_OID = "2.23.136.1.1.5"

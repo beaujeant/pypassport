@@ -45,7 +45,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: python -m pip install ruff
-      - run: ruff check .
+      - run: ruff check --config pyproject.toml pypassport/src epassportviewer/src epassportmcp/src
 
   packages:
     runs-on: ubuntu-latest

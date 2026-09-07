@@ -26,11 +26,10 @@ from pyasn1.codec.der.decoder import decode as asn1decode
 from pyasn1.codec.der.encoder import encode as der_encode
 from pyasn1.type import univ
 
-from pypassport.der_object_identifier import OID
-from pypassport.utils import parse_tlv
 from pypassport.asn1 import to_asn1_length
+from pypassport.der_object_identifier import OID
 from pypassport.doc9303.domain_parameters import resolve as resolve_domain_parameters
-
+from pypassport.utils import parse_tlv
 
 # Mapping of known PACE protocol OIDs (BSI TR-03110 part 3, A.1.1.2).
 # The key is the dotted-string OID, the value is a tuple

@@ -1,11 +1,11 @@
 import logging
 from hashlib import sha1
 
-from pypassport.iso7816 import ISO7816
-from pypassport.doc9303 import mrz, bac, cms
+from pypassport.doc9303 import bac, cms, mrz
 from pypassport.doc9303.data_group import read_elementary_file
 from pypassport.doc9303.secure_messaging import SecureMessaging
 from pypassport.hex_utils import bin_to_hex_rep, hex_rep_to_bin
+from pypassport.iso7816 import ISO7816
 
 
 class SignEverythingException(Exception):

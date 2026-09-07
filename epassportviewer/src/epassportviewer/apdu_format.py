@@ -8,7 +8,6 @@ handled; the separate raw path intentionally preserves malformed encodings.
 from pypassport.doc9303 import converter
 from pypassport.iso7816 import APDUCommand
 
-
 _INS_NAMES = {
     "20": "VERIFY",
     "22": "MANAGE SECURITY ENVIRONMENT",

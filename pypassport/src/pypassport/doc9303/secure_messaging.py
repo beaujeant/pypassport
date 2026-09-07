@@ -1,11 +1,12 @@
 import hmac
 import logging
-from pypassport.iso7816 import APDUCommand, APDUResponse
-from pypassport.iso9797 import pad, mac
-from Crypto.Cipher import DES3
-from pypassport.utils import to_hex_string, to_bytes
-from pypassport.asn1 import asn1_length, to_asn1_length
 
+from Crypto.Cipher import DES3
+
+from pypassport.asn1 import asn1_length, to_asn1_length
+from pypassport.iso7816 import APDUCommand, APDUResponse
+from pypassport.iso9797 import mac, pad
+from pypassport.utils import to_bytes, to_hex_string
 
 _DEBUG_CRYPTO = False
 

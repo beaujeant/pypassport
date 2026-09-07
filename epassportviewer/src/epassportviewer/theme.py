@@ -22,7 +22,6 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
-
 # ── Colour palette (light, low-glare) ────────────────────────────────────────
 BACKGROUND = "#eceff4"  # window / frame background
 SURFACE = "#ffffff"  # text areas, lists, entries, cards

@@ -3,22 +3,22 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 from functools import partial
-from tkinter import ttk, messagebox, simpledialog
-from pypassport.iso7816 import APDUCommand, APDUResponse
+from tkinter import messagebox, simpledialog, ttk
+
 from pypassport.apdu_history import APDUHistory
-from pypassport.utils import to_hex_string
-from pypassport.doc9303.mrz import MRZ
 from pypassport.doc9303.access_control import (
-    AccessControlNegotiator,
-    AccessControlNegotiationError,
     MODE_BAC,
     MODE_PACE,
+    AccessControlNegotiationError,
+    AccessControlNegotiator,
 )
+from pypassport.doc9303.mrz import MRZ
+from pypassport.iso7816 import APDUCommand, APDUResponse
+from pypassport.utils import to_hex_string
 
 from . import theme
-from .hexdump import HexDumpView, build_legend
 from .apdu_format import assemble_apdu, describe_apdu_fields, parse_apdu, parse_apdu_lenient
-
+from .hexdump import HexDumpView, build_legend
 
 # Common request templates, mirroring the buttons under Custom > Requests.
 # Selecting one fills the request header fields below; any field a preset

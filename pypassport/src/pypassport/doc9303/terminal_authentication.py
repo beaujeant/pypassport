@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import date
-import hashlib
 
 from Crypto.Hash import SHA1, SHA224, SHA256, SHA384, SHA512
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pkcs1_15, pss
-from ecdsa import SigningKey, VerifyingKey, BadSignatureError
+from ecdsa import BadSignatureError, SigningKey, VerifyingKey
 from ecdsa.curves import Curve
 from ecdsa.ellipticcurve import CurveFp, Point
-from ecdsa.util import sigencode_string, sigdecode_string
+from ecdsa.util import sigdecode_string, sigencode_string
 
 from pypassport.asn1 import to_asn1_length
 from pypassport.doc9303.security_info import _decode_oid_bytes

@@ -5,28 +5,30 @@ import os
 import queue
 import sys
 import threading
-from pathlib import Path
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
+
 from PIL import Image, ImageTk
+
+from epassportmcp.bridge import ViewerMCPHost
 from pypassport import reader
 from pypassport.doc9303.mrz import MRZ
 from pypassport.epassport import EPassport
 from pypassport.iso7816 import ISO7816
-from epassportmcp.bridge import ViewerMCPHost
+
 from . import theme
-from .menu import MenuBar
-from .operation import OperationCoordinator
-from .viewer import ViewerPane
-from .traffic import TrafficPane
+from .analyse import AnalysePane
 from .forge import ForgePane
 from .intercept import InterceptPane
-from .analyse import AnalysePane
-from .security import SecurityPane
 from .log import LogPane
-from .settings import Settings
+from .menu import MenuBar
+from .operation import OperationCoordinator
 from .resources.gadgets.placeholder import PlaceholderEntry
-
+from .security import SecurityPane
+from .settings import Settings
+from .traffic import TrafficPane
+from .viewer import ViewerPane
 
 _MRZ_FIELD_NAMES = ("doc_number", "dob", "expiry")
 

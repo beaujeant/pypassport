@@ -1,11 +1,11 @@
-import os
 import logging
+import os
 
 from Crypto.PublicKey import RSA
 
 from pypassport.attacks.sign_everything import SignEverything
-from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.doc9303 import bac
+from pypassport.iso7816 import ISO7816, ISO7816Exception
 from pypassport.utils import to_hex_string
 
 

@@ -3,15 +3,14 @@ from __future__ import annotations
 import queue
 import tkinter as tk
 from functools import partial
-from tkinter import ttk, simpledialog
+from tkinter import simpledialog, ttk
 
 from pypassport.apdu_history import APDUHistory, APDUTransaction
-from pypassport.iso7816 import APDUCommand, APDUResponse
 from pypassport.doc9303 import converter
+from pypassport.iso7816 import APDUCommand, APDUResponse
 
 from . import theme
 from .hexdump import HexDumpView, build_legend
-
 
 # ── Column layout for the transaction list ───────────────────────────────────
 _COLUMNS = (

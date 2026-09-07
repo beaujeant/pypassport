@@ -258,6 +258,11 @@ source = { editable = "epassportviewer" }
 dependencies = [
     { name = "epassportviewer-mcp" },
     { name = "pillow" },
+    { name = "pypassport" },
+]
+
+[package.optional-dependencies]
+reader = [
     { name = "pypassport", extra = ["reader"] },
 ]
 
@@ -265,8 +270,10 @@ dependencies = [
 requires-dist = [
     { name = "epassportviewer-mcp", editable = "epassportmcp" },
     { name = "pillow", specifier = ">=10.3.0" },
-    { name = "pypassport", extras = ["reader"], editable = "pypassport" },
+    { name = "pypassport", editable = "pypassport" },
+    { name = "pypassport", extras = ["reader"], marker = "extra == 'reader'", editable = "pypassport" },
 ]
+provides-extras = ["reader"]
 
 [[package]]
 name = "epassportviewer-mcp"

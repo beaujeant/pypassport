@@ -20,7 +20,6 @@ from typing import Any
 from pypassport.iso7816 import APDUCommand, APDUResponse, ISO7816Exception
 from pypassport.utils import to_hex_string
 
-
 STRATEGY_BASELINE = "baseline"
 STRATEGY_HEADER_BOUNDARY = "header_boundary"
 STRATEGY_CLA_SWEEP = "cla_sweep"

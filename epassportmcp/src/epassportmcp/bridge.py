@@ -61,6 +61,25 @@ def _capability_path(address: str) -> Path:
     return Path(address + ".cap")
 
 
+def _transport_endpoint(address: str, family: str) -> tuple[str, str]:
+    """Return an endpoint that is usable by the platform's socket layer.
+
+    Windows named pipes can be denied by the runner's pipe security policy.
+    A short loopback Unix socket is available on supported Windows versions
+    and avoids that policy.  macOS limits Unix socket names to roughly 104
+    bytes; pytest's temporary directories can exceed that limit, so bind a
+    short hashed path and expose the requested path as a symlink.
+    """
+
+    if family == "AF_PIPE":
+        short = hashlib.sha256(address.encode()).hexdigest()[:16]
+        return str(Path(tempfile.gettempdir()) / f"epassportviewer-mcp-{short}.sock"), "AF_UNIX"
+    if len(os.fsencode(address)) >= 100:
+        short = hashlib.sha256(address.encode()).hexdigest()[:16]
+        return str(Path(tempfile.gettempdir()) / f"epassportviewer-mcp-{short}.sock"), "AF_UNIX"
+    return address, family
+
+
 def _read_authkey(address: str) -> bytes:
     try:
         value = _capability_path(address).read_bytes()
@@ -89,10 +108,13 @@ class ViewerMCPClient:
         if len(encoded) > _MAX_REQUEST:
             raise ValueError("Viewer MCP request is too large")
         address, family = endpoint()
+        transport_address, transport_family = _transport_endpoint(address, family)
         try:
             with self._lock:
                 if self._connection is None:
-                    self._connection = Client(address, family=family, authkey=_read_authkey(address))
+                    self._connection = Client(
+                        transport_address, family=transport_family, authkey=_read_authkey(address)
+                    )
                 connection = self._connection
                 connection.send_bytes(encoded)
                 reply = connection.recv_bytes(_MAX_RESPONSE)
@@ -171,8 +193,9 @@ class ViewerMCPHost:
             connection.close()
         else:
             address, family = endpoint()
+            transport_address, transport_family = _transport_endpoint(address, family)
             try:
-                wake = Client(address, family=family, authkey=_read_authkey(address))
+                wake = Client(transport_address, family=transport_family, authkey=_read_authkey(address))
                 wake.close()
             except (OSError, AuthenticationError, ViewerUnavailable):
                 pass
@@ -187,19 +210,21 @@ class ViewerMCPHost:
 
     def _serve(self) -> None:
         address, family = endpoint()
+        transport_address, transport_family = _transport_endpoint(address, family)
         listener = None
         capability: Path | None = None
         owns_capability = False
+        public_socket: Path | None = None
         try:
-            if family == "AF_UNIX":
-                socket_path = Path(address)
+            if transport_family == "AF_UNIX":
+                socket_path = Path(transport_address)
                 capability_path = _capability_path(address)
                 socket_path.parent.mkdir(parents=True, exist_ok=True)
                 if socket_path.exists():
                     if not socket_path.is_socket():
                         raise ViewerUnavailable(f"MCP endpoint path is occupied by a non-socket file: {address}")
                     try:
-                        existing = Client(address, family=family, authkey=_read_authkey(address))
+                        existing = Client(transport_address, family=transport_family, authkey=_read_authkey(address))
                     except (OSError, AuthenticationError, ViewerUnavailable):
                         socket_path.unlink()
                         try:
@@ -214,7 +239,12 @@ class ViewerMCPHost:
                         capability_path.unlink()
                     except OSError:
                         pass
-            listener = Listener(address, family=family, authkey=self._authkey)
+                if transport_address != address and family == "AF_UNIX":
+                    public_socket = Path(address)
+                    if public_socket.exists() or public_socket.is_symlink():
+                        public_socket.unlink()
+                    public_socket.symlink_to(socket_path)
+            listener = Listener(transport_address, family=transport_family, authkey=self._authkey)
             self._listener = listener
             capability = _capability_path(address)
             descriptor = os.open(capability, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -224,8 +254,8 @@ class ViewerMCPHost:
                 os.close(descriptor)
             owns_capability = True
             self._ready.set()
-            if family == "AF_UNIX":
-                Path(address).chmod(0o600)
+            if transport_family == "AF_UNIX":
+                Path(transport_address).chmod(0o600)
             while not self._stop.is_set():
                 try:
                     connection = listener.accept()
@@ -269,6 +299,11 @@ class ViewerMCPHost:
             if listener is not None:
                 try:
                     listener.close()
+                except OSError:
+                    pass
+            if public_socket is not None:
+                try:
+                    public_socket.unlink()
                 except OSError:
                     pass
             if owns_capability and capability is not None:

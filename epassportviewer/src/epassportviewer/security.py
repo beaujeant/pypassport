@@ -14,13 +14,12 @@ from typing import Any
 
 from pypassport.doc9303 import converter
 from pypassport.doc9303.data_group import _CLASS_MAP
-from pypassport.doc9303.security_info import PACEInfo
 from pypassport.doc9303.file_context import EMRTD
+from pypassport.doc9303.security_info import PACEInfo
 from pypassport.security_audit import SecurityReport, build_security_report
 
 from . import theme
 from .fuzzing import FuzzingPane
-
 
 _REPORT_FILES = ("COM", "SOD", "CardSecurity") + tuple(f"DG{index}" for index in range(1, 17))
 

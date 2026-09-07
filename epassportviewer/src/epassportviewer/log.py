@@ -1,6 +1,6 @@
 import logging
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import scrolledtext, ttk
 
 from . import theme
 

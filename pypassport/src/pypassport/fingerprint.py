@@ -1,18 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
-import logging
 from typing import Any
 
-from pypassport.iso7816 import ISO7816Exception, APDUCommand
-from pypassport.doc9303 import passive_authentication
-from pypassport.doc9303 import cms
-from pypassport import ca_manager
-from pypassport import hex_utils
-from pypassport.doc9303 import converter
+from pypassport import ca_manager, der_object_identifier, hex_utils
 from pypassport.attacks import mac_traceability
-from pypassport import der_object_identifier
+from pypassport.doc9303 import cms, converter, passive_authentication
+from pypassport.iso7816 import APDUCommand, ISO7816Exception
 from pypassport.utils import to_hex_string
 
 

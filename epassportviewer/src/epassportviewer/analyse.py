@@ -27,13 +27,13 @@ import threading
 import tkinter as tk
 from collections.abc import Callable
 from contextlib import nullcontext
-from tkinter import ttk, filedialog
+from tkinter import filedialog, ttk
 
-from pypassport.doc9303.mrz import MRZ
-from pypassport.attacks.mac_traceability import MacTraceability
 from pypassport.attacks.active_authentication_traceability import AATraceability
-from pypassport.attacks.sign_everything import SignEverything
 from pypassport.attacks.brute_force import BruteForce
+from pypassport.attacks.mac_traceability import MacTraceability
+from pypassport.attacks.sign_everything import SignEverything
+from pypassport.doc9303.mrz import MRZ
 
 from . import theme
 
